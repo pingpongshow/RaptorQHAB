@@ -1,0 +1,48 @@
+# RaptorHab Dependencies
+# For Raspberry Pi Zero 2W with Python 3.9+
+
+# ===============================
+# Common Dependencies (both airborne and ground)
+# ===============================
+RPi.GPIO
+spidev
+pyserial
+crcmod
+numpy
+
+# Fountain codes (RaptorQ preferred, LT codes as fallback)
+#raptorq
+
+# ===============================
+# Airborne-Specific Dependencies
+# ===============================
+# Camera
+picamera2
+
+# Image processing
+Pillow
+
+# ===============================
+# Ground Station Dependencies
+# ===============================
+# Web framework
+Flask-SQLAlchemy
+Flask-SocketIO
+Flask
+
+# WebSocket support
+python-socketio
+python-engineio
+
+# Async support for SocketIO
+eventlet
+# Alternative: gevent
+
+# HTTP requests
+requests
+
+# ===============================
+# Development/Testing (optional)
+# ===============================
+# pytest
+# pytest-cov

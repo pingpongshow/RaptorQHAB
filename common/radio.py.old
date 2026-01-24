@@ -1,0 +1,1128 @@
+"""
+RaptorHab SX1262 FSK Radio Driver
+Hardware SPI implementation (minimal patch)
+
+This is a minimal modification of the original bit-banged driver.
+Only the SPI transport layer is changed to use hardware SPI.
+All configuration logic remains identical to ensure compatibility.
+
+REQUIRES: SPI pins in ALT0 mode. Add to /boot/firmware/config.txt:
+    gpio=9=a0
+    gpio=10=a0
+    gpio=11=a0
+"""
+
+import time
+import logging
+from typing import Optional, Tuple, List
+from dataclasses import dataclass
+from enum import IntEnum
+
+# Hardware SPI support
+try:
+    import spidev
+    SPIDEV_AVAILABLE = True
+except ImportError:
+    SPIDEV_AVAILABLE = False
+    spidev = None
+
+try:
+    import RPi.GPIO as GPIO
+except ImportError:
+    GPIO = None
+
+logger = logging.getLogger(__name__)
+
+
+# SX1262 Register Addresses
+class SX1262Reg:
+    """SX1262 register addresses"""
+    # Status registers
+    REG_RX_GAIN = 0x08AC
+    REG_LNA_GAIN = 0x0740
+    
+    # Sync word registers  
+    REG_SYNC_WORD_0 = 0x06C0
+    REG_SYNC_WORD_1 = 0x06C1
+    REG_SYNC_WORD_2 = 0x06C2
+    REG_SYNC_WORD_3 = 0x06C3
+    REG_SYNC_WORD_4 = 0x06C4
+    REG_SYNC_WORD_5 = 0x06C5
+    REG_SYNC_WORD_6 = 0x06C6
+    REG_SYNC_WORD_7 = 0x06C7
+    
+    # Node/broadcast address
+    REG_NODE_ADDR = 0x06CD
+    REG_BROADCAST_ADDR = 0x06CE
+    
+    # Whitening seed
+    REG_WHITENING_SEED_MSB = 0x06B8
+    REG_WHITENING_SEED_LSB = 0x06B9
+    
+    # CRC polynomial
+    REG_CRC_POLY_MSB = 0x06BC
+    REG_CRC_POLY_LSB = 0x06BD
+    REG_CRC_INIT_MSB = 0x06BE
+    REG_CRC_INIT_LSB = 0x06BF
+
+
+# SX1262 Commands
+class SX1262Cmd:
+    """SX1262 SPI commands"""
+    SET_SLEEP = 0x84
+    SET_STANDBY = 0x80
+    SET_FS = 0xC1
+    SET_TX = 0x83
+    SET_RX = 0x82
+    STOP_TIMER_ON_PREAMBLE = 0x9F
+    SET_RX_DUTY_CYCLE = 0x94
+    SET_CAD = 0xC5
+    SET_TX_CONTINUOUS_WAVE = 0xD1
+    SET_TX_INFINITE_PREAMBLE = 0xD2
+    SET_REGULATOR_MODE = 0x96
+    CALIBRATE = 0x89
+    CALIBRATE_IMAGE = 0x98
+    SET_PA_CONFIG = 0x95
+    SET_RX_TX_FALLBACK_MODE = 0x93
+    
+    WRITE_REGISTER = 0x0D
+    READ_REGISTER = 0x1D
+    WRITE_BUFFER = 0x0E
+    READ_BUFFER = 0x1E
+    
+    SET_DIO_IRQ_PARAMS = 0x08
+    GET_IRQ_STATUS = 0x12
+    CLR_IRQ_STATUS = 0x02
+    SET_DIO2_AS_RF_SWITCH_CTRL = 0x9D
+    SET_DIO3_AS_TCXO_CTRL = 0x97
+    
+    SET_RF_FREQUENCY = 0x86
+    SET_PACKET_TYPE = 0x8A
+    GET_PACKET_TYPE = 0x11
+    SET_TX_PARAMS = 0x8E
+    SET_MODULATION_PARAMS = 0x8B
+    SET_PACKET_PARAMS = 0x8C
+    SET_CAD_PARAMS = 0x88
+    SET_BUFFER_BASE_ADDRESS = 0x8F
+    SET_LORA_SYMB_NUM_TIMEOUT = 0xA0
+    
+    GET_STATUS = 0xC0
+    GET_RSSI_INST = 0x15
+    GET_RX_BUFFER_STATUS = 0x13
+    GET_PACKET_STATUS = 0x14
+    GET_DEVICE_ERRORS = 0x17
+    CLR_DEVICE_ERRORS = 0x07
+    GET_STATS = 0x10
+    RESET_STATS = 0x00
+
+
+# IRQ flags
+class SX1262IRQ:
+    TX_DONE = 0x0001
+    RX_DONE = 0x0002
+    PREAMBLE_DETECTED = 0x0004
+    SYNC_WORD_VALID = 0x0008
+    HEADER_VALID = 0x0010
+    HEADER_ERR = 0x0020
+    CRC_ERR = 0x0040
+    CAD_DONE = 0x0080
+    CAD_DETECTED = 0x0100
+    TIMEOUT = 0x0200
+    ALL = 0x03FF
+
+
+@dataclass
+class SX1262Config:
+    """SX1262 configuration parameters"""
+    # Pin configuration (BCM numbering)
+    pin_cs: int = 21
+    pin_clk: int = 11
+    pin_mosi: int = 10
+    pin_miso: int = 9
+    pin_busy: int = 20
+    pin_dio1: int = 16
+    pin_txen: int = 6
+    pin_rst: int = 18
+    
+    # Hardware SPI configuration
+    spi_bus: int = 0
+    spi_device: int = 0
+    spi_speed_hz: int = 8_000_000  # 8 MHz default
+    use_hardware_spi: bool = True  # Enable hardware SPI
+    
+    # Radio parameters
+    frequency_mhz: float = 915.0
+    tx_power_dbm: int = 22
+    bitrate_bps: int = 200000
+    fdev_hz: int = 125000
+    rx_bandwidth_hz: int = 467000
+    preamble_length: int = 32
+    sync_word: bytes = None
+    
+    def __post_init__(self):
+        if self.sync_word is None:
+            self.sync_word = bytes([0x52, 0x41, 0x50, 0x54])  # "RAPT"
+
+
+class SX1262:
+    """SX1262 FSK radio driver with optional hardware SPI"""
+    
+    # Oscillator frequency
+    XTAL_FREQ = 32000000  # 32 MHz
+    
+    # Maximum packet size
+    MAX_PACKET_SIZE = 255
+    
+    def __init__(self, config: Optional[SX1262Config] = None, **kwargs):
+        """
+        Initialize SX1262 driver
+        
+        Args:
+            config: Configuration parameters (or pass individual kwargs)
+            **kwargs: Individual config parameters (frequency_mhz, pin_cs, etc.)
+                      Also accepts: pin_reset (alias for pin_rst), simulation
+        """
+        # Handle simulation mode
+        self._simulation = kwargs.pop('simulation', False)
+        
+        # Handle pin_reset -> pin_rst alias
+        if 'pin_reset' in kwargs:
+            kwargs['pin_rst'] = kwargs.pop('pin_reset')
+        
+        # Build config from kwargs if no config provided
+        if config is None:
+            # Filter kwargs to only valid SX1262Config fields
+            config_fields = {f.name for f in SX1262Config.__dataclass_fields__.values()}
+            config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
+            self.config = SX1262Config(**config_kwargs)
+        else:
+            self.config = config
+            
+        self._initialized = False
+        self._last_rssi: int = 0
+        self._packet_count: int = 0
+        
+        # Hardware SPI support
+        self._spi = None
+        self._use_hw_spi = (
+            SPIDEV_AVAILABLE and 
+            self.config.use_hardware_spi and 
+            not self._simulation and
+            GPIO is not None
+        )
+        
+        if GPIO is None or self._simulation:
+            logger.warning("RPi.GPIO not available or simulation mode - running in simulation mode")
+        elif self._use_hw_spi:
+            logger.info("Hardware SPI mode enabled")
+        else:
+            logger.info("Using bit-banged SPI (hardware SPI disabled or unavailable)")
+    
+    def _spi_delay(self):
+        """Small delay for SPI timing (bit-bang only)"""
+        time.sleep(0.000001)  # 1 microsecond
+    
+    def _init_hardware_spi(self) -> bool:
+        """Initialize hardware SPI interface"""
+        if not self._use_hw_spi:
+            return False
+        
+        try:
+            self._spi = spidev.SpiDev()
+            self._spi.open(self.config.spi_bus, self.config.spi_device)
+            self._spi.max_speed_hz = self.config.spi_speed_hz
+            self._spi.mode = 0  # CPOL=0, CPHA=0
+            self._spi.lsbfirst = False
+            logger.info(f"Hardware SPI initialized at {self._spi.max_speed_hz / 1e6:.1f} MHz")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to initialize hardware SPI: {e}, falling back to bit-bang")
+            self._spi = None
+            self._use_hw_spi = False
+            return False
+    
+    def _close_hardware_spi(self):
+        """Close hardware SPI interface"""
+        if self._spi:
+            try:
+                self._spi.close()
+            except:
+                pass
+            self._spi = None
+    
+    def _wait_busy(self, timeout_ms: int = 1000) -> bool:
+        """
+        Wait for BUSY pin to go low
+        
+        Returns:
+            True if ready, False if timeout
+        """
+        if GPIO is None or self._simulation:
+            return True
+        
+        start = time.time()
+        timeout_sec = timeout_ms / 1000.0
+        
+        while GPIO.input(self.config.pin_busy):
+            if time.time() - start > timeout_sec:
+                logger.error("SX1262 BUSY timeout")
+                return False
+            time.sleep(0.0001)
+        
+        return True
+    
+    def _spi_transfer_byte(self, byte: int) -> int:
+        """
+        Transfer one byte via SPI (MSB first, CPOL=0, CPHA=0)
+        
+        Uses hardware SPI if available, otherwise bit-banged.
+        
+        Args:
+            byte: Byte to send
+            
+        Returns:
+            Byte received
+        """
+        if GPIO is None or self._simulation:
+            return 0xFF
+        
+        if self._spi:
+            # Hardware SPI - transfer single byte (CS already handled by caller)
+            result = self._spi.xfer2([byte])
+            return result[0]
+        
+        # Bit-banged SPI
+        received = 0
+        
+        for i in range(8):
+            # Set MOSI (MSB first)
+            bit = (byte >> (7 - i)) & 1
+            GPIO.output(self.config.pin_mosi, bit)
+            
+            self._spi_delay()
+            
+            # Rising edge of clock
+            GPIO.output(self.config.pin_clk, GPIO.HIGH)
+            
+            self._spi_delay()
+            
+            # Read MISO
+            miso_bit = GPIO.input(self.config.pin_miso)
+            received = (received << 1) | miso_bit
+            
+            # Falling edge of clock
+            GPIO.output(self.config.pin_clk, GPIO.LOW)
+        
+        return received
+    
+    def _spi_transfer(self, data: bytes) -> bytes:
+        """
+        Transfer multiple bytes via SPI
+        
+        Uses hardware SPI if available, otherwise bit-banged.
+        
+        Args:
+            data: Bytes to send
+            
+        Returns:
+            Bytes received
+        """
+        if self._spi:
+            # Hardware SPI - transfer all bytes at once (CS already handled by caller)
+            result = self._spi.xfer2(list(data))
+            return bytes(result)
+        
+        # Bit-banged SPI
+        received = bytearray()
+        
+        for byte in data:
+            received.append(self._spi_transfer_byte(byte))
+        
+        return bytes(received)
+    
+    def _spi_command(self, cmd: int, args: bytes = b'', response_len: int = 0) -> bytes:
+        """
+        Send SPI command to SX1262
+        
+        Args:
+            cmd: Command byte
+            args: Command arguments
+            response_len: Number of response bytes expected
+            
+        Returns:
+            Response bytes
+        """
+        if not self._wait_busy():
+            return bytes(response_len)
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.LOW)
+        
+        # Send command
+        self._spi_transfer_byte(cmd)
+        
+        # Send arguments
+        if args:
+            self._spi_transfer(args)
+        
+        # Read response
+        response = bytes()
+        if response_len > 0:
+            # Need to send dummy bytes to read response
+            response = self._spi_transfer(bytes(response_len))
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.HIGH)
+        
+        return response
+    
+    def _write_register(self, address: int, data: bytes):
+        """Write to SX1262 register"""
+        if not self._wait_busy():
+            return
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.LOW)
+        
+        self._spi_transfer_byte(SX1262Cmd.WRITE_REGISTER)
+        self._spi_transfer_byte((address >> 8) & 0xFF)
+        self._spi_transfer_byte(address & 0xFF)
+        self._spi_transfer(data)
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.HIGH)
+    
+    def _read_register(self, address: int, length: int = 1) -> bytes:
+        """Read from SX1262 register"""
+        if not self._wait_busy():
+            return bytes(length)
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.LOW)
+        
+        self._spi_transfer_byte(SX1262Cmd.READ_REGISTER)
+        self._spi_transfer_byte((address >> 8) & 0xFF)
+        self._spi_transfer_byte(address & 0xFF)
+        self._spi_transfer_byte(0x00)  # NOP for status
+        response = self._spi_transfer(bytes(length))
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.HIGH)
+        
+        return response
+    
+    def _write_buffer(self, offset: int, data: bytes):
+        """Write to TX buffer"""
+        if not self._wait_busy():
+            return
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.LOW)
+        
+        self._spi_transfer_byte(SX1262Cmd.WRITE_BUFFER)
+        self._spi_transfer_byte(offset)
+        self._spi_transfer(data)
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.HIGH)
+    
+    def _read_buffer(self, offset: int, length: int) -> bytes:
+        """Read from RX buffer"""
+        if not self._wait_busy():
+            return bytes(length)
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.LOW)
+        
+        self._spi_transfer_byte(SX1262Cmd.READ_BUFFER)
+        self._spi_transfer_byte(offset)
+        self._spi_transfer_byte(0x00)  # NOP
+        response = self._spi_transfer(bytes(length))
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.HIGH)
+        
+        return response
+    
+    def init(self) -> bool:
+        """
+        Initialize the SX1262 radio
+        
+        Returns:
+            True on success
+        """
+        logger.info("Initializing SX1262 radio")
+        
+        # Setup GPIO
+        if GPIO and not self._simulation:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setwarnings(False)
+            
+            # Output pins
+            GPIO.setup(self.config.pin_cs, GPIO.OUT, initial=GPIO.HIGH)
+            GPIO.setup(self.config.pin_rst, GPIO.OUT, initial=GPIO.HIGH)
+            GPIO.setup(self.config.pin_txen, GPIO.OUT, initial=GPIO.LOW)
+            
+            # Input pins
+            GPIO.setup(self.config.pin_busy, GPIO.IN)
+            GPIO.setup(self.config.pin_dio1, GPIO.IN)
+            
+            # Setup bit-bang SPI pins (only if not using hardware SPI)
+            if not self._use_hw_spi:
+                GPIO.setup(self.config.pin_clk, GPIO.OUT, initial=GPIO.LOW)
+                GPIO.setup(self.config.pin_mosi, GPIO.OUT, initial=GPIO.LOW)
+                GPIO.setup(self.config.pin_miso, GPIO.IN)
+        
+        # Initialize hardware SPI if enabled
+        if self._use_hw_spi:
+            if not self._init_hardware_spi():
+                # Fallback to bit-bang - setup GPIO pins
+                if GPIO and not self._simulation:
+                    GPIO.setup(self.config.pin_clk, GPIO.OUT, initial=GPIO.LOW)
+                    GPIO.setup(self.config.pin_mosi, GPIO.OUT, initial=GPIO.LOW)
+                    GPIO.setup(self.config.pin_miso, GPIO.IN)
+        
+        # Hardware reset
+        self._reset()
+        
+        # Wait for chip ready
+        if not self._wait_busy(2000):
+            logger.error("SX1262 not responding after reset")
+            return False
+        
+        # Set to standby mode
+        self.set_standby()
+        
+        # Configure for FSK mode
+        self._configure_fsk()
+        
+        self._initialized = True
+        spi_mode = "hardware SPI" if self._spi else "bit-banged SPI"
+        logger.info(f"SX1262 initialized successfully ({spi_mode})")
+        return True
+    
+    def _reset(self):
+        """Hardware reset the SX1262"""
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_rst, GPIO.LOW)
+            time.sleep(0.001)  # 1ms
+            GPIO.output(self.config.pin_rst, GPIO.HIGH)
+            time.sleep(0.010)  # 10ms for startup
+    
+    def set_standby(self, rc: bool = True):
+        """
+        Set standby mode
+        
+        Args:
+            rc: True for RC oscillator, False for XOSC
+        """
+        mode = 0x00 if rc else 0x01
+        self._spi_command(SX1262Cmd.SET_STANDBY, bytes([mode]))
+    
+    def _configure_fsk(self):
+        """Configure SX1262 for FSK packet mode"""
+        # Enable DC-DC regulator for better power efficiency
+        # Per SX1262 datasheet Section 5.1, DC-DC should be used when VBAT > 2.4V
+        # Command 0x96, parameter 0x01 = DC-DC mode (0x00 = LDO mode)
+        self._spi_command(SX1262Cmd.SET_REGULATOR_MODE, bytes([0x01]))
+        
+        # Set packet type to FSK
+        self._spi_command(SX1262Cmd.SET_PACKET_TYPE, bytes([0x00]))  # 0x00 = FSK
+        
+        # Set frequency
+        self.set_frequency(self.config.frequency_mhz)
+        
+        # Configure PA (power amplifier)
+        # For SX1262: paDutyCycle=0x04, hpMax=0x07, deviceSel=0x00 (SX1262), paLut=0x01
+        self._spi_command(SX1262Cmd.SET_PA_CONFIG, bytes([0x04, 0x07, 0x00, 0x01]))
+        
+        # Set TX power
+        self.set_tx_power(self.config.tx_power_dbm)
+        
+        # Configure modulation parameters for FSK
+        self._set_fsk_modulation()
+        
+        # Configure packet parameters
+        self._set_fsk_packet_params()
+        
+        # Set sync word
+        self._set_sync_word(self.config.sync_word)
+        
+        # Set buffer base addresses (TX at 0, RX at 128)
+        self._spi_command(SX1262Cmd.SET_BUFFER_BASE_ADDRESS, bytes([0x00, 0x80]))
+        
+        # Configure DIO1 for IRQ
+        self._configure_irq()
+        
+        # Set DIO2 as RF switch control
+        self._spi_command(SX1262Cmd.SET_DIO2_AS_RF_SWITCH_CTRL, bytes([0x01]))
+        
+        # Calibrate image rejection
+        self._calibrate_image()
+    
+    def _set_fsk_modulation(self):
+        """Set FSK modulation parameters"""
+        # Calculate bit rate register value
+        # BR = XTAL_FREQ * 32 / bitrate
+        br = int((self.XTAL_FREQ * 32) / self.config.bitrate_bps)
+        
+        # Calculate frequency deviation register value
+        # FDEV = (fdev * 2^25) / XTAL_FREQ
+        fdev = int((self.config.fdev_hz * (2**25)) / self.XTAL_FREQ)
+        
+        # Pulse shaping: 0x09 = Gaussian BT=0.5
+        pulse_shape = 0x09
+        
+        # RX bandwidth
+        rx_bw = self._get_rx_bw_config(self.config.rx_bandwidth_hz)
+        
+        # SetModulationParams for FSK:
+        # [BR(3 bytes), pulse_shape, rxBW, fdev(3 bytes)]
+        params = bytes([
+            (br >> 16) & 0xFF,
+            (br >> 8) & 0xFF,
+            br & 0xFF,
+            pulse_shape,
+            rx_bw,
+            (fdev >> 16) & 0xFF,
+            (fdev >> 8) & 0xFF,
+            fdev & 0xFF
+        ])
+        
+        self._spi_command(SX1262Cmd.SET_MODULATION_PARAMS, params)
+    
+    def _get_rx_bw_config(self, bw_hz: int) -> int:
+        """Get RX bandwidth configuration byte"""
+        # Bandwidth values (Hz): register value
+        bw_table = [
+            (467000, 0x09),
+            (373600, 0x11),
+            (312000, 0x19),
+            (234300, 0x01),
+            (187200, 0x0A),
+            (156200, 0x12),
+            (117300, 0x1A),
+            (93800, 0x02),
+            (78200, 0x0B),
+            (58600, 0x13),
+            (46900, 0x1B),
+            (39000, 0x03),
+            (29300, 0x0C),
+            (23400, 0x14),
+            (19500, 0x04),
+            (14600, 0x0D),
+            (11700, 0x15),
+            (9700, 0x05),
+            (7300, 0x0E),
+            (5900, 0x16),
+            (4800, 0x06),
+        ]
+        
+        # Find closest bandwidth >= requested
+        for bw, config in bw_table:
+            if bw_hz >= bw:
+                return config
+        
+        return 0x06  # Default to narrowest
+    
+    def _set_fsk_packet_params(self):
+        """Set FSK packet parameters"""
+        preamble_len = self.config.preamble_length
+        preamble_det_len = 0x04  # 16 bits preamble detector length
+        sync_word_len = len(self.config.sync_word) * 8  # in bits
+        addr_comp = 0x00  # No address filtering
+        
+        # PacketType from SX1262 datasheet Table 13-59:
+        # 0x00 = Fixed length packet (length known on both sides)
+        # 0x01 = Variable length packet (length byte prepended automatically)
+        # We use variable length so GetRxBufferStatus returns actual packet length
+        packet_type = 0x01  # Variable length packet
+        
+        payload_len = self.MAX_PACKET_SIZE  # Max payload length
+        
+        # CRC Type options from SX1262 datasheet Table 13-61:
+        # 0x00 = No CRC
+        # 0x01 = CRC computed on 1 byte
+        # 0x02 = CRC computed on 2 bytes (CRC-16)
+        # 0x04 = CRC_1_BYTE_INV (1 byte, result inverted)
+        # 0x06 = CRC_2_BYTE_INV (2 bytes CRC-16, result inverted)
+        crc_type = 0x01  # 1-byte CRC (simpler, less overhead)
+        whitening = 0x00  # No whitening
+        
+        params = bytes([
+            (preamble_len >> 8) & 0xFF,
+            preamble_len & 0xFF,
+            preamble_det_len,
+            sync_word_len,
+            addr_comp,
+            packet_type,
+            payload_len,
+            crc_type,
+            whitening
+        ])
+        
+        self._spi_command(SX1262Cmd.SET_PACKET_PARAMS, params)
+        
+        # Configure CRC polynomial and initial value registers
+        # For CRC-8: Polynomial = 0x07, Initial = 0xFF (CCITT standard)
+        # These registers must be set for CRC to work correctly
+        self._write_register(SX1262Reg.REG_CRC_POLY_MSB, bytes([0x00]))
+        self._write_register(SX1262Reg.REG_CRC_POLY_LSB, bytes([0x07]))  # CRC-8 polynomial
+        self._write_register(SX1262Reg.REG_CRC_INIT_MSB, bytes([0x00]))
+        self._write_register(SX1262Reg.REG_CRC_INIT_LSB, bytes([0xFF]))  # Initial value
+    
+    def _set_sync_word(self, sync_word: bytes):
+        """Set sync word (up to 8 bytes)"""
+        if len(sync_word) > 8:
+            sync_word = sync_word[:8]
+        
+        # Pad to 8 bytes
+        sync_word = sync_word + bytes(8 - len(sync_word))
+        
+        # Write sync word to registers
+        for i, byte in enumerate(sync_word):
+            self._write_register(SX1262Reg.REG_SYNC_WORD_0 + i, bytes([byte]))
+    
+    def _configure_irq(self):
+        """Configure DIO1 IRQ for TX/RX done"""
+        # Enable TX_DONE, RX_DONE, CRC_ERR, TIMEOUT on DIO1
+        irq_mask = SX1262IRQ.TX_DONE | SX1262IRQ.RX_DONE | SX1262IRQ.CRC_ERR | SX1262IRQ.TIMEOUT
+        
+        # SetDioIrqParams: irqMask(2), dio1Mask(2), dio2Mask(2), dio3Mask(2)
+        params = bytes([
+            (irq_mask >> 8) & 0xFF,
+            irq_mask & 0xFF,
+            (irq_mask >> 8) & 0xFF,  # DIO1
+            irq_mask & 0xFF,
+            0x00, 0x00,  # DIO2
+            0x00, 0x00   # DIO3
+        ])
+        
+        self._spi_command(SX1262Cmd.SET_DIO_IRQ_PARAMS, params)
+    
+    def _calibrate_image(self):
+        """Calibrate image rejection for 915 MHz"""
+        # For 902-928 MHz band
+        self._spi_command(SX1262Cmd.CALIBRATE_IMAGE, bytes([0xE1, 0xE9]))
+    
+    def set_frequency(self, freq_mhz: float):
+        """
+        Set operating frequency
+        
+        Args:
+            freq_mhz: Frequency in MHz
+        """
+        # Calculate frequency register value
+        # RF_FREQ = (freq * 2^25) / XTAL_FREQ
+        freq_hz = int(freq_mhz * 1e6)
+        rf_freq = int((freq_hz * (2**25)) / self.XTAL_FREQ)
+        
+        params = bytes([
+            (rf_freq >> 24) & 0xFF,
+            (rf_freq >> 16) & 0xFF,
+            (rf_freq >> 8) & 0xFF,
+            rf_freq & 0xFF
+        ])
+        
+        self._spi_command(SX1262Cmd.SET_RF_FREQUENCY, params)
+        self.config.frequency_mhz = freq_mhz
+        logger.debug(f"Frequency set to {freq_mhz} MHz")
+    
+    def set_tx_power(self, power_dbm: int):
+        """
+        Set TX output power
+        
+        Args:
+            power_dbm: Power in dBm (-9 to +22)
+        """
+        power_dbm = max(-9, min(22, power_dbm))
+        
+        # SetTxParams: power, rampTime
+        # RampTime: 0x04 = 200us
+        self._spi_command(SX1262Cmd.SET_TX_PARAMS, bytes([power_dbm & 0xFF, 0x04]))
+        
+        self.config.tx_power_dbm = power_dbm
+        logger.debug(f"TX power set to {power_dbm} dBm")
+    
+    def transmit(self, data: bytes, timeout_ms: int = 5000) -> bool:
+        """
+        Transmit packet
+        
+        Args:
+            data: Packet data to transmit
+            timeout_ms: TX timeout in milliseconds
+            
+        Returns:
+            True on success
+        """
+        if len(data) > self.MAX_PACKET_SIZE:
+            logger.error(f"Packet too large: {len(data)} > {self.MAX_PACKET_SIZE}")
+            return False
+        
+        # Go to standby mode
+        self.set_standby()
+        
+        # Clear IRQ flags
+        self._clear_irq()
+        
+        # Write data to buffer
+        self._write_buffer(0, data)
+        
+        # Set payload length in packet params (for variable length)
+        self._update_payload_length(len(data))
+        
+        # Enable TX (TXEN pin high)
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_txen, GPIO.HIGH)
+        
+        # Start TX
+        # SetTx: timeout in 15.625 us steps
+        timeout_steps = int((timeout_ms * 1000) / 15.625) if timeout_ms > 0 else 0
+        timeout_bytes = bytes([
+            (timeout_steps >> 16) & 0xFF,
+            (timeout_steps >> 8) & 0xFF,
+            timeout_steps & 0xFF
+        ])
+        self._spi_command(SX1262Cmd.SET_TX, timeout_bytes)
+        
+        # Wait for TX done
+        success = self._wait_for_irq(SX1262IRQ.TX_DONE, timeout_ms + 100)
+        
+        # Disable TX
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_txen, GPIO.LOW)
+        
+        # Return to standby
+        self.set_standby()
+        
+        if success:
+            self._packet_count += 1
+            logger.debug(f"TX complete, {len(data)} bytes")
+        else:
+            logger.warning("TX timeout or failed")
+        
+        return success
+    
+    def _update_payload_length(self, length: int):
+        """Update packet params with new payload length"""
+        preamble_len = self.config.preamble_length
+        preamble_det_len = 0x04
+        sync_word_len = len(self.config.sync_word) * 8
+        
+        params = bytes([
+            (preamble_len >> 8) & 0xFF,
+            preamble_len & 0xFF,
+            preamble_det_len,
+            sync_word_len,
+            0x00,  # No address filtering
+            0x01,  # Variable length packet (0x01 per datasheet Table 13-59)
+            length,
+            0x01,  # CRC-8 (must match _set_fsk_packet_params)
+            0x00   # No whitening
+        ])
+        
+        self._spi_command(SX1262Cmd.SET_PACKET_PARAMS, params)
+    
+    def receive(self, timeout_ms: int = 0) -> Optional[bytes]:
+        """
+        Receive packet
+        
+        Args:
+            timeout_ms: RX timeout in ms (0 = continuous)
+            
+        Returns:
+            Received packet data or None
+        """
+        # Clear IRQ flags
+        self._clear_irq()
+        
+        # Start RX
+        if timeout_ms > 0:
+            timeout_steps = int((timeout_ms * 1000) / 15.625)
+        else:
+            timeout_steps = 0xFFFFFF  # Continuous RX
+        
+        timeout_bytes = bytes([
+            (timeout_steps >> 16) & 0xFF,
+            (timeout_steps >> 8) & 0xFF,
+            timeout_steps & 0xFF
+        ])
+        self._spi_command(SX1262Cmd.SET_RX, timeout_bytes)
+        
+        # Wait for RX done or timeout
+        wait_timeout = timeout_ms if timeout_ms > 0 else 1000
+        irq = self._wait_for_any_irq(
+            SX1262IRQ.RX_DONE | SX1262IRQ.CRC_ERR | SX1262IRQ.TIMEOUT,
+            wait_timeout
+        )
+        
+        # Return to standby
+        self.set_standby()
+        
+        if irq & SX1262IRQ.TIMEOUT:
+            logger.debug("RX timeout")
+            return None
+        
+        if irq & SX1262IRQ.CRC_ERR:
+            logger.warning("RX CRC error")
+            return None
+        
+        if irq & SX1262IRQ.RX_DONE:
+            # Get RX buffer status
+            status = self._get_rx_buffer_status()
+            if status is None:
+                return None
+            
+            payload_len, rx_start = status
+            
+            # Read packet data
+            data = self._read_buffer(rx_start, payload_len)
+            
+            # Get RSSI
+            self._last_rssi = self._get_rssi()
+            
+            logger.debug(f"RX complete, {payload_len} bytes, RSSI {self._last_rssi} dBm")
+            return data
+        
+        return None
+    
+    def receive_continuous(self) -> None:
+        """Start continuous receive mode (non-blocking)"""
+        self._clear_irq()
+        
+        # Continuous RX mode
+        timeout_bytes = bytes([0xFF, 0xFF, 0xFF])
+        self._spi_command(SX1262Cmd.SET_RX, timeout_bytes)
+    
+    def check_for_packet(self) -> Tuple[Optional[bytes], int]:
+        """
+        Check if a packet has been received (non-blocking)
+        
+        Returns:
+            Tuple of (packet_data or None, rssi)
+        """
+        irq = self._get_irq_status()
+        
+        if irq & SX1262IRQ.CRC_ERR:
+            self._clear_irq()
+            logger.warning("RX CRC error (hardware)")
+            return (None, self._last_rssi)
+        
+        if irq & SX1262IRQ.RX_DONE:
+            # Get RX buffer status
+            status = self._get_rx_buffer_status()
+            if status is None:
+                self._clear_irq()
+                return (None, self._last_rssi)
+            
+            payload_len, rx_start = status
+            
+            # Read packet data
+            data = self._read_buffer(rx_start, payload_len)
+            
+            # Get RSSI
+            self._last_rssi = self._get_rssi()
+            
+            # Clear IRQ and restart RX
+            self._clear_irq()
+            
+            logger.debug(f"RX packet, {payload_len} bytes, RSSI {self._last_rssi} dBm")
+            return (data, self._last_rssi)
+        
+        return (None, self._last_rssi)
+    
+    def _get_rx_buffer_status(self) -> Optional[Tuple[int, int]]:
+        """
+        Get RX buffer status
+        
+        Returns:
+            Tuple of (payload_length, rx_start_offset) or None
+        """
+        if not self._wait_busy():
+            return None
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.LOW)
+        
+        self._spi_transfer_byte(SX1262Cmd.GET_RX_BUFFER_STATUS)
+        self._spi_transfer_byte(0x00)  # NOP
+        response = self._spi_transfer(bytes(2))
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.HIGH)
+        
+        return (response[0], response[1])
+    
+    def _get_irq_status(self) -> int:
+        """Get current IRQ status"""
+        if not self._wait_busy():
+            return 0
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.LOW)
+        
+        self._spi_transfer_byte(SX1262Cmd.GET_IRQ_STATUS)
+        self._spi_transfer_byte(0x00)  # NOP
+        response = self._spi_transfer(bytes(2))
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.HIGH)
+        
+        return (response[0] << 8) | response[1]
+    
+    def _clear_irq(self, mask: int = SX1262IRQ.ALL):
+        """Clear IRQ flags"""
+        params = bytes([
+            (mask >> 8) & 0xFF,
+            mask & 0xFF
+        ])
+        self._spi_command(SX1262Cmd.CLR_IRQ_STATUS, params)
+    
+    def _wait_for_irq(self, mask: int, timeout_ms: int) -> bool:
+        """
+        Wait for specific IRQ flag(s)
+        
+        Args:
+            mask: IRQ flags to wait for
+            timeout_ms: Timeout in milliseconds
+            
+        Returns:
+            True if flag set, False if timeout
+        """
+        start = time.time()
+        timeout_sec = timeout_ms / 1000.0
+        
+        while True:
+            irq = self._get_irq_status()
+            if irq & mask:
+                self._clear_irq(mask)
+                return True
+            
+            if time.time() - start > timeout_sec:
+                return False
+            
+            time.sleep(0.001)
+    
+    def _wait_for_any_irq(self, mask: int, timeout_ms: int) -> int:
+        """
+        Wait for any of the specified IRQ flags
+        
+        Returns:
+            IRQ status (0 if timeout)
+        """
+        start = time.time()
+        timeout_sec = timeout_ms / 1000.0
+        
+        while True:
+            irq = self._get_irq_status()
+            if irq & mask:
+                self._clear_irq(irq)
+                return irq
+            
+            if time.time() - start > timeout_sec:
+                return 0
+            
+            time.sleep(0.001)
+    
+    def _get_rssi(self) -> int:
+        """Get instantaneous RSSI in dBm"""
+        if not self._wait_busy():
+            return 0
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.LOW)
+        
+        self._spi_transfer_byte(SX1262Cmd.GET_RSSI_INST)
+        self._spi_transfer_byte(0x00)  # NOP
+        response = self._spi_transfer(bytes(1))
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_cs, GPIO.HIGH)
+        
+        # RSSI = -rssi_raw / 2
+        return -response[0] // 2
+    
+    def get_last_rssi(self) -> int:
+        """Get RSSI of last received packet"""
+        return self._last_rssi
+    
+    def get_temperature(self) -> float:
+        """
+        Get SX1262 temperature sensor reading
+        
+        Returns:
+            Temperature in Celsius
+        """
+        # Return fake temperature in simulation mode
+        if GPIO is None or self._simulation:
+            return 25.0
+        
+        # Need to be in standby XOSC mode to read temperature
+        self._spi_command(SX1262Cmd.SET_STANDBY, bytes([0x01]))
+        time.sleep(0.001)
+        
+        # Read temperature registers
+        temp_raw = self._read_register(0x06B9, 2)
+        
+        # Back to RC standby
+        self.set_standby()
+        
+        # Convert to temperature (approximate)
+        temp_code = (temp_raw[0] << 8) | temp_raw[1]
+        temperature = 25.0 + (temp_code - 5500) / 10.0
+        
+        return temperature
+    
+    def get_packet_count(self) -> int:
+        """Get number of packets transmitted"""
+        return self._packet_count
+    
+    def sleep(self, warm: bool = True):
+        """
+        Put SX1262 in sleep mode
+        
+        Args:
+            warm: True for warm start (faster wake), False for cold start
+        """
+        config = 0x04 if warm else 0x00  # 0x04 = retain config
+        self._spi_command(SX1262Cmd.SET_SLEEP, bytes([config]))
+    
+    def cleanup(self):
+        """Cleanup GPIO resources"""
+        self.set_standby()
+        
+        # Close hardware SPI
+        self._close_hardware_spi()
+        
+        if GPIO and not self._simulation:
+            GPIO.output(self.config.pin_txen, GPIO.LOW)
+            
+            # Cleanup pins
+            cleanup_pins = [
+                self.config.pin_cs,
+                self.config.pin_busy,
+                self.config.pin_dio1,
+                self.config.pin_txen,
+                self.config.pin_rst
+            ]
+            
+            # Only cleanup bit-bang SPI pins if we were using them
+            if not self._spi:
+                cleanup_pins.extend([
+                    self.config.pin_clk,
+                    self.config.pin_mosi,
+                    self.config.pin_miso
+                ])
+            
+            GPIO.cleanup(cleanup_pins)
+        
+        self._initialized = False
+        logger.info("SX1262 cleaned up")
+    
+    def close(self):
+        """Alias for cleanup()"""
+        self.cleanup()
+
+
+# Alias for backward compatibility
+SX1262Radio = SX1262
