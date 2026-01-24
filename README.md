@@ -8,7 +8,6 @@ RaptorHab is a complete high-altitude balloon (HAB) telemetry and imagery downli
 - **Fountain Codes** - Robust error correction using RaptorQ or LT codes
 - **WebP Image Compression** - Efficient image transmission (~50KB per image)
 - **GPS Telemetry** - Real-time position tracking with airborne dynamic model
-- **Bidirectional Communication** - 10s TX / 10s RX duty cycle for commands
 - **Web Interface** - Real-time dashboard, map tracking, image gallery
 
 ## Hardware Requirements
