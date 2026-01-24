@@ -16,11 +16,11 @@ RaptorHab is a complete high-altitude balloon (HAB) telemetry and imagery downli
 - Raspberry Pi Zero 2W
 - Waveshare SX1262 868M/915M LoRa HAT
 - Sony IMX219 Camera (Pi Camera Module v2)
-- USB uBlox GPS module (e.g., VK-172)
+- L76 GPS built into the Waveshare SX1262 hat
 
 ### Ground Station
 - Raspberry Pi Zero 2W (or any Pi)
-- Waveshare SX1262 868M/915M LoRa HAT
+- Waveshare SX1262 868M/915M LoRa HAT with GPS module
 - Web browser for UI
 
 ## Installation
