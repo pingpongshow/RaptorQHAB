@@ -26,7 +26,7 @@ RaptorHab is a complete high-altitude balloon (HAB) telemetry and imagery downli
 ## Installation
 
 Pre-build Raspberry Pi image, contains both airborne and groundstation - this is the easiest wat to get started!!!
-download from https://www.dropbox.com/scl/fo/6gg3gslbegtxcpt9paqfd/ADLQRzHeOkjQu1rJ2CoCmxU?rlkey=czmw5ctd03qi6r9cold0atwao&st=9gicknop&dl=0
+download from https://mega.nz/file/LBMCAZiY#fAgpqI9juj9rlc5dWmyldSS-M15zntNxPyMhGVInNXI
 
 See ReadMe.pdf in the /Documentation folder for most updated installation and use instructions.
 
