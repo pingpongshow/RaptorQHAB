@@ -95,16 +95,13 @@ The ground station provides a web interface with:
 | 0x82 | CMD_CAPTURE | Ground → Air |
 | 0x83 | CMD_REBOOT | Ground → Air |
 
-## State Machine
+Use:
+The airborne unit is universal all airborne units, which are currently base on rasberry Pi Zero2W, Waveshare SX1262 hat with GNSS and Rasberry Pi Cam 2 (IMX219) - use the same premade Pi image. Connect to the Airborne unit through SSH (user: raptor, password: raptor) after connecting to the RaptorAir WiFi AP (password RaptorAir). Set up the air unit to run as a service (instructions in documentation). 
 
-```
-INITIALIZING → TX_ACTIVE ↔ RX_LISTEN
-                   ↓
-             ERROR_STATE
-              (reboot)
-```
+The ground unit has a few options:
+  1) run the ground unit Pi Zero 2W prebuild image - no camera, but uses the same Waveshare sx1262/GNSS hat board. Connect the Pi Zero 2W connect to its AP (RaptorGround, password: RaptorGround) and SSH into the Pi (user: raptor, password: raptor) run the ground app as needed or setup as a service to run on start (instructions in documentation)
+  2)   run ground station on a Mac computer through the Mac native app - this is the most fully featured and best way to run the ground station - you will need to flash a Heltec T190 LoRa module with the custom code to act as a modem, external GPS for the mac is optional, but desirable.
+  3)   run the python groundstation code in GUI mode or webserver mode - this could be done on an Pi 3,4,5 or some other computer or even windows. This also requires use of the T190 modem
 
-- **TX_ACTIVE** (10 sec): Transmit telemetry and images
-- **RX_LISTEN** (10 sec): Listen for commands, send ACKs
-- **ERROR_STATE**: Too many errors, automatic reboot
+  4)   
 
