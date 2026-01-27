@@ -2,6 +2,12 @@
 
 RaptorHab is a complete high-altitude balloon (HAB) telemetry and imagery downlink system consisting of airborne payload and ground station components.
 
+Mac native receiver app build and will be distributed - upp uses a custom radio receiver based on the Hetec t190 LoRa board
+
+Python GUI and headless web based groundstations being developed - run on a Pi, Windows etc - also uses custom Heltec T190 LoRa board modem
+
+Firmware for the Heltec T190 modem (FSK) will be available soon
+
 ## Features
 
 - **915 MHz FSK Radio Link** - 200 kbps data rate, FCC Part 15.247 compliant
@@ -25,8 +31,12 @@ RaptorHab is a complete high-altitude balloon (HAB) telemetry and imagery downli
 
 ## Installation
 
-Pre-build Raspberry Pi image, contains both airborne and groundstation - this is the easiest wat to get started!!!
-download from https://mega.nz/file/2UMlSB7D#ha0phYPNnOOB5M-HUbzGgcdGGwu9TnQAL7PhNJQBP-w
+Pre-build Raspberry Pi image, contains both airborne and groundstation - this is the easiest way to get started, flash to your Pi SD card with dd or Pi Imager, dont forget to "sudo raspi-config --expand-rootfs" after the first time you flash the new image to youe sd card.
+Airborne Unit download: https://mega.nz/file/LB9WUADY#3Y-65y9NjXHN-LRaacJJJG6SZQ2jdLLwqMGUh5rF4MU
+Ground Unit download: https://mega.nz/file/DEdgiKhI#F_BDjiJA3UOEzBZp5sV44614p8mnPsiAuGpoBk3tA_4
+SSH logon: raptor, password: raptor
+Airborne Unit AP SSID: RaptorAir password: RaptorAir
+Ground Unit AP SSID: RaptorGround password: RaptorGround
 
 See ReadMe.pdf in the /Documentation folder for most updated installation and use instructions.
 
