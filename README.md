@@ -1,12 +1,13 @@
 # RaptorHab - High Altitude Balloon Image & Telemetry System
 
-RaptorHab is a complete high-altitude balloon (HAB) telemetry and imagery downlink system consisting of airborne payload and ground station components.
+RaptorHab is a complete high-altitude balloon (HAB) telemetry and imagery downlink system consisting of airborne payload and ground station components. There are other projects available with a silimar purpose, but there are some distinctive advantages here. Raptor fountian codes, modern image compression, error correction, cross platform. 
 
-Mac native receiver app build and will be distributed - upp uses a custom radio receiver based on the Hetec t190 LoRa board
+Mac native rground station app in releases - uses a custom radio receiver based on the Hetec t190 LoRa board.
 
-Python GUI and headless web based groundstations being developed - run on a Pi, Windows etc - also uses custom Heltec T190 LoRa board modem
+Firmware for the Heltec T190 modem (FSK) available.
 
-Firmware for the Heltec T190 modem (FSK) will be available soon
+Python GUI and headless web based groundstations are being developed and are currently being debuged - run on a Pi, Windows etc - also uses custom Heltec T190 LoRa board modem
+
 
 ## Features
 
@@ -22,7 +23,7 @@ Firmware for the Heltec T190 modem (FSK) will be available soon
 - Raspberry Pi Zero 2W
 - Waveshare SX1262 868M/915M LoRa HAT
 - Sony IMX219 Camera (Pi Camera Module v2)
-- L76 GPS built into the Waveshare SX1262 hat
+- L76 GPS built into the Waveshare SX1262 hat (balloon mode)
 
 ### Ground Station
 - Raspberry Pi Zero 2W (or any Pi)
@@ -31,14 +32,14 @@ Firmware for the Heltec T190 modem (FSK) will be available soon
 
 ## Installation
 
-Pre-build Raspberry Pi image, contains both airborne and groundstation - this is the easiest way to get started, flash to your Pi SD card with dd or Pi Imager, dont forget to "sudo raspi-config --expand-rootfs" after the first time you flash the new image to youe sd card.
+Pre-built Raspberry Pi images, contain both airborne and groundstation - this is the easiest way to get started, flash to your Pi SD card with dd or Pi Imager, dont forget to "sudo raspi-config --expand-rootfs" after the first time you flash the new image to youe sd card. reason for two images linkes is each Pi image is exactly the same except for the WiFi AP name, so if you are familiar with configuring Pi you could likely get away with one image file only.
 Airborne Unit download: https://mega.nz/file/LB9WUADY#3Y-65y9NjXHN-LRaacJJJG6SZQ2jdLLwqMGUh5rF4MU
 Ground Unit download: https://mega.nz/file/DEdgiKhI#F_BDjiJA3UOEzBZp5sV44614p8mnPsiAuGpoBk3tA_4
 SSH logon: raptor, password: raptor
 Airborne Unit AP SSID: RaptorAir password: RaptorAir
 Ground Unit AP SSID: RaptorGround password: RaptorGround
 
-See ReadMe.pdf in the /Documentation folder for most updated installation and use instructions.
+See ReadMe.pdf in the /Pi/Documentation folder for most updated installation and use instructions.
 
 ## Ground Station Web Interface
 
@@ -103,5 +104,6 @@ The ground unit has a few options:
   2)   run ground station on a Mac computer through the Mac native app - this is the most fully featured and best way to run the ground station - you will need to flash a Heltec T190 LoRa module with the custom code to act as a modem, external GPS for the mac is optional, but desirable.
   3)   run the python groundstation code in GUI mode or webserver mode - this could be done on an Pi 3,4,5 or some other computer or even windows. This also requires use of the T190 modem
 
-  4)   
+
+There is much to be done on the documentation side of this project that I just havent gotten around to, the project components that are on GitHub are fully functional and ready to go. 
 
