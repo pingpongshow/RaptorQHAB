@@ -11,7 +11,7 @@ Python GUI and headless web based groundstations are being developed and are cur
 
 ## Features
 
-- **915 MHz FSK Radio Link** - 200 kbps data rate, FCC Part 15.247 compliant
+- **915 MHz FSK Radio Link** - 96 kbps data rate, adjustable
 - **Fountain Codes** - Robust error correction using RaptorQ or LT codes
 - **WebP Image Compression** - Efficient image transmission (~50KB per image)
 - **GPS Telemetry** - Real-time position tracking with airborne dynamic model
