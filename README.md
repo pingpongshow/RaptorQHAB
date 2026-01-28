@@ -4,6 +4,8 @@ RaptorHab is a complete high-altitude balloon (HAB) telemetry and imagery downli
 
 Mac native rground station app in releases - uses a custom radio receiver based on the Hetec t190 LoRa board.
 
+iOS app RaptorHABMobile for iOS >17 on iPad and iPhone available in the app store - free - pending Apple approval
+
 Firmware for the Heltec T190 modem (FSK) available.
 
 Python GUI and headless web based groundstations are being developed and are currently being debuged - run on a Pi, Windows etc - also uses custom Heltec T190 LoRa board modem
@@ -17,7 +19,7 @@ Many code changes due to various bug fixes and additional features have been mad
 - **WebP Image Compression** - Efficient image transmission (~50KB per image)
 - **GPS Telemetry** - Real-time position tracking with airborne dynamic model
 - **Web Interface** - Real-time dashboard, map tracking, image gallery
-- Ground station apps supporting live tracking, payload heading and distance, landing zone prediction, automatic telemetry/image recording, bust height calculation
+- **Ground station apps** supporting live tracking, payload heading and distance, landing zone prediction, automatic telemetry/image recording, bust height calculation
 
 ## Hardware Requirements
 
@@ -32,7 +34,7 @@ Many code changes due to various bug fixes and additional features have been mad
 - Waveshare SX1262 868M/915M LoRa HAT with GPS module
 - Web browser for UI
 - Mac ground station app available now using custom radio modem based on Heltec T190 radio
-- iOS ground station app available soon using custom radio modem based on Heltec T190 radio with BLE
+- iOS ground station app RaptorHABMobile available using custom radio modem based on Heltec T190 radio with BLE
 - Cross platform python GUI and headless webserver ground stations being developed/debugged
 
 ## Installation
@@ -96,4 +98,5 @@ The ground unit has a few options:
   1) run the ground unit Pi Zero 2W prebuild image - no camera, but uses the same Waveshare sx1262/GNSS hat board. Connect the Pi Zero 2W connect to its AP (RaptorGround, password: RaptorGround) and SSH into the Pi (user: raptor, password: raptor) run the ground app as needed or setup as a service to run on start (instructions in documentation)
   2)   run ground station on a Mac computer through the Mac native app - this is the most fully featured and best way to run the ground station - you will need to flash a Heltec T190 LoRa module with the custom code to act as a modem, external GPS for the mac is optional, but desirable.
   3)   run the python groundstation code in GUI mode or webserver mode - this could be done on an Pi 3,4,5 or some other computer or even windows. This also requires use of the T190 modem
+  4)   iOS app RapttorHABMobile now available on the app store
 
