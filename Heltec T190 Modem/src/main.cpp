@@ -56,6 +56,15 @@
 #define LORA_DIO1   14
 #define USER_BUTTON 21
 
+// Pin Definitions - Battery Monitoring
+#define ADC_CTRL_PIN    46      // Controls P-FET switch for battery divider
+#define VBAT_READ_PIN   6       // ADC input from voltage divider
+
+// Battery voltage divider: R9=390K, R11=100K -> ratio = 100/(390+100) = 0.204
+#define VBAT_DIVIDER_RATIO  4.9f    // Multiply ADC voltage by this to get VBAT
+#define VBAT_MIN            3.0f    // Empty LiPo
+#define VBAT_MAX            4.2f    // Full LiPo
+
 // Pin Definitions - TFT Display (ST7789V3)
 #define TFT_CS      39
 #define TFT_RST     40
@@ -167,6 +176,11 @@ uint32_t packetsSmall = 0;
 uint32_t packetsLarge = 0;
 float lastRssi = -120.0;
 float lastSnr = 0.0;
+
+// Battery monitoring
+float batteryVoltage = 0.0;
+int batteryPercent = 0;
+float prevBatteryVoltage = -1.0;
 
 uint32_t lastStatsTime = 0;
 uint32_t lastPacketTime = 0;
@@ -435,6 +449,8 @@ void drawStaticUI();
 void updateDisplay();
 void updateSignalDisplay();
 void updateStatsDisplay();
+void updateBatteryDisplay();
+float readBatteryVoltage();
 void showWaitingScreen();
 void showConfiguredScreen();
 
@@ -470,7 +486,7 @@ void drawStaticUI() {
     tft->setTextColor(COLOR_TEXT);
     tft->setTextSize(2);
     tft->setCursor(10, 4);
-    tft->print("RAPTORHAB GROUND STATION");
+    tft->print("RAPTORHAB MODEM");
     
     // Divider line
     tft->drawFastHLine(0, 25, TFT_WIDTH, COLOR_ACCENT);
@@ -660,6 +676,90 @@ void updateStatsDisplay() {
     prevPacketsTotal = packetsTotal;
 }
 
+// ============================================================================
+// Battery Monitoring
+// ============================================================================
+
+float readBatteryVoltage() {
+    // Enable the battery voltage divider by turning on Q3->Q2
+    pinMode(ADC_CTRL_PIN, OUTPUT);
+    digitalWrite(ADC_CTRL_PIN, HIGH);
+    delayMicroseconds(100);  // Let it settle (very brief, won't affect packet timing)
+    
+    // Take multiple readings and average for stability
+    uint32_t sum = 0;
+    const int samples = 4;
+    for (int i = 0; i < samples; i++) {
+        sum += analogRead(VBAT_READ_PIN);
+    }
+    
+    // Turn off the divider to save power
+    digitalWrite(ADC_CTRL_PIN, LOW);
+    
+    // Calculate voltage
+    // ESP32-S3 ADC: 12-bit (0-4095), default attenuation gives ~0-2.5V range
+    // With ADC_ATTEN_DB_11, range is ~0-3.3V
+    float avgRaw = (float)sum / samples;
+    float vRead = (avgRaw / 4095.0f) * 3.3f;
+    float vBat = vRead * VBAT_DIVIDER_RATIO;
+    
+    return vBat;
+}
+
+void updateBatteryDisplay() {
+    // Only update periodically (same rate as stats)
+    static uint32_t lastBatteryUpdate = 0;
+    if (millis() - lastBatteryUpdate < 1000) return;
+    lastBatteryUpdate = millis();
+    
+    // Read battery voltage
+    batteryVoltage = readBatteryVoltage();
+    
+    // Calculate percentage (linear approximation between min and max)
+    batteryPercent = (int)(((batteryVoltage - VBAT_MIN) / (VBAT_MAX - VBAT_MIN)) * 100.0f);
+    batteryPercent = constrain(batteryPercent, 0, 100);
+    
+    // Only redraw if voltage changed significantly (>0.05V)
+    if (abs(batteryVoltage - prevBatteryVoltage) < 0.05f) {
+        return;
+    }
+    prevBatteryVoltage = batteryVoltage;
+    
+    // Draw battery indicator in header bar (right side)
+    // Clear battery area first
+    tft->fillRect(250, 2, 68, 20, COLOR_HEADER);
+    
+    // Choose color based on level
+    uint16_t battColor;
+    if (batteryPercent > 50) {
+        battColor = COLOR_GOOD;
+    } else if (batteryPercent > 20) {
+        battColor = COLOR_WARN;
+    } else {
+        battColor = COLOR_BAD;
+    }
+    
+    // Draw battery icon outline (small rectangle with nub)
+    int battX = 252;
+    int battY = 5;
+    int battW = 24;
+    int battH = 12;
+    tft->drawRect(battX, battY, battW, battH, COLOR_TEXT);
+    tft->fillRect(battX + battW, battY + 3, 2, 6, COLOR_TEXT);  // Battery nub
+    
+    // Fill battery level
+    int fillW = (battW - 4) * batteryPercent / 100;
+    if (fillW > 0) {
+        tft->fillRect(battX + 2, battY + 2, fillW, battH - 4, battColor);
+    }
+    
+    // Draw voltage text
+    tft->setTextSize(1);
+    tft->setTextColor(battColor);
+    tft->setCursor(280, 8);
+    tft->printf("%.2fV", batteryVoltage);
+}
+
 void updateDisplay() {
     uint32_t now = millis();
     
@@ -680,6 +780,7 @@ void updateDisplay() {
     
     updateSignalDisplay();
     updateStatsDisplay();
+    updateBatteryDisplay();
 }
 
 void showWaitingScreen() {
@@ -909,6 +1010,12 @@ void setup() {
     
     pinMode(USER_BUTTON, INPUT_PULLUP);
     
+    // Initialize battery monitoring pins
+    pinMode(ADC_CTRL_PIN, OUTPUT);
+    digitalWrite(ADC_CTRL_PIN, LOW);  // Start with divider off to save power
+    analogReadResolution(12);          // 12-bit ADC (0-4095)
+    analogSetAttenuation(ADC_11db);    // Full 0-3.3V range
+    
     // Initialize display
     Serial.println("[TFT] Initializing display...");
     initDisplay();
@@ -989,11 +1096,12 @@ void sendStats() {
     
     float rate = packetsTotal > 0 ? (100.0 * packetsForwarded / packetsTotal) : 0.0;
     
-    char statsBuf[300];
+    char statsBuf[350];
     snprintf(statsBuf, sizeof(statsBuf), 
-        "\n[STATS] Total:%lu Fwd:%lu NoRAPT:%lu BadCRC:%lu Err:%lu Rate:%.1f%% BLE:%s\n",
+        "\n[STATS] Total:%lu Fwd:%lu NoRAPT:%lu BadCRC:%lu Err:%lu Rate:%.1f%% BLE:%s Batt:%.2fV(%d%%)\n",
         packetsTotal, packetsForwarded, packetsRejectedNoRapt, packetsRejectedCrc, 
-        packetsRadioError, rate, bleDeviceConnected ? "Connected" : "Idle");
+        packetsRadioError, rate, bleDeviceConnected ? "Connected" : "Idle",
+        batteryVoltage, batteryPercent);
     Serial.print(statsBuf);
 }
 
