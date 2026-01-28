@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>RaptorHab Mobile</string>
+    <key>CFBundleDisplayName</key>
+    <string>RaptorHab</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    
+    <!-- Bluetooth Permission -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>RaptorHab needs Bluetooth to connect to the RaptorModem for receiving balloon telemetry and images.</string>
+    
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>RaptorHab needs Bluetooth to connect to the RaptorModem for receiving balloon telemetry and images.</string>
+    
+    <!-- Location Permission -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>RaptorHab needs your location to display your ground station position on the map and calculate bearing/distance to the balloon payload.</string>
+    
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>RaptorHab needs your location to track your ground station position even when the app is in the background.</string>
+    
+    <!-- Background Modes (optional - for continuous tracking) -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>bluetooth-central</string>
+        <string>location</string>
+    </array>
+    
+    <!-- Supported Interface Orientations -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    
+    <!-- Launch Screen -->
+    <key>UILaunchScreen</key>
+    <dict>
+        <key>UIColorName</key>
+        <string>AccentColor</string>
+    </dict>
+    
+    <!-- Minimum iOS Version -->
+    <key>MinimumOSVersion</key>
+    <string>16.0</string>
+</dict>
+</plist>

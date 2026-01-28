@@ -1,0 +1,428 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		001 /* RaptorHabMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100 /* RaptorHabMobileApp.swift */; };
+		002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101 /* ContentView.swift */; };
+		003 /* Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102 /* Protocol.swift */; };
+		004 /* GroundStationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 103 /* GroundStationManager.swift */; };
+		005 /* LocationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104 /* LocationManager.swift */; };
+		006 /* BLEManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105 /* BLEManager.swift */; };
+		007 /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106 /* MapView.swift */; };
+		008 /* GraphsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 107 /* GraphsView.swift */; };
+		009 /* ImagesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108 /* ImagesView.swift */; };
+		010 /* StatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109 /* StatusViews.swift */; };
+		011 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110 /* SettingsView.swift */; };
+		012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200 /* Assets.xcassets */; };
+		013 /* LandingPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111 /* LandingPrediction.swift */; };
+		014 /* BurstDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112 /* BurstDetection.swift */; };
+		015 /* AudioAlertManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113 /* AudioAlertManager.swift */; };
+		016 /* MissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 114 /* MissionManager.swift */; };
+		017 /* SondeHubManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 115 /* SondeHubManager.swift */; };
+		018 /* PredictionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 116 /* PredictionsView.swift */; };
+		019 /* MissionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 117 /* MissionsView.swift */; };
+		020 /* PacketLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118 /* PacketLogView.swift */; };
+		021 /* OfflineMapManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 119 /* OfflineMapManager.swift */; };
+		022 /* OfflineMapSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120 /* OfflineMapSettingsView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		100 /* RaptorHabMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RaptorHabMobileApp.swift; sourceTree = "<group>"; };
+		101 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		102 /* Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocol.swift; sourceTree = "<group>"; };
+		103 /* GroundStationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroundStationManager.swift; sourceTree = "<group>"; };
+		104 /* LocationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
+		105 /* BLEManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEManager.swift; sourceTree = "<group>"; };
+		106 /* MapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapView.swift; sourceTree = "<group>"; };
+		107 /* GraphsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphsView.swift; sourceTree = "<group>"; };
+		108 /* ImagesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagesView.swift; sourceTree = "<group>"; };
+		109 /* StatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusViews.swift; sourceTree = "<group>"; };
+		110 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		111 /* LandingPrediction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingPrediction.swift; sourceTree = "<group>"; };
+		112 /* BurstDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BurstDetection.swift; sourceTree = "<group>"; };
+		113 /* AudioAlertManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAlertManager.swift; sourceTree = "<group>"; };
+		114 /* MissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MissionManager.swift; sourceTree = "<group>"; };
+		115 /* SondeHubManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SondeHubManager.swift; sourceTree = "<group>"; };
+		116 /* PredictionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictionsView.swift; sourceTree = "<group>"; };
+		117 /* MissionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MissionsView.swift; sourceTree = "<group>"; };
+		118 /* PacketLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketLogView.swift; sourceTree = "<group>"; };
+		119 /* OfflineMapManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapManager.swift; sourceTree = "<group>"; };
+		120 /* OfflineMapSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapSettingsView.swift; sourceTree = "<group>"; };
+		200 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		300 /* RaptorHabMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RaptorHabMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		400 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		G001 = {
+			isa = PBXGroup;
+			children = (
+				G002 /* RaptorHabMobile */,
+				G003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		G002 /* RaptorHabMobile */ = {
+			isa = PBXGroup;
+			children = (
+				100 /* RaptorHabMobileApp.swift */,
+				101 /* ContentView.swift */,
+				102 /* Protocol.swift */,
+				103 /* GroundStationManager.swift */,
+				104 /* LocationManager.swift */,
+				105 /* BLEManager.swift */,
+				106 /* MapView.swift */,
+				107 /* GraphsView.swift */,
+				108 /* ImagesView.swift */,
+				109 /* StatusViews.swift */,
+				110 /* SettingsView.swift */,
+				111 /* LandingPrediction.swift */,
+				112 /* BurstDetection.swift */,
+				113 /* AudioAlertManager.swift */,
+				114 /* MissionManager.swift */,
+				115 /* SondeHubManager.swift */,
+				116 /* PredictionsView.swift */,
+				117 /* MissionsView.swift */,
+				118 /* PacketLogView.swift */,
+				119 /* OfflineMapManager.swift */,
+				120 /* OfflineMapSettingsView.swift */,
+				200 /* Assets.xcassets */,
+				400 /* Info.plist */,
+			);
+			path = RaptorHabMobile;
+			sourceTree = "<group>";
+		};
+		G003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				300 /* RaptorHabMobile.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		T001 /* RaptorHabMobile */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C001 /* Build configuration list for PBXNativeTarget "RaptorHabMobile" */;
+			buildPhases = (
+				S001 /* Sources */,
+				F001 /* Frameworks */,
+				R001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RaptorHabMobile;
+			productName = RaptorHabMobile;
+			productReference = 300 /* RaptorHabMobile.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		P001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					T001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = C002 /* Build configuration list for PBXProject "RaptorHabMobile" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = G001;
+			productRefGroup = G003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				T001 /* RaptorHabMobile */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		R001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				012 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		S001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				001 /* RaptorHabMobileApp.swift in Sources */,
+				002 /* ContentView.swift in Sources */,
+				003 /* Protocol.swift in Sources */,
+				004 /* GroundStationManager.swift in Sources */,
+				005 /* LocationManager.swift in Sources */,
+				006 /* BLEManager.swift in Sources */,
+				007 /* MapView.swift in Sources */,
+				008 /* GraphsView.swift in Sources */,
+				009 /* ImagesView.swift in Sources */,
+				010 /* StatusViews.swift in Sources */,
+				011 /* SettingsView.swift in Sources */,
+				013 /* LandingPrediction.swift in Sources */,
+				014 /* BurstDetection.swift in Sources */,
+				015 /* AudioAlertManager.swift in Sources */,
+				016 /* MissionManager.swift in Sources */,
+				017 /* SondeHubManager.swift in Sources */,
+				018 /* PredictionsView.swift in Sources */,
+				019 /* MissionsView.swift in Sources */,
+				020 /* PacketLogView.swift in Sources */,
+				021 /* OfflineMapManager.swift in Sources */,
+				022 /* OfflineMapSettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		BC001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 64L6B86X7S;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = RaptorHabMobile/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = RaptorHab;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "RaptorHab needs Bluetooth to connect to the RaptorModem for receiving telemetry data.";
+				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "RaptorHab needs Bluetooth to connect to the RaptorModem for receiving telemetry data.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "RaptorHab uses your location to calculate distance and bearing to the balloon payload.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.raptorhabmobile.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		BC002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 64L6B86X7S;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = RaptorHabMobile/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = RaptorHab;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "RaptorHab needs Bluetooth to connect to the RaptorModem for receiving telemetry data.";
+				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "RaptorHab needs Bluetooth to connect to the RaptorModem for receiving telemetry data.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "RaptorHab uses your location to calculate distance and bearing to the balloon payload.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.raptorhabmobile.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		BC003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		BC004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		C001 /* Build configuration list for PBXNativeTarget "RaptorHabMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BC001 /* Debug */,
+				BC002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C002 /* Build configuration list for PBXProject "RaptorHabMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BC003 /* Debug */,
+				BC004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = P001 /* Project object */;
+}
