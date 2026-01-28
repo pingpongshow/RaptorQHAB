@@ -2,22 +2,32 @@
  * RaptorHab Ground Station Bridge
  * Heltec Vision Master T190 (ESP32-S3 + SX1262)
  * 
- * Receives packets via SX1262 and forwards them over USB serial
- * Displays RSSI, SNR, and radio settings on 1.9" TFT LCD
+ * Receives packets via SX1262 and forwards them over USB serial AND Bluetooth LE
+ * Displays RSSI, SNR, radio settings, and BLE status on 1.9" TFT LCD
+ * 
+ * BLUETOOTH:
+ *   Device name: "RaptorModem"
+ *   Uses Nordic UART Service (NUS) style UUIDs
+ *   Static passkey: 123456 (configurable)
+ *   Supports configuration and packet forwarding over BLE
  * 
  * CONFIGURATION MODE:
- *   On boot, modem waits for configuration from Mac app before starting.
+ *   On boot, modem waits for configuration from Mac/iOS app via USB OR Bluetooth
  *   Config command: CFG:<freq>,<bitrate>,<deviation>,<bandwidth>,<preamble>\n
  *   Example: CFG:915.0,96.0,50.0,467.0,32\n
- *   Response: CFG_OK\n or CFG_ERR:<message>\n
+ *   Response: CFG_OK:<params>\n or CFG_ERR:<message>\n
  * 
- * Serial Protocol to Mac (after configuration):
+ * Serial Protocol to Mac (USB - unchanged):
  *   [0x7E][LEN_HI][LEN_LO][RSSI_INT][RSSI_FRAC][SNR_INT][SNR_FRAC][DATA...][CHECKSUM][0x7E]
  * 
+ * BLE Protocol to iOS:
+ *   TX Characteristic (notify): [RSSI_FLOAT_LE][SNR_FLOAT_LE][DATA...]
+ *   RX Characteristic (write): Configuration commands as UTF-8 strings
+ *   Large packets are chunked with sequence numbers if needed
+ * 
  * TFT Display:
- *   - Shows RSSI, SNR, packet counts, and radio settings
+ *   - Shows RSSI, SNR, packet counts, radio settings, and BLE status
  *   - Updates only during idle periods (no packets for >750ms)
- *   - USB packet forwarding always has priority
  */
 
 #include <Arduino.h>
@@ -25,12 +35,15 @@
 #include <RadioLib.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
-// Set to true to enable debug output (interferes with binary protocol!)
 #define DEBUG_OUTPUT        false
 
 // Pin Definitions - Heltec Vision Master T190 LoRa
@@ -46,33 +59,33 @@
 // Pin Definitions - TFT Display (ST7789V3)
 #define TFT_CS      39
 #define TFT_RST     40
-#define TFT_DC      47   // RS pin
+#define TFT_DC      47
 #define TFT_SCLK    38
-#define TFT_MOSI    48   // SDA pin
-#define TFT_LED_EN  17   // Backlight control (AW9364DNR)
-#define TFT_PWR     7    // VTFT power control (LOW = enabled)
+#define TFT_MOSI    48
+#define TFT_LED_EN  17
+#define TFT_PWR     7
 
 // Display dimensions (landscape orientation)
 #define TFT_WIDTH   320
 #define TFT_HEIGHT  170
 
-// Default RF Configuration (used if no config received within timeout)
+// Default RF Configuration
 #define DEFAULT_FREQUENCY       915.0
-#define DEFAULT_BITRATE         96.0      // 96 kbps
-#define DEFAULT_DEVIATION       50.0      // 50 kHz
-#define DEFAULT_RX_BANDWIDTH    467.0     // 467 kHz
-#define DEFAULT_PREAMBLE_LEN    32        // 32 bits
+#define DEFAULT_BITRATE         96.0
+#define DEFAULT_DEVIATION       50.0
+#define DEFAULT_RX_BANDWIDTH    467.0
+#define DEFAULT_PREAMBLE_LEN    32
 #define RF_DATA_SHAPING         0.5
 
-// Configuration timeout (ms) - wait this long for config before using defaults
+// Configuration timeout
 #define CONFIG_TIMEOUT_MS       120000    // 2 minutes
 
 // Display update configuration
-#define DISPLAY_IDLE_THRESHOLD_MS   750   // Only update display if no packets for this long
-#define DISPLAY_UPDATE_INTERVAL_MS  500   // Minimum time between display updates
-#define DISPLAY_STATS_INTERVAL_MS   1000  // Update stats section this often
+#define DISPLAY_IDLE_THRESHOLD_MS   750
+#define DISPLAY_UPDATE_INTERVAL_MS  500
+#define DISPLAY_STATS_INTERVAL_MS   1000
 
-// Sync word "RAPT" 
+// Sync word "RAPT"
 const uint8_t SYNC_WORD[] = {0x52, 0x41, 0x50, 0x54};
 #define SYNC_WORD_LEN       4
 
@@ -80,6 +93,21 @@ const uint8_t SYNC_WORD[] = {0x52, 0x41, 0x50, 0x54};
 #define FRAME_DELIMITER     0x7E
 #define SERIAL_BAUD         921600
 #define MAX_PACKET_SIZE     255
+
+// BLE Configuration
+#define BLE_DEVICE_NAME     "RaptorModem"
+#define BLE_PASSKEY         123456      // Static passkey for pairing
+
+// Nordic UART Service UUIDs
+#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  // Write (phone → modem)
+#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  // Notify (modem → phone)
+
+// BLE packet header size (RSSI float + SNR float = 8 bytes)
+#define BLE_HEADER_SIZE     8
+// BLE MTU - we'll negotiate higher but start conservative
+#define BLE_DEFAULT_MTU     20
+#define BLE_MAX_MTU         512
 
 // Colors for display
 #define COLOR_BG            ST77XX_BLACK
@@ -91,6 +119,7 @@ const uint8_t SYNC_WORD[] = {0x52, 0x41, 0x50, 0x54};
 #define COLOR_WARN          ST77XX_YELLOW
 #define COLOR_BAD           ST77XX_RED
 #define COLOR_ACCENT        0x07FF   // Cyan
+#define COLOR_BLE           0x001F   // Blue for BLE indicator
 
 // ============================================================================
 // Debug macros
@@ -107,7 +136,7 @@ const uint8_t SYNC_WORD[] = {0x52, 0x41, 0x50, 0x54};
 #endif
 
 // ============================================================================
-// Runtime RF Configuration (set by Mac app or defaults)
+// Runtime RF Configuration
 // ============================================================================
 
 float rfFrequency = DEFAULT_FREQUENCY;
@@ -117,16 +146,14 @@ float rfRxBandwidth = DEFAULT_RX_BANDWIDTH;
 uint16_t rfPreambleLen = DEFAULT_PREAMBLE_LEN;
 
 bool configured = false;
+bool configuredViaBLE = false;  // Track config source for display
 
 // ============================================================================
-// Global Objects
+// Global Objects - Radio & Display
 // ============================================================================
 
-// LoRa Radio (uses FSPI)
 SPIClass* spi = nullptr;
 SX1262* radio = nullptr;
-
-// TFT Display (uses HSPI)
 SPIClass* tftSpi = nullptr;
 Adafruit_ST7789* tft = nullptr;
 
@@ -136,8 +163,8 @@ uint32_t packetsForwarded = 0;
 uint32_t packetsRejectedNoRapt = 0;
 uint32_t packetsRejectedCrc = 0;
 uint32_t packetsRadioError = 0;
-uint32_t packetsSmall = 0;      // < 100 bytes (telemetry)
-uint32_t packetsLarge = 0;      // >= 100 bytes (image data)
+uint32_t packetsSmall = 0;
+uint32_t packetsLarge = 0;
 float lastRssi = -120.0;
 float lastSnr = 0.0;
 
@@ -147,14 +174,26 @@ uint32_t lastDisplayUpdate = 0;
 uint32_t lastStatsDisplayUpdate = 0;
 bool displayNeedsFullRedraw = true;
 
-// Previous values for partial display updates
 float prevRssi = -999;
 float prevSnr = -999;
 uint32_t prevPacketsForwarded = 0;
 uint32_t prevPacketsTotal = 0;
+bool prevBleConnected = false;
 
 // ============================================================================
-// CRC32 (IEEE 802.3 polynomial - same as protocol)
+// Global Objects - BLE
+// ============================================================================
+
+BLEServer* pServer = nullptr;
+BLECharacteristic* pTxCharacteristic = nullptr;
+BLECharacteristic* pRxCharacteristic = nullptr;
+bool bleDeviceConnected = false;
+bool bleOldDeviceConnected = false;
+uint16_t bleMTU = BLE_DEFAULT_MTU;
+String bleConfigBuffer = "";  // Buffer for config commands received over BLE
+
+// ============================================================================
+// CRC32 (IEEE 802.3 polynomial)
 // ============================================================================
 
 uint32_t crc32(const uint8_t* data, size_t len) {
@@ -166,6 +205,211 @@ uint32_t crc32(const uint8_t* data, size_t len) {
         }
     }
     return ~crc;
+}
+
+// ============================================================================
+// BLE Callbacks
+// ============================================================================
+
+class ServerCallbacks : public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) {
+        bleDeviceConnected = true;
+        
+        // Request higher MTU for larger packets
+        // iOS typically supports 185-512, Android varies
+        pServer->updatePeerMTU(param->connect.conn_id, BLE_MAX_MTU);
+        
+        Serial.println("[BLE] Device connected");
+        displayNeedsFullRedraw = true;
+    }
+
+    void onDisconnect(BLEServer* pServer) {
+        bleDeviceConnected = false;
+        bleMTU = BLE_DEFAULT_MTU;
+        Serial.println("[BLE] Device disconnected");
+        displayNeedsFullRedraw = true;
+        
+        // Restart advertising
+        pServer->startAdvertising();
+    }
+
+    void onMtuChanged(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) {
+        bleMTU = param->mtu.mtu;
+        Serial.printf("[BLE] MTU changed to: %d\n", bleMTU);
+    }
+};
+
+// Forward declarations - must be before RxCallbacks
+void handleBLEConfig(String command);
+bool parseConfigCommand(const String& cmd);
+void sendBLEResponse(const String& response);
+
+class RxCallbacks : public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic* pCharacteristic) {
+        String rxValue = pCharacteristic->getValue();
+        
+        if (rxValue.length() > 0) {
+            // Append to config buffer
+            bleConfigBuffer += rxValue;
+            
+            DBGF("[BLE] Received %d bytes: %s\n", rxValue.length(), rxValue.c_str());
+            
+            // Check for complete command (ends with newline)
+            int newlinePos = bleConfigBuffer.indexOf('\n');
+            if (newlinePos >= 0) {
+                String command = bleConfigBuffer.substring(0, newlinePos);
+                bleConfigBuffer = bleConfigBuffer.substring(newlinePos + 1);
+                
+                Serial.printf("[BLE] Command received: %s\n", command.c_str());
+                
+                // Process the command (will be handled in main loop or config wait)
+                // For now, echo it to USB serial for debugging
+                if (command.startsWith("CFG:")) {
+                    // Configuration command - handle it
+                    handleBLEConfig(command);
+                }
+            }
+        }
+    }
+};
+
+// ============================================================================
+// BLE Security Callbacks (must be before initBLE)
+// ============================================================================
+
+class MyBLESecurityCallbacks : public BLESecurityCallbacks {
+public:
+    uint32_t onPassKeyRequest() override {
+        Serial.println("[BLE] PassKey Request");
+        return BLE_PASSKEY;
+    }
+
+    void onPassKeyNotify(uint32_t pass_key) override {
+        Serial.printf("[BLE] PassKey Notify: %06d\n", pass_key);
+    }
+
+    bool onConfirmPIN(uint32_t pass_key) override {
+        Serial.printf("[BLE] Confirm PIN: %06d\n", pass_key);
+        return true;
+    }
+
+    bool onSecurityRequest() override {
+        Serial.println("[BLE] Security Request");
+        return true;
+    }
+
+    void onAuthenticationComplete(esp_ble_auth_cmpl_t auth_cmpl) override {
+        if (auth_cmpl.success) {
+            Serial.println("[BLE] Authentication SUCCESS");
+        } else {
+            Serial.printf("[BLE] Authentication FAILED, reason: %d\n", auth_cmpl.fail_reason);
+        }
+    }
+};
+
+// ============================================================================
+// BLE Initialization
+// ============================================================================
+
+void initBLE() {
+    Serial.println("[BLE] Initializing Bluetooth...");
+    
+    // Create BLE Device
+    BLEDevice::init(BLE_DEVICE_NAME);
+    
+    // Set up security with static passkey
+    BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
+    BLEDevice::setSecurityCallbacks(new MyBLESecurityCallbacks());
+    
+    // Security settings for static passkey
+    esp_ble_auth_req_t auth_req = ESP_LE_AUTH_REQ_SC_MITM_BOND;
+    esp_ble_io_cap_t iocap = ESP_IO_CAP_OUT;  // Display only (shows passkey)
+    uint8_t key_size = 16;
+    uint8_t init_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
+    uint8_t rsp_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
+    uint32_t passkey = BLE_PASSKEY;
+    uint8_t auth_option = ESP_BLE_ONLY_ACCEPT_SPECIFIED_AUTH_DISABLE;
+    uint8_t oob_support = ESP_BLE_OOB_DISABLE;
+    
+    esp_ble_gap_set_security_param(ESP_BLE_SM_SET_STATIC_PASSKEY, &passkey, sizeof(uint32_t));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_AUTHEN_REQ_MODE, &auth_req, sizeof(uint8_t));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_IOCAP_MODE, &iocap, sizeof(uint8_t));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_MAX_KEY_SIZE, &key_size, sizeof(uint8_t));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_ONLY_ACCEPT_SPECIFIED_SEC_AUTH, &auth_option, sizeof(uint8_t));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_OOB_SUPPORT, &oob_support, sizeof(uint8_t));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY, &init_key, sizeof(uint8_t));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &rsp_key, sizeof(uint8_t));
+    
+    // Create BLE Server
+    pServer = BLEDevice::createServer();
+    pServer->setCallbacks(new ServerCallbacks());
+    
+    // Create BLE Service (Nordic UART Service)
+    BLEService* pService = pServer->createService(SERVICE_UUID);
+    
+    // Create TX Characteristic (Notify - modem to phone)
+    pTxCharacteristic = pService->createCharacteristic(
+        CHARACTERISTIC_UUID_TX,
+        BLECharacteristic::PROPERTY_NOTIFY
+    );
+    pTxCharacteristic->addDescriptor(new BLE2902());
+    
+    // Create RX Characteristic (Write - phone to modem)
+    pRxCharacteristic = pService->createCharacteristic(
+        CHARACTERISTIC_UUID_RX,
+        BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
+    );
+    pRxCharacteristic->setCallbacks(new RxCallbacks());
+    
+    // Start the service
+    pService->start();
+    
+    // Start advertising
+    BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    pAdvertising->setMinPreferred(0x06);  // Help with iPhone connection
+    pAdvertising->setMinPreferred(0x12);
+    BLEDevice::startAdvertising();
+    
+    Serial.println("[BLE] Bluetooth initialized - advertising as 'RaptorModem'");
+    Serial.printf("[BLE] Passkey: %06d\n", BLE_PASSKEY);
+}
+
+// ============================================================================
+// BLE Response Helper
+// ============================================================================
+
+void sendBLEResponse(const String& response) {
+    if (bleDeviceConnected && pTxCharacteristic) {
+        // For config responses, send as notification
+        // Prepend with special marker to distinguish from packet data
+        String markedResponse = "RSP:" + response;
+        pTxCharacteristic->setValue((uint8_t*)markedResponse.c_str(), markedResponse.length());
+        pTxCharacteristic->notify();
+        Serial.printf("[BLE] Sent response: %s\n", response.c_str());
+    }
+}
+
+// ============================================================================
+// BLE Config Handler
+// ============================================================================
+
+void handleBLEConfig(String command) {
+    // Remove "CFG:" prefix if present
+    if (command.startsWith("CFG:")) {
+        if (parseConfigCommand(command)) {
+            // Success - send confirmation
+            char response[100];
+            snprintf(response, sizeof(response), "CFG_OK:%.1f,%.1f,%.1f,%.1f,%d",
+                     rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, rfPreambleLen);
+            sendBLEResponse(response);
+            configuredViaBLE = true;
+            configured = true;
+        } else {
+            sendBLEResponse("CFG_ERR:Invalid parameters");
+        }
+    }
 }
 
 // ============================================================================
@@ -182,9 +426,9 @@ void IRAM_ATTR onPacketReceived() {
 
 void handlePacket();
 void forwardPacket(uint8_t* data, int len, float rssi, float snr);
+void forwardPacketBLE(uint8_t* data, int len, float rssi, float snr);
 void sendStats();
 bool waitForConfiguration();
-bool parseConfigCommand(const String& cmd);
 bool initializeRadio();
 void initDisplay();
 void drawStaticUI();
@@ -199,24 +443,19 @@ void showConfiguredScreen();
 // ============================================================================
 
 void initDisplay() {
-    // Enable TFT power
     pinMode(TFT_PWR, OUTPUT);
-    digitalWrite(TFT_PWR, LOW);  // LOW enables power
+    digitalWrite(TFT_PWR, LOW);
     delay(20);
     
-    // Initialize HSPI for TFT (separate from LoRa's FSPI)
     tftSpi = new SPIClass(HSPI);
     tftSpi->begin(TFT_SCLK, -1, TFT_MOSI, TFT_CS);
     
-    // Create display object
     tft = new Adafruit_ST7789(tftSpi, TFT_CS, TFT_DC, TFT_RST);
     
-    // Initialize display (170x320)
-    tft->init(TFT_HEIGHT, TFT_WIDTH);  // Note: swapped for landscape
-    tft->setRotation(1);  // Landscape mode
+    tft->init(TFT_HEIGHT, TFT_WIDTH);
+    tft->setRotation(1);
     tft->fillScreen(COLOR_BG);
     
-    // Enable backlight
     pinMode(TFT_LED_EN, OUTPUT);
     digitalWrite(TFT_LED_EN, HIGH);
     
@@ -250,148 +489,172 @@ void drawStaticUI() {
     tft->print("FREQ:");
     tft->setCursor(5, 60);
     tft->print("BR:");
+    tft->setCursor(5, 72);
+    tft->print("DEV:");
     
     // Settings labels (right column)
-    tft->setCursor(165, 48);
-    tft->print("DEV:");
-    tft->setCursor(165, 60);
+    tft->setCursor(110, 48);
     tft->print("BW:");
+    tft->setCursor(110, 60);
+    tft->print("PRE:");
+    tft->setCursor(110, 72);
+    tft->print("CFG:");
     
-    // Settings values
-    char buf[32];
+    // Settings values (left column)
     tft->setTextColor(COLOR_VALUE);
+    tft->setCursor(35, 48);
+    tft->printf("%.1f MHz", rfFrequency);
+    tft->setCursor(25, 60);
+    tft->printf("%.0f kbps", rfBitrate);
+    tft->setCursor(30, 72);
+    tft->printf("%.0f kHz", rfDeviation);
     
-    tft->setCursor(45, 48);
-    snprintf(buf, sizeof(buf), "%.3f MHz", rfFrequency);
-    tft->print(buf);
+    // Settings values (right column)
+    tft->setCursor(130, 48);
+    tft->printf("%.0f kHz", rfRxBandwidth);
+    tft->setCursor(135, 60);
+    tft->printf("%d bits", rfPreambleLen);
+    tft->setCursor(135, 72);
+    tft->print(configuredViaBLE ? "BLE" : "USB");
     
-    tft->setCursor(30, 60);
-    snprintf(buf, sizeof(buf), "%.0f kbps", rfBitrate);
-    tft->print(buf);
+    // Divider
+    tft->drawFastHLine(0, 85, TFT_WIDTH, 0x4208);
     
-    tft->setCursor(195, 48);
-    snprintf(buf, sizeof(buf), "%.0f kHz", rfDeviation);
-    tft->print(buf);
-    
-    tft->setCursor(190, 60);
-    snprintf(buf, sizeof(buf), "%.0f kHz", rfRxBandwidth);
-    tft->print(buf);
-    
-    // Signal Section
-    tft->drawFastHLine(0, 75, TFT_WIDTH, 0x4208);
+    // Signal section header
     tft->setTextColor(COLOR_LABEL);
-    tft->setCursor(5, 82);
-    tft->print("SIGNAL QUALITY");
+    tft->setCursor(5, 90);
+    tft->print("SIGNAL");
     
-    // Signal labels
-    tft->setTextSize(2);
-    tft->setTextColor(COLOR_LABEL);
-    tft->setCursor(5, 98);
-    tft->print("RSSI:");
-    tft->setCursor(165, 98);
-    tft->print("SNR:");
+    // BLE Status section (right side of signal area)
+    tft->setCursor(200, 90);
+    tft->print("BLUETOOTH");
     
-    // Stats Section
-    tft->drawFastHLine(0, 125, TFT_WIDTH, 0x4208);
-    tft->setTextSize(1);
-    tft->setTextColor(COLOR_LABEL);
-    tft->setCursor(5, 132);
+    // Stats section header
+    tft->setCursor(5, 135);
     tft->print("STATISTICS");
-    
-    // Stats labels
-    tft->setCursor(5, 148);
-    tft->print("PKT:");
-    tft->setCursor(100, 148);
-    tft->print("FWD:");
-    tft->setCursor(200, 148);
-    tft->print("RATE:");
-    
-    // Status bar
-    tft->drawFastHLine(0, 160, TFT_WIDTH, 0x4208);
-    tft->setTextColor(COLOR_GOOD);
-    tft->setCursor(5, 164);
-    tft->print("LISTENING...");
     
     displayNeedsFullRedraw = false;
 }
 
 void updateSignalDisplay() {
-    // Only update if values changed significantly
-    if (abs(lastRssi - prevRssi) < 0.5 && abs(lastSnr - prevSnr) < 0.5) {
+    // Only update if values changed
+    if (lastRssi == prevRssi && lastSnr == prevSnr && bleDeviceConnected == prevBleConnected) {
         return;
     }
     
-    char buf[16];
+    // Clear signal value area
+    tft->fillRect(5, 100, 190, 30, COLOR_BG);
     
-    // Clear previous RSSI value
-    tft->fillRect(65, 98, 90, 20, COLOR_BG);
-    
-    // Draw new RSSI with color coding
-    uint16_t rssiColor = COLOR_GOOD;
-    if (lastRssi < -110) rssiColor = COLOR_BAD;
-    else if (lastRssi < -90) rssiColor = COLOR_WARN;
-    
+    // RSSI
     tft->setTextSize(2);
+    uint16_t rssiColor = lastRssi > -80 ? COLOR_GOOD : (lastRssi > -100 ? COLOR_WARN : COLOR_BAD);
     tft->setTextColor(rssiColor);
-    tft->setCursor(65, 98);
-    snprintf(buf, sizeof(buf), "%.0f", lastRssi);
-    tft->print(buf);
+    tft->setCursor(5, 105);
+    tft->printf("%.0f", lastRssi);
     tft->setTextSize(1);
-    tft->setCursor(110, 105);
-    tft->print("dBm");
+    tft->print(" dBm");
     
-    // Clear previous SNR value
-    tft->fillRect(205, 98, 90, 20, COLOR_BG);
-    
-    // Draw new SNR with color coding
-    uint16_t snrColor = COLOR_GOOD;
-    if (lastSnr < 0) snrColor = COLOR_BAD;
-    else if (lastSnr < 5) snrColor = COLOR_WARN;
-    
+    // SNR
     tft->setTextSize(2);
+    uint16_t snrColor = lastSnr > 5 ? COLOR_GOOD : (lastSnr > 0 ? COLOR_WARN : COLOR_BAD);
     tft->setTextColor(snrColor);
-    tft->setCursor(205, 98);
-    snprintf(buf, sizeof(buf), "%.1f", lastSnr);
-    tft->print(buf);
+    tft->setCursor(90, 105);
+    tft->printf("%.1f", lastSnr);
     tft->setTextSize(1);
-    tft->setCursor(260, 105);
-    tft->print("dB");
+    tft->print(" dB");
+    
+    // BLE Status area
+    tft->fillRect(200, 100, 120, 30, COLOR_BG);
+    if (bleDeviceConnected) {
+        tft->setTextSize(2);
+        tft->setTextColor(COLOR_GOOD);
+        tft->setCursor(200, 105);
+        tft->print("CONNECTED");
+    } else {
+        tft->setTextSize(1);
+        tft->setTextColor(COLOR_WARN);
+        tft->setCursor(200, 100);
+        tft->print("Advertising...");
+        tft->setCursor(200, 112);
+        tft->setTextColor(COLOR_VALUE);
+        tft->printf("PIN: %06d", BLE_PASSKEY);
+    }
     
     prevRssi = lastRssi;
     prevSnr = lastSnr;
+    prevBleConnected = bleDeviceConnected;
 }
 
 void updateStatsDisplay() {
+    // Only update periodically
+    static uint32_t lastUpdate = 0;
+    if (millis() - lastUpdate < 500) return;
+    lastUpdate = millis();
+    
     // Only update if values changed
     if (packetsForwarded == prevPacketsForwarded && packetsTotal == prevPacketsTotal) {
         return;
     }
     
-    char buf[32];
+    // Clear stats value area
+    tft->fillRect(5, 145, 310, 25, COLOR_BG);
+    
+    // Stats row 1
     tft->setTextSize(1);
-    
-    // Clear and update packet count
-    tft->fillRect(30, 148, 60, 10, COLOR_BG);
+    tft->setTextColor(COLOR_LABEL);
+    tft->setCursor(5, 147);
+    tft->print("RX:");
     tft->setTextColor(COLOR_VALUE);
-    tft->setCursor(30, 148);
-    snprintf(buf, sizeof(buf), "%lu", packetsTotal);
-    tft->print(buf);
+    tft->printf("%lu", packetsTotal);
     
-    // Clear and update forwarded count
-    tft->fillRect(130, 148, 60, 10, COLOR_BG);
+    tft->setTextColor(COLOR_LABEL);
+    tft->setCursor(70, 147);
+    tft->print("FWD:");
     tft->setTextColor(COLOR_GOOD);
-    tft->setCursor(130, 148);
-    snprintf(buf, sizeof(buf), "%lu", packetsForwarded);
-    tft->print(buf);
+    tft->printf("%lu", packetsForwarded);
     
-    // Clear and update success rate
-    tft->fillRect(240, 148, 70, 10, COLOR_BG);
-    float rate = packetsTotal > 0 ? (100.0 * packetsForwarded / packetsTotal) : 0.0;
-    uint16_t rateColor = rate > 90 ? COLOR_GOOD : (rate > 50 ? COLOR_WARN : COLOR_BAD);
-    tft->setTextColor(rateColor);
-    tft->setCursor(240, 148);
-    snprintf(buf, sizeof(buf), "%.1f%%", rate);
-    tft->print(buf);
+    tft->setTextColor(COLOR_LABEL);
+    tft->setCursor(140, 147);
+    tft->print("ERR:");
+    tft->setTextColor(packetsRejectedCrc + packetsRejectedNoRapt > 0 ? COLOR_BAD : COLOR_VALUE);
+    tft->printf("%lu", packetsRejectedCrc + packetsRejectedNoRapt);
+    
+    // Success rate
+    float rate = packetsTotal > 0 ? (100.0f * packetsForwarded / packetsTotal) : 0.0f;
+    tft->setTextColor(COLOR_LABEL);
+    tft->setCursor(210, 147);
+    tft->print("RATE:");
+    tft->setTextColor(rate > 90 ? COLOR_GOOD : (rate > 70 ? COLOR_WARN : COLOR_BAD));
+    tft->printf("%.1f%%", rate);
+    
+    // Stats row 2 - packet sizes
+    tft->setTextColor(COLOR_LABEL);
+    tft->setCursor(5, 159);
+    tft->print("TELEM:");
+    tft->setTextColor(COLOR_VALUE);
+    tft->printf("%lu", packetsSmall);
+    
+    tft->setTextColor(COLOR_LABEL);
+    tft->setCursor(80, 159);
+    tft->print("IMAGE:");
+    tft->setTextColor(COLOR_VALUE);
+    tft->printf("%lu", packetsLarge);
+    
+    // BLE indicator in stats
+    tft->setCursor(160, 159);
+    tft->setTextColor(COLOR_LABEL);
+    tft->print("BLE:");
+    tft->setTextColor(bleDeviceConnected ? COLOR_GOOD : COLOR_LABEL);
+    tft->print(bleDeviceConnected ? "ON" : "OFF");
+    
+    // MTU if connected
+    if (bleDeviceConnected) {
+        tft->setCursor(210, 159);
+        tft->setTextColor(COLOR_LABEL);
+        tft->print("MTU:");
+        tft->setTextColor(COLOR_VALUE);
+        tft->printf("%d", bleMTU);
+    }
     
     prevPacketsForwarded = packetsForwarded;
     prevPacketsTotal = packetsTotal;
@@ -400,63 +663,62 @@ void updateStatsDisplay() {
 void updateDisplay() {
     uint32_t now = millis();
     
-    // Check if we should update display
-    // Only update if no packet received recently (USB priority)
+    // Only update display during idle periods
     if (now - lastPacketTime < DISPLAY_IDLE_THRESHOLD_MS) {
-        return;  // Too close to last packet, skip update
-    }
-    
-    // Throttle update rate
-    if (now - lastDisplayUpdate < DISPLAY_UPDATE_INTERVAL_MS) {
         return;
     }
     
+    // Rate limit display updates
+    if (now - lastDisplayUpdate < DISPLAY_UPDATE_INTERVAL_MS) {
+        return;
+    }
     lastDisplayUpdate = now;
     
-    // Full redraw if needed
     if (displayNeedsFullRedraw) {
         drawStaticUI();
     }
     
-    // Always update signal section when display updates
     updateSignalDisplay();
-    
-    // Update stats periodically
-    if (now - lastStatsDisplayUpdate > DISPLAY_STATS_INTERVAL_MS) {
-        updateStatsDisplay();
-        lastStatsDisplayUpdate = now;
-    }
+    updateStatsDisplay();
 }
 
 void showWaitingScreen() {
     tft->fillScreen(COLOR_BG);
     
-    // Header
-    tft->fillRect(0, 0, TFT_WIDTH, 24, COLOR_HEADER);
+    tft->setTextColor(COLOR_ACCENT);
+    tft->setTextSize(2);
+    tft->setCursor(20, 20);
+    tft->print("RAPTORHAB MODEM");
+    
     tft->setTextColor(COLOR_TEXT);
-    tft->setTextSize(2);
-    tft->setCursor(10, 4);
-    tft->print("RAPTORHAB GROUND STATION");
+    tft->setTextSize(1);
+    tft->setCursor(20, 50);
+    tft->print("Waiting for configuration...");
     
-    tft->drawFastHLine(0, 25, TFT_WIDTH, COLOR_ACCENT);
+    tft->setCursor(20, 70);
+    tft->print("Connect via USB or Bluetooth");
     
-    // Waiting message
+    // BLE Info
+    tft->setTextColor(COLOR_BLE);
+    tft->setCursor(20, 95);
+    tft->print("Bluetooth: ");
+    tft->setTextColor(COLOR_VALUE);
+    tft->print(BLE_DEVICE_NAME);
+    
+    tft->setTextColor(COLOR_BLE);
+    tft->setCursor(20, 110);
+    tft->print("Passkey: ");
+    tft->setTextColor(COLOR_GOOD);
+    tft->printf("%06d", BLE_PASSKEY);
+    
+    // Default settings info
     tft->setTextColor(COLOR_WARN);
-    tft->setTextSize(2);
-    tft->setCursor(20, 60);
-    tft->print("WAITING FOR CONFIG");
+    tft->setCursor(20, 135);
+    tft->print("Default: 915MHz, 96kbps");
     
     tft->setTextColor(COLOR_LABEL);
-    tft->setTextSize(1);
-    tft->setCursor(20, 90);
-    tft->print("Connect Mac app or wait for defaults...");
-    
-    // Show default settings
-    char buf[64];
-    tft->setTextColor(COLOR_VALUE);
-    tft->setCursor(20, 110);
-    snprintf(buf, sizeof(buf), "Default: %.1f MHz, %.0f kbps", DEFAULT_FREQUENCY, DEFAULT_BITRATE);
-    tft->print(buf);
+    tft->setCursor(20, 155);
+    tft->printf("Timeout: %ds", CONFIG_TIMEOUT_MS / 1000);
 }
 
 void showConfiguredScreen() {
@@ -465,181 +727,151 @@ void showConfiguredScreen() {
 }
 
 // ============================================================================
-// Configuration Parsing
-// ============================================================================
-
-bool parseConfigCommand(const String& cmd) {
-    // Expected format: CFG:<freq>,<bitrate>,<deviation>,<bandwidth>,<preamble>
-    // Example: CFG:915.0,96.0,50.0,467.0,32
-    
-    if (!cmd.startsWith("CFG:")) {
-        return false;
-    }
-    
-    String params = cmd.substring(4);  // Remove "CFG:"
-    params.trim();
-    
-    // Parse comma-separated values
-    int idx1 = params.indexOf(',');
-    int idx2 = params.indexOf(',', idx1 + 1);
-    int idx3 = params.indexOf(',', idx2 + 1);
-    int idx4 = params.indexOf(',', idx3 + 1);
-    
-    if (idx1 < 0 || idx2 < 0 || idx3 < 0 || idx4 < 0) {
-        Serial.println("CFG_ERR:Invalid format - expected CFG:freq,bitrate,deviation,bandwidth,preamble");
-        return false;
-    }
-    
-    float freq = params.substring(0, idx1).toFloat();
-    float bitrate = params.substring(idx1 + 1, idx2).toFloat();
-    float deviation = params.substring(idx2 + 1, idx3).toFloat();
-    float bandwidth = params.substring(idx3 + 1, idx4).toFloat();
-    int preamble = params.substring(idx4 + 1).toInt();
-    
-    // Validate ranges
-    if (freq < 150.0 || freq > 960.0) {
-        Serial.printf("CFG_ERR:Frequency %.1f out of range (150-960 MHz)\n", freq);
-        return false;
-    }
-    if (bitrate < 1.0 || bitrate > 300.0) {
-        Serial.printf("CFG_ERR:Bitrate %.1f out of range (1-300 kbps)\n", bitrate);
-        return false;
-    }
-    if (deviation < 1.0 || deviation > 200.0) {
-        Serial.printf("CFG_ERR:Deviation %.1f out of range (1-200 kHz)\n", deviation);
-        return false;
-    }
-    if (bandwidth < 50.0 || bandwidth > 500.0) {
-        Serial.printf("CFG_ERR:Bandwidth %.1f out of range (50-500 kHz)\n", bandwidth);
-        return false;
-    }
-    if (preamble < 8 || preamble > 128) {
-        Serial.printf("CFG_ERR:Preamble %d out of range (8-128 bits)\n", preamble);
-        return false;
-    }
-    
-    // Store configuration
-    rfFrequency = freq;
-    rfBitrate = bitrate;
-    rfDeviation = deviation;
-    rfRxBandwidth = bandwidth;
-    rfPreambleLen = preamble;
-    
-    return true;
-}
-
-// ============================================================================
-// Wait for Configuration from Mac App
+// Configuration Waiting
 // ============================================================================
 
 bool waitForConfiguration() {
-    Serial.println("\n[WAIT_CFG] Waiting for configuration from Mac app...");
-    Serial.println("[WAIT_CFG] Send: CFG:<freq>,<bitrate>,<deviation>,<bandwidth>,<preamble>");
-    Serial.printf("[WAIT_CFG] Example: CFG:%.1f,%.1f,%.1f,%.1f,%d\n", 
-                  DEFAULT_FREQUENCY, DEFAULT_BITRATE, DEFAULT_DEVIATION, 
-                  DEFAULT_RX_BANDWIDTH, DEFAULT_PREAMBLE_LEN);
-    Serial.println("[WAIT_CFG] Or wait 2 minutes for defaults...");
-    
-    // Show waiting screen on TFT
     showWaitingScreen();
     
-    String inputBuffer = "";
+    Serial.println("\n[CONFIG] Waiting for configuration via USB or Bluetooth...");
+    Serial.printf("[CONFIG] Send: CFG:<freq>,<bitrate>,<deviation>,<bandwidth>,<preamble>\n");
+    Serial.printf("[CONFIG] Example: CFG:915.0,96.0,50.0,467.0,32\n");
+    Serial.printf("[CONFIG] Timeout: %d seconds (will use defaults)\n\n", CONFIG_TIMEOUT_MS / 1000);
+    
+    String usbBuffer = "";
     uint32_t startTime = millis();
-    uint32_t lastPromptTime = 0;
-    uint32_t lastCountdownUpdate = 0;
+    uint32_t lastDot = 0;
     
     while (millis() - startTime < CONFIG_TIMEOUT_MS) {
-        // Send periodic prompts so Mac app knows we're waiting
-        if (millis() - lastPromptTime > 1000) {
-            Serial.println("[WAIT_CFG]");
-            lastPromptTime = millis();
-        }
-        
-        // Update countdown on display
-        if (millis() - lastCountdownUpdate > 1000) {
-            int remaining = (CONFIG_TIMEOUT_MS - (millis() - startTime)) / 1000;
-            char buf[32];
-            tft->fillRect(20, 130, 280, 20, COLOR_BG);
-            tft->setTextColor(COLOR_LABEL);
-            tft->setTextSize(1);
-            tft->setCursor(20, 130);
-            snprintf(buf, sizeof(buf), "Timeout in %d seconds...", remaining);
-            tft->print(buf);
-            lastCountdownUpdate = millis();
-        }
-        
-        // Check for serial input
+        // Check USB Serial
         while (Serial.available()) {
             char c = Serial.read();
-            
             if (c == '\n' || c == '\r') {
-                if (inputBuffer.length() > 0) {
-                    inputBuffer.trim();
-                    
-                    if (parseConfigCommand(inputBuffer)) {
-                        Serial.printf("CFG_OK:%.1f,%.1f,%.1f,%.1f,%d\n",
-                                     rfFrequency, rfBitrate, rfDeviation, 
-                                     rfRxBandwidth, rfPreambleLen);
-                        return true;
+                if (usbBuffer.length() > 0) {
+                    Serial.printf("[USB] Received: %s\n", usbBuffer.c_str());
+                    if (usbBuffer.startsWith("CFG:")) {
+                        if (parseConfigCommand(usbBuffer)) {
+                            Serial.printf("CFG_OK:%.1f,%.1f,%.1f,%.1f,%d\n",
+                                         rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, rfPreambleLen);
+                            configuredViaBLE = false;
+                            return true;
+                        } else {
+                            Serial.println("CFG_ERR:Invalid parameters");
+                        }
                     }
-                    
-                    inputBuffer = "";
+                    usbBuffer = "";
                 }
-            } else if (inputBuffer.length() < 100) {
-                inputBuffer += c;
+            } else {
+                usbBuffer += c;
+            }
+        }
+        
+        // Check if BLE config was received (handled in callback)
+        if (configured && configuredViaBLE) {
+            Serial.println("[CONFIG] Configuration received via Bluetooth");
+            return true;
+        }
+        
+        // Progress indicator
+        if (millis() - lastDot > 1000) {
+            lastDot = millis();
+            Serial.print(".");
+            
+            // Update display with countdown
+            int remaining = (CONFIG_TIMEOUT_MS - (millis() - startTime)) / 1000;
+            tft->fillRect(100, 155, 50, 10, COLOR_BG);
+            tft->setTextColor(COLOR_LABEL);
+            tft->setCursor(100, 155);
+            tft->printf("%ds", remaining);
+            
+            // Update BLE status
+            tft->fillRect(200, 95, 120, 30, COLOR_BG);
+            tft->setCursor(200, 95);
+            if (bleDeviceConnected) {
+                tft->setTextColor(COLOR_GOOD);
+                tft->print("BLE Connected!");
+            } else {
+                tft->setTextColor(COLOR_WARN);
+                tft->print("Searching...");
             }
         }
         
         delay(10);
     }
     
-    // Timeout - use defaults
-    Serial.println("[WAIT_CFG] Timeout - using default configuration");
-    Serial.printf("CFG_OK:%.1f,%.1f,%.1f,%.1f,%d\n",
-                 rfFrequency, rfBitrate, rfDeviation, 
-                 rfRxBandwidth, rfPreambleLen);
+    Serial.println("\n[CONFIG] Timeout - using defaults");
+    return false;
+}
+
+bool parseConfigCommand(const String& cmd) {
+    // Expected: CFG:<freq>,<bitrate>,<deviation>,<bandwidth>,<preamble>
+    if (!cmd.startsWith("CFG:")) return false;
+    
+    String params = cmd.substring(4);
+    int comma1 = params.indexOf(',');
+    int comma2 = params.indexOf(',', comma1 + 1);
+    int comma3 = params.indexOf(',', comma2 + 1);
+    int comma4 = params.indexOf(',', comma3 + 1);
+    
+    if (comma1 < 0 || comma2 < 0 || comma3 < 0 || comma4 < 0) {
+        Serial.println("[CONFIG] Parse error: missing commas");
+        return false;
+    }
+    
+    float freq = params.substring(0, comma1).toFloat();
+    float bitrate = params.substring(comma1 + 1, comma2).toFloat();
+    float deviation = params.substring(comma2 + 1, comma3).toFloat();
+    float bandwidth = params.substring(comma3 + 1, comma4).toFloat();
+    int preamble = params.substring(comma4 + 1).toInt();
+    
+    // Validate
+    if (freq < 150.0 || freq > 960.0) {
+        Serial.printf("[CONFIG] Invalid frequency: %.1f\n", freq);
+        return false;
+    }
+    if (bitrate < 1.0 || bitrate > 300.0) {
+        Serial.printf("[CONFIG] Invalid bitrate: %.1f\n", bitrate);
+        return false;
+    }
+    if (deviation < 1.0 || deviation > 200.0) {
+        Serial.printf("[CONFIG] Invalid deviation: %.1f\n", deviation);
+        return false;
+    }
+    if (bandwidth < 10.0 || bandwidth > 500.0) {
+        Serial.printf("[CONFIG] Invalid bandwidth: %.1f\n", bandwidth);
+        return false;
+    }
+    if (preamble < 8 || preamble > 65535) {
+        Serial.printf("[CONFIG] Invalid preamble: %d\n", preamble);
+        return false;
+    }
+    
+    rfFrequency = freq;
+    rfBitrate = bitrate;
+    rfDeviation = deviation;
+    rfRxBandwidth = bandwidth;
+    rfPreambleLen = preamble;
+    
+    Serial.printf("[CONFIG] Applied: Freq=%.1f BR=%.1f Dev=%.1f BW=%.1f Pre=%d\n",
+                  rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, rfPreambleLen);
+    
     return true;
 }
 
 // ============================================================================
-// Initialize Radio with Current Configuration
+// Radio Initialization
 // ============================================================================
 
 bool initializeRadio() {
-    // Initialize SPI
-    DBGLN("[GS] Initializing SPI...");
+    Serial.println("[RADIO] Initializing SX1262...");
+    
     spi = new SPIClass(FSPI);
     spi->begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS);
     
-    pinMode(LORA_NSS, OUTPUT);
-    digitalWrite(LORA_NSS, HIGH);
-    
-    // Reset radio
-    DBGLN("[GS] Resetting SX1262...");
-    pinMode(LORA_RST, OUTPUT);
-    digitalWrite(LORA_RST, LOW);
-    delay(10);
-    digitalWrite(LORA_RST, HIGH);
-    delay(100);
-    
-    // Wait for BUSY
-    pinMode(LORA_BUSY, INPUT);
-    uint32_t busyWait = millis();
-    while (digitalRead(LORA_BUSY) == HIGH) {
-        delay(1);
-        if (millis() - busyWait > 1000) {
-            Serial.println("[ERROR] SX1262 BUSY timeout");
-            return false;
-        }
-    }
-    
-    // Create radio
-    DBGLN("[GS] Creating radio module...");
-    Module* mod = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY, *spi, SPISettings(2000000, MSBFIRST, SPI_MODE0));
+    Module* mod = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY, *spi);
     radio = new SX1262(mod);
     
-    // Initialize FSK mode with TCXO at 1.8V
-    Serial.printf("[GS] Initializing FSK: Freq=%.1f BR=%.1f Dev=%.1f BW=%.1f Pre=%d\n",
+    Serial.printf("[RADIO] Initializing FSK: Freq=%.1f BR=%.1f Dev=%.1f BW=%.1f Pre=%d\n",
                   rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, rfPreambleLen);
     
     int state = radio->beginFSK(rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, 10, rfPreambleLen, 1.8, false);
@@ -649,18 +881,15 @@ bool initializeRadio() {
         return false;
     }
     
-    DBGLN("[GS] SX1262 initialized!");
-    
-    // Configure radio
     radio->setSyncWord(const_cast<uint8_t*>(SYNC_WORD), SYNC_WORD_LEN);
     radio->variablePacketLengthMode(MAX_PACKET_SIZE);
     radio->setDataShaping(RF_DATA_SHAPING);
-    radio->setCRC(0);  // Disable radio CRC - protocol handles it
+    radio->setCRC(0);
     
-    // Setup interrupt and start RX
     radio->setDio1Action(onPacketReceived);
     radio->startReceive();
     
+    Serial.println("[RADIO] SX1262 initialized successfully");
     return true;
 }
 
@@ -675,46 +904,45 @@ void setup() {
     Serial.println("\n========================================");
     Serial.println("RaptorHab Ground Station Bridge");
     Serial.println("Heltec Vision Master T190");
+    Serial.println("USB + Bluetooth LE Support");
     Serial.println("========================================\n");
     
     pinMode(USER_BUTTON, INPUT_PULLUP);
     
-    // Initialize TFT display first
+    // Initialize display
     Serial.println("[TFT] Initializing display...");
     initDisplay();
     Serial.println("[TFT] Display initialized");
     
-    // Wait for configuration from Mac app
+    // Initialize Bluetooth BEFORE waiting for config
+    initBLE();
+    
+    // Wait for configuration from USB or BLE
     waitForConfiguration();
     configured = true;
     
-    // Initialize radio with received (or default) configuration
+    // Initialize radio
     if (!initializeRadio()) {
         Serial.println("[ERROR] Radio initialization failed!");
         
-        // Show error on display
         tft->fillScreen(COLOR_BAD);
         tft->setTextColor(COLOR_TEXT);
         tft->setTextSize(2);
         tft->setCursor(20, 70);
         tft->print("RADIO INIT FAILED!");
-        tft->setTextSize(1);
-        tft->setCursor(20, 100);
-        tft->print("Please reset device");
         
-        while (1) { 
+        while (1) {
             Serial.println("[ERROR] Radio init failed - please reset");
-            delay(5000); 
+            delay(5000);
         }
     }
     
-    // Show configured screen
     showConfiguredScreen();
     
     Serial.printf("\n[CONFIG] Freq:%.1f BR:%.0f Dev:%.0f BW:%.0f Preamble:%d\n",
                   rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, rfPreambleLen);
     Serial.println("[READY] Listening for packets...");
-    Serial.println("[STATS] Starting - will report every 10 seconds");
+    Serial.println("[BLE] Bluetooth ready for connections");
     
     lastPacketTime = millis();
     lastDisplayUpdate = millis();
@@ -733,14 +961,22 @@ void loop() {
         lastPacketTime = millis();
     }
     
+    // Handle BLE connection state changes
+    if (bleDeviceConnected != bleOldDeviceConnected) {
+        if (bleDeviceConnected) {
+            Serial.println("[BLE] Client connected");
+        } else {
+            Serial.println("[BLE] Client disconnected");
+        }
+        bleOldDeviceConnected = bleDeviceConnected;
+        displayNeedsFullRedraw = true;
+    }
+    
     // Send stats every 10 seconds
     sendStats();
     
-    // Update display only during idle periods
-    // This ensures USB packet forwarding is never delayed
+    // Update display during idle periods
     updateDisplay();
-    
-    // No delay - spin as fast as possible
 }
 
 // ============================================================================
@@ -755,9 +991,9 @@ void sendStats() {
     
     char statsBuf[300];
     snprintf(statsBuf, sizeof(statsBuf), 
-        "\n[STATS] Total:%lu Fwd:%lu NoRAPT:%lu BadCRC:%lu Err:%lu Rate:%.1f%% Small:%lu Large:%lu\n",
+        "\n[STATS] Total:%lu Fwd:%lu NoRAPT:%lu BadCRC:%lu Err:%lu Rate:%.1f%% BLE:%s\n",
         packetsTotal, packetsForwarded, packetsRejectedNoRapt, packetsRejectedCrc, 
-        packetsRadioError, rate, packetsSmall, packetsLarge);
+        packetsRadioError, rate, bleDeviceConnected ? "Connected" : "Idle");
     Serial.print(statsBuf);
 }
 
@@ -779,7 +1015,7 @@ void handlePacket() {
     lastSnr = radio->getSNR();
     packetsTotal++;
     
-    // IMMEDIATELY restart receive to not miss next packet!
+    // IMMEDIATELY restart receive
     radio->startReceive();
     
     if (state != RADIOLIB_ERR_NONE) {
@@ -787,7 +1023,7 @@ void handlePacket() {
         return;
     }
     
-    // Validate packet starts with protocol sync "RAPT"
+    // Validate packet starts with "RAPT"
     if (packetLen < 12 || 
         packet[0] != 0x52 || packet[1] != 0x41 || 
         packet[2] != 0x50 || packet[3] != 0x54) {
@@ -795,7 +1031,7 @@ void handlePacket() {
         return;
     }
     
-    // Validate CRC32 (last 4 bytes of packet)
+    // Validate CRC32
     uint32_t receivedCrc = ((uint32_t)packet[packetLen-4] << 24) |
                            ((uint32_t)packet[packetLen-3] << 16) |
                            ((uint32_t)packet[packetLen-2] << 8) |
@@ -807,8 +1043,9 @@ void handlePacket() {
         return;
     }
     
-    // Valid packet - forward it (radio is already receiving again!)
+    // Valid packet - forward via USB AND BLE
     forwardPacket(packet, packetLen, lastRssi, lastSnr);
+    forwardPacketBLE(packet, packetLen, lastRssi, lastSnr);
     packetsForwarded++;
     
     // Track by size
@@ -820,19 +1057,10 @@ void handlePacket() {
 }
 
 // ============================================================================
-// Packet Forwarding (with byte stuffing)
+// USB Packet Forwarding (unchanged)
 // ============================================================================
 
 void forwardPacket(uint8_t* data, int len, float rssi, float snr) {
-    /*
-     * Frame format with byte stuffing:
-     * [0x7E][LEN_HI][LEN_LO][RSSI_INT][RSSI_FRAC][SNR_INT][SNR_FRAC][DATA...][CHECKSUM][0x7E]
-     * 
-     * Byte stuffing (HDLC-style):
-     * - 0x7E in data -> 0x7D 0x5E
-     * - 0x7D in data -> 0x7D 0x5D
-     */
-    
     uint8_t lenHi = (len >> 8) & 0xFF;
     uint8_t lenLo = len & 0xFF;
     int8_t rssiInt = (int8_t)rssi;
@@ -840,13 +1068,11 @@ void forwardPacket(uint8_t* data, int len, float rssi, float snr) {
     int8_t snrInt = (int8_t)snr;
     uint8_t snrFrac = (uint8_t)(abs(snr - snrInt) * 100);
     
-    // Calculate checksum over unstuffed data
     uint8_t checksum = lenHi ^ lenLo ^ (uint8_t)rssiInt ^ rssiFrac ^ (uint8_t)snrInt ^ snrFrac;
     for (int i = 0; i < len; i++) {
         checksum ^= data[i];
     }
     
-    // Helper lambda to write with byte stuffing
     auto writeStuffed = [](uint8_t b) {
         if (b == 0x7E) {
             Serial.write(0x7D);
@@ -859,14 +1085,11 @@ void forwardPacket(uint8_t* data, int len, float rssi, float snr) {
         }
     };
     
-    // Ensure clean frame boundary
     Serial.flush();
     delayMicroseconds(100);
     
-    // Start delimiter (not stuffed)
     Serial.write(FRAME_DELIMITER);
     
-    // Header (stuffed)
     writeStuffed(lenHi);
     writeStuffed(lenLo);
     writeStuffed((uint8_t)rssiInt);
@@ -874,15 +1097,98 @@ void forwardPacket(uint8_t* data, int len, float rssi, float snr) {
     writeStuffed((uint8_t)snrInt);
     writeStuffed(snrFrac);
     
-    // Data (stuffed)
     for (int i = 0; i < len; i++) {
         writeStuffed(data[i]);
     }
     
-    // Checksum (stuffed)
     writeStuffed(checksum);
-    
-    // End delimiter (not stuffed)
     Serial.write(FRAME_DELIMITER);
     Serial.flush();
+}
+
+// ============================================================================
+// BLE Packet Forwarding
+// ============================================================================
+
+void forwardPacketBLE(uint8_t* data, int len, float rssi, float snr) {
+    if (!bleDeviceConnected || pTxCharacteristic == nullptr) {
+        return;
+    }
+    
+    // BLE packet format:
+    // [PKT marker (3 bytes)] [RSSI float LE (4 bytes)] [SNR float LE (4 bytes)] [DATA...]
+    // Total header: 11 bytes
+    
+    const char* marker = "PKT";
+    int totalLen = 3 + 4 + 4 + len;  // marker + rssi + snr + data
+    
+    // Check if we need to chunk (MTU - 3 for ATT overhead)
+    int maxPayload = bleMTU - 3;
+    
+    if (totalLen <= maxPayload) {
+        // Single packet - send directly
+        uint8_t* blePacket = (uint8_t*)malloc(totalLen);
+        if (blePacket == nullptr) return;
+        
+        // Marker
+        memcpy(blePacket, marker, 3);
+        
+        // RSSI as little-endian float
+        memcpy(blePacket + 3, &rssi, 4);
+        
+        // SNR as little-endian float
+        memcpy(blePacket + 7, &snr, 4);
+        
+        // Packet data
+        memcpy(blePacket + 11, data, len);
+        
+        pTxCharacteristic->setValue(blePacket, totalLen);
+        pTxCharacteristic->notify();
+        
+        free(blePacket);
+    } else {
+        // Need to chunk the packet
+        // Chunk format: [CHK marker] [chunk#] [total chunks] [data...]
+        
+        int dataPerChunk = maxPayload - 5;  // 3 for "CHK" + 1 chunk# + 1 total
+        int totalChunks = (totalLen + dataPerChunk - 1) / dataPerChunk;
+        
+        // Build full packet first
+        uint8_t* fullPacket = (uint8_t*)malloc(totalLen);
+        if (fullPacket == nullptr) return;
+        
+        memcpy(fullPacket, marker, 3);
+        memcpy(fullPacket + 3, &rssi, 4);
+        memcpy(fullPacket + 7, &snr, 4);
+        memcpy(fullPacket + 11, data, len);
+        
+        // Send chunks
+        for (int chunk = 0; chunk < totalChunks; chunk++) {
+            int offset = chunk * dataPerChunk;
+            int chunkLen = min(dataPerChunk, totalLen - offset);
+            
+            uint8_t* chunkPacket = (uint8_t*)malloc(chunkLen + 5);
+            if (chunkPacket == nullptr) {
+                free(fullPacket);
+                return;
+            }
+            
+            chunkPacket[0] = 'C';
+            chunkPacket[1] = 'H';
+            chunkPacket[2] = 'K';
+            chunkPacket[3] = (uint8_t)chunk;
+            chunkPacket[4] = (uint8_t)totalChunks;
+            memcpy(chunkPacket + 5, fullPacket + offset, chunkLen);
+            
+            pTxCharacteristic->setValue(chunkPacket, chunkLen + 5);
+            pTxCharacteristic->notify();
+            
+            free(chunkPacket);
+            
+            // Small delay between chunks to prevent BLE congestion
+            delay(5);
+        }
+        
+        free(fullPacket);
+    }
 }
