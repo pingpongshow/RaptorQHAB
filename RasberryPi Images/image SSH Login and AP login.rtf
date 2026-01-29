@@ -1,0 +1,29 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2867
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 Connect micro USB (use a real micro USB data cable) to your linux/Mac computer, and a new network device should be connected. You should be able to SSH into 10.0.0.1\
+\
+windows may be different and I don\'92t have a way to test this\
+\
+SSH Login\
+User: raptor\
+Password: raptor\
+\
+\
+Copy image to your sd card:\
+\
+Sudo dd if=image.img of=/dev/diskN bs=4m status=progress\
+\
+Expand the  partition to use the full SD card size:\
+\
+Expand image on new Pi system: \'93sudo raspi-config --expand-rootfs\'94\
+\
+Start airborne unit (temporarily) with : cd /RaptorHAB; python3 -m airborne.main\
+\
+Start ground unit (temporarily) with : cd /RaptorHAB; python3 -m ground.main\
+\
+Access the ground station web interface at http://10.0.0.1:5000}
