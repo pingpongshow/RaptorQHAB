@@ -61,9 +61,19 @@
                             <i class="bi bi-layers"></i> Layers
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end">
-                            <li><a class="dropdown-item" href="#" onclick="setMapLayer('osm')">OpenStreetMap</a></li>
-                            <li><a class="dropdown-item" href="#" onclick="setMapLayer('satellite')">Satellite</a></li>
-                            <li><a class="dropdown-item" href="#" onclick="setMapLayer('terrain')">Terrain</a></li>
+                            <li><h6 class="dropdown-header">Base Maps</h6></li>
+                            <li><a class="dropdown-item" href="#" onclick="setMapLayer('osm')"><i class="bi bi-globe2"></i> OpenStreetMap</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="setMapLayer('satellite')"><i class="bi bi-image"></i> Satellite</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="setMapLayer('terrain')"><i class="bi bi-mountains"></i> Terrain</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><h6 class="dropdown-header">Tile Source</h6></li>
+                            <li>
+                                <a class="dropdown-item d-flex justify-content-between align-items-center" href="#" onclick="toggleOfflineMode(event)">
+                                    <span><i class="bi bi-hdd"></i> Offline Tiles</span>
+                                    <span id="offline-mode-badge" class="badge bg-secondary">checking...</span>
+                                </a>
+                            </li>
+                            <li><a class="dropdown-item" href="#" onclick="showMapStatus()"><i class="bi bi-info-circle"></i> Map Status</a></li>
                         </ul>
                     </div>
                     <div class="btn-group">
@@ -165,13 +175,126 @@
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+    // Map configuration from server
+    const mapConfig = {
+        offlineEnabled: {{ config.map_offline_enabled | tojson }},
+        preferOffline: {{ config.map_prefer_offline | tojson }}
+    };
+    
+    // Track offline availability
+    let offlineAvailable = false;
+    let useOffline = mapConfig.preferOffline;
+    
     // Map setup
     const map = L.map('map').setView([{{ config.map_default_lat }}, {{ config.map_default_lon }}], {{ config.map_default_zoom }});
     
-    // Tile layers
+    /**
+     * Custom tile layer that tries offline tiles first, falls back to online
+     * This provides seamless offline/online operation
+     */
+    const OfflineTileLayer = L.TileLayer.extend({
+        options: {
+            offlineUrl: '/api/tiles/{z}/{x}/{y}.png',
+            onlineUrl: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            useOffline: true,
+            subdomains: 'abc'
+        },
+        
+        getTileUrl: function(coords) {
+            if (this.options.useOffline && useOffline) {
+                return L.Util.template(this.options.offlineUrl, {
+                    z: coords.z,
+                    x: coords.x,
+                    y: coords.y
+                });
+            }
+            return L.Util.template(this.options.onlineUrl, {
+                s: this.options.subdomains[Math.floor(Math.random() * this.options.subdomains.length)],
+                z: coords.z,
+                x: coords.x,
+                y: coords.y
+            });
+        },
+        
+        createTile: function(coords, done) {
+            const tile = document.createElement('img');
+            const layer = this;
+            
+            tile.onload = function() {
+                done(null, tile);
+            };
+            
+            tile.onerror = function() {
+                // If offline fails, try online as fallback
+                if (layer.options.useOffline && useOffline) {
+                    const onlineUrl = L.Util.template(layer.options.onlineUrl, {
+                        s: layer.options.subdomains[Math.floor(Math.random() * layer.options.subdomains.length)],
+                        z: coords.z,
+                        x: coords.x,
+                        y: coords.y
+                    });
+                    tile.src = onlineUrl;
+                } else {
+                    done(new Error('Tile load failed'), tile);
+                }
+            };
+            
+            // Try to load tile
+            const url = this.getTileUrl(coords);
+            
+            if (layer.options.useOffline && useOffline) {
+                // For offline, first check if tile exists via HEAD or just try loading
+                fetch(url, { method: 'GET' })
+                    .then(response => {
+                        if (response.status === 204) {
+                            // No offline tile, use online
+                            const onlineUrl = L.Util.template(layer.options.onlineUrl, {
+                                s: layer.options.subdomains[Math.floor(Math.random() * layer.options.subdomains.length)],
+                                z: coords.z,
+                                x: coords.x,
+                                y: coords.y
+                            });
+                            tile.src = onlineUrl;
+                        } else if (response.ok) {
+                            response.blob().then(blob => {
+                                tile.src = URL.createObjectURL(blob);
+                            });
+                        } else {
+                            // Fallback to online
+                            const onlineUrl = L.Util.template(layer.options.onlineUrl, {
+                                s: layer.options.subdomains[Math.floor(Math.random() * layer.options.subdomains.length)],
+                                z: coords.z,
+                                x: coords.x,
+                                y: coords.y
+                            });
+                            tile.src = onlineUrl;
+                        }
+                    })
+                    .catch(() => {
+                        // Network error, try online
+                        const onlineUrl = L.Util.template(layer.options.onlineUrl, {
+                            s: layer.options.subdomains[Math.floor(Math.random() * layer.options.subdomains.length)],
+                            z: coords.z,
+                            x: coords.x,
+                            y: coords.y
+                        });
+                        tile.src = onlineUrl;
+                    });
+            } else {
+                tile.src = url;
+            }
+            
+            return tile;
+        }
+    });
+    
+    // Tile layers - OSM uses our custom offline-capable layer
     const layers = {
-        osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
+        osm: new OfflineTileLayer(null, {
+            offlineUrl: '/api/tiles/{z}/{x}/{y}.png',
+            onlineUrl: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            useOffline: mapConfig.offlineEnabled,
+            attribution: '© OpenStreetMap contributors' + (mapConfig.offlineEnabled ? ' | <span id="tile-source-attr">Offline</span>' : '')
         }),
         satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
             attribution: '© Esri'
@@ -189,6 +312,91 @@
         layers[layerName].addTo(map);
         currentLayer = layerName;
     }
+    
+    // Toggle offline mode
+    function toggleOfflineMode(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        
+        useOffline = !useOffline;
+        updateOfflineBadge();
+        
+        // Save preference to server
+        fetch('/api/maps/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({prefer_offline: useOffline})
+        });
+        
+        // Refresh tiles
+        if (currentLayer === 'osm') {
+            map.removeLayer(layers.osm);
+            layers.osm.addTo(map);
+        }
+    }
+    
+    function updateOfflineBadge() {
+        const badge = document.getElementById('offline-mode-badge');
+        if (!badge) return;
+        
+        if (!offlineAvailable) {
+            badge.textContent = 'no maps';
+            badge.className = 'badge bg-secondary';
+        } else if (useOffline) {
+            badge.textContent = 'ON';
+            badge.className = 'badge bg-success';
+        } else {
+            badge.textContent = 'OFF';
+            badge.className = 'badge bg-warning';
+        }
+    }
+    
+    function showMapStatus() {
+        fetch('/api/maps/status')
+            .then(r => r.json())
+            .then(status => {
+                let msg = 'Offline Maps Status\n\n';
+                msg += `Enabled: ${status.offline_enabled ? 'Yes' : 'No'}\n`;
+                msg += `Prefer Offline: ${status.prefer_offline ? 'Yes' : 'No'}\n`;
+                msg += `Available: ${status.offline_available ? 'Yes' : 'No'}\n\n`;
+                
+                if (status.maps && Object.keys(status.maps).length > 0) {
+                    msg += 'Available Maps:\n';
+                    for (const [name, info] of Object.entries(status.maps)) {
+                        msg += `\n  ${name}${info.is_default ? ' (default)' : ''}\n`;
+                        msg += `    Zoom: ${info.min_zoom}-${info.max_zoom}\n`;
+                        msg += `    Tiles: ${info.tile_count.toLocaleString()}\n`;
+                    }
+                } else {
+                    msg += 'No offline maps found.\n\n';
+                    msg += 'To add offline maps:\n';
+                    msg += `1. Download .mbtiles files\n`;
+                    msg += `2. Place in: ${status.maps_directory}\n`;
+                    msg += '3. Restart the ground station\n\n';
+                    msg += 'Recommended sources:\n';
+                    msg += '- protomaps.com/downloads\n';
+                    msg += '- openmaptiles.org';
+                }
+                
+                alert(msg);
+            })
+            .catch(err => {
+                alert('Error fetching map status: ' + err.message);
+            });
+    }
+    
+    // Check offline map availability on load
+    fetch('/api/maps/status')
+        .then(r => r.json())
+        .then(status => {
+            offlineAvailable = status.offline_available;
+            useOffline = status.prefer_offline && offlineAvailable;
+            updateOfflineBadge();
+        })
+        .catch(() => {
+            offlineAvailable = false;
+            updateOfflineBadge();
+        });
     
     // Payload marker with custom icon
     const payloadIcon = L.divIcon({

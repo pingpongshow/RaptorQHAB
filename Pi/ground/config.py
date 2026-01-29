@@ -45,10 +45,10 @@ class GroundConfig:
     image_timeout_sec: float = 300.0  # Abandon incomplete images after 5 min
     
     # === Storage ===
-    data_path: str = "/RaptorQHAB/ground/data"
-    image_path: str = "/RaptorQHAB/ground/images"
-    log_path: str = "/RaptorQHAB/ground/logs"
-    telemetry_db_path: str = "/RaptorQHAB/ground/telemetry.db"
+    data_path: str = "/RaptorHAB/ground/data"
+    image_path: str = "/RaptorHAB/ground/images"
+    log_path: str = "/RaptorHAB/ground/logs"
+    telemetry_db_path: str = "/RaptorHAB/ground/telemetry.db"
     max_stored_images: int = 20000
     
     # === Web Interface ===
@@ -61,6 +61,13 @@ class GroundConfig:
     map_default_lat: float = 40.0
     map_default_lon: float = -74.0
     map_default_zoom: int = 8
+    
+    # === Offline Maps ===
+    # Use offline MBTiles for OSM maps (fallback to online if file not found)
+    map_offline_enabled: bool = True
+    map_offline_path: str = "/RaptorHAB/ground/maps"  # Directory containing .mbtiles files
+    map_offline_file: str = "world.mbtiles"  # Default offline map file
+    map_prefer_offline: bool = True  # If True, use offline first, online as fallback
     
     # === Ground Station GPS ===
     # L76K GPS on Pi hardware UART (GPIO 14=TX, GPIO 15=RX)
@@ -86,6 +93,7 @@ class GroundConfig:
         os.makedirs(self.data_path, exist_ok=True)
         os.makedirs(self.image_path, exist_ok=True)
         os.makedirs(self.log_path, exist_ok=True)
+        os.makedirs(self.map_offline_path, exist_ok=True)
     
     @classmethod
     def from_env(cls) -> 'GroundConfig':

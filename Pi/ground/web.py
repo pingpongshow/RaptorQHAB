@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from ground.storage import ImageStorage
     from ground.config import GroundConfig
 
+from ground.offline_maps import OfflineMapManager, get_content_type
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,6 +80,12 @@ def create_app(
     app.config['storage'] = storage
     app.config['ground_config'] = config
     app.config['ground_station'] = ground_station
+    
+    # Initialize offline maps manager
+    offline_maps = OfflineMapManager(config.map_offline_path)
+    if config.map_offline_file:
+        offline_maps.set_default(config.map_offline_file)
+    app.config['offline_maps'] = offline_maps
     
     # === Routes ===
     
@@ -259,6 +267,87 @@ def create_app(
             return jsonify({'error': 'Decoder not available'}), 503
         
         return jsonify(decoder.get_pending_progress())
+    
+    # ========== Offline Map Tile API ==========
+    
+    @app.route('/api/tiles/<int:z>/<int:x>/<int:y>.png')
+    def api_tile_png(z: int, x: int, y: int):
+        """
+        Serve map tiles (PNG format)
+        Falls back to online tiles if offline not available
+        """
+        return serve_tile(z, x, y, 'png')
+    
+    @app.route('/api/tiles/<int:z>/<int:x>/<int:y>.<ext>')
+    def api_tile(z: int, x: int, y: int, ext: str):
+        """Serve map tiles with specified format"""
+        return serve_tile(z, x, y, ext)
+    
+    @app.route('/api/tiles/<map_name>/<int:z>/<int:x>/<int:y>.<ext>')
+    def api_tile_named(map_name: str, z: int, x: int, y: int, ext: str):
+        """Serve map tiles from a specific offline map"""
+        return serve_tile(z, x, y, ext, map_name=map_name)
+    
+    def serve_tile(z: int, x: int, y: int, ext: str, map_name: str = None):
+        """Internal function to serve tiles"""
+        offline_maps = app.config.get('offline_maps')
+        ground_config = app.config.get('ground_config')
+        
+        # Try offline first if enabled and preferred
+        if ground_config.map_offline_enabled and ground_config.map_prefer_offline:
+            if offline_maps and offline_maps.has_offline_maps:
+                result = offline_maps.get_tile(z, x, y, map_name)
+                if result:
+                    data, fmt = result
+                    return Response(
+                        data, 
+                        mimetype=get_content_type(fmt),
+                        headers={
+                            'Cache-Control': 'public, max-age=86400',
+                            'X-Tile-Source': 'offline'
+                        }
+                    )
+        
+        # Return 204 No Content to signal client should use online fallback
+        return Response(
+            status=204,
+            headers={'X-Tile-Source': 'none'}
+        )
+    
+    @app.route('/api/maps/status')
+    def api_maps_status():
+        """Get offline maps status"""
+        offline_maps = app.config.get('offline_maps')
+        ground_config = app.config.get('ground_config')
+        
+        status = {
+            'offline_enabled': ground_config.map_offline_enabled,
+            'prefer_offline': ground_config.map_prefer_offline,
+            'offline_available': False,
+            'maps': {}
+        }
+        
+        if offline_maps:
+            map_status = offline_maps.get_status()
+            status['offline_available'] = map_status.get('available', False)
+            status['maps'] = map_status.get('maps', {})
+            status['maps_directory'] = map_status.get('maps_directory', '')
+        
+        return jsonify(status)
+    
+    @app.route('/api/maps/config', methods=['POST'])
+    def api_maps_config():
+        """Update map configuration"""
+        ground_config = app.config.get('ground_config')
+        data = request.get_json() or {}
+        
+        if 'prefer_offline' in data:
+            ground_config.map_prefer_offline = bool(data['prefer_offline'])
+        
+        if 'offline_enabled' in data:
+            ground_config.map_offline_enabled = bool(data['offline_enabled'])
+        
+        return jsonify({'status': 'ok'})
     
     # ========== Session/Mission API Endpoints ==========
     
