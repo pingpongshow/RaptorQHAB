@@ -40,10 +40,9 @@ Many code changes due to various bug fixes and additional features have been mad
 ## Installation
 
 Pre-built Raspberry Pi images, contain both airborne and groundstation 
-  - this is the easiest way to get started, flash to your Pi SD card with dd or Pi Imager, dont forget to "sudo raspi-config --expand-rootfs" after the first time you flash the new image to youe sd card. The reason for two images is to have different AP SSID on each unit otherwise each Pi image is exactly the same. If you are familiar with configuring Pi you could likely get away with one image file only.
+  - this is the easiest way to get started, flash to your Pi SD card with dd or Pi Imager, dont forget to "sudo raspi-config --expand-rootfs" after the first time you flash the new image to youe sd card. Connect to the Pi after flash through SSH on the microUSB data port at 10.0.0.1
     
-Airborne Unit download: https://mega.nz/file/LB9WUADY#3Y-65y9NjXHN-LRaacJJJG6SZQ2jdLLwqMGUh5rF4MU
-Ground Unit download: https://mega.nz/file/DEdgiKhI#F_BDjiJA3UOEzBZp5sV44614p8mnPsiAuGpoBk3tA_4
+https://mega.nz/file/3U03zIgY#bumpJyihANdUjG_XCdLndyDg479Gf7k2OrLLD-Lk9i4
 
 SSH logon: raptor, password: raptor
 Airborne Unit AP SSID: RaptorAir password: RaptorAir
