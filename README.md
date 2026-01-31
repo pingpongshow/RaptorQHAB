@@ -4,9 +4,9 @@ RaptorHab is a complete high-altitude balloon (HAB) telemetry and imagery downli
 
 Mac native ground station app in releases - uses a custom radio receiver based on the Hetec t190 LoRa board.
 
-iOS app RaptorHABMobile for iOS >17 on iPad and iPhone available in the app store, uses custom modem - free - pending Apple approval
+Attempted iOS version of the ground station, but Apple restricts USB device access and BLE was incapable of sending the packets fast enough, WiFi is possible but this severely limits the apps functions for features needing internet access - sorry. You could run the groundstation on a Pi Zero 2W and connect to its web GUI with offline maps instead for portable operation. 
 
-Custom modem firmware for the Heltec T190 modem (FSK) available - packets over USB or WiFi (BLE was attempted, but it is too slow), supports battery for portible operation
+Custom modem firmware for the Heltec T190 modem (FSK) available - packets over USB
 
 Python GUI and headless web based groundstations Windows, linux - uses custom modem
 
@@ -31,7 +31,6 @@ Many code changes due to various bug fixes and additional features have been mad
 ### Ground Station
 - Raspberry Pi Zero 2W (or any Pi) with Waveshare SX1262 868M/915M LoRa HAT with GPS module, web based access
 - Mac ground station app using custom radio modem based on Heltec T190 radio board
-- iOS ground station app RaptorHABMobile available using custom radio modem in BLE mode
 - Cross platform python GUI and headless webserver ground stations using custom modem
 
 ## Installation
