@@ -6,7 +6,7 @@ Mac native ground station app in releases - uses a custom radio receiver based o
 
 iOS app RaptorHABMobile for iOS >17 on iPad and iPhone available in the app store, uses custom modem - free - pending Apple approval
 
-Custom modem firmware for the Heltec T190 modem (FSK) available - packets over USB or BLE, supports battery for portible operation
+Custom modem firmware for the Heltec T190 modem (FSK) available - packets over USB or WiFi (BLE was attempted, but it is too slow), supports battery for portible operation
 
 Python GUI and headless web based groundstations Windows, linux - uses custom modem
 
