@@ -1,13 +1,13 @@
 # RaptorHAB Modem
 
-A ground station radio modem for the RaptorHAB high-altitude balloon tracking system. Built on the Heltec Vision Master T190, this modem receives telemetry and image packets via LoRa FSK and forwards them to companion apps over USB and WiFi.
+A ground station radio modem for the RaptorHAB high-altitude balloon tracking system. Built on the Heltec Vision Master T190, this modem receives telemetry and image packets via LoRa FSK and forwards them to companion apps over USB and Bluetooth LE.
 
 ## Features
 
-- **Dual Connectivity**: Simultaneous USB serial and WiFi packet forwarding
+- **Dual Connectivity**: Simultaneous USB serial and Bluetooth LE packet forwarding
 - **SX1262 LoRa Radio**: High-sensitivity FSK reception with configurable parameters
-- **1.9" TFT Display**: Real-time status showing signal quality, packet statistics, radio settings, WiFi status, and battery level
-- **Runtime Configuration**: Radio parameters configurable via USB or WiFi before reception begins
+- **1.9" TFT Display**: Real-time status showing signal quality, packet statistics, radio settings, BLE status, and battery level
+- **Runtime Configuration**: Radio parameters configurable via USB or BLE before reception begins
 - **Battery Monitoring**: On-screen battery voltage and percentage with color-coded indicator
 - **Packet Validation**: CRC32 verification and "RAPT" sync word filtering
 - **iOS & macOS Support**: Works with RaptorHAB companion apps on both platforms
@@ -68,11 +68,11 @@ The following libraries are automatically installed by PlatformIO:
 
 ### On Boot
 
-The modem waits up to 2 minutes for configuration from USB or WiFi. If no configuration is received, it starts with default parameters.
+The modem waits up to 2 minutes for configuration from USB or Bluetooth. If no configuration is received, it starts with default parameters.
 
 ### Configuration Command
 
-Send via USB serial or WiFi:
+Send via USB serial or BLE:
 
 ```
 CFG:<frequency>,<bitrate>,<deviation>,<bandwidth>,<preamble>\n
@@ -118,6 +118,13 @@ CFG:915.0,96.0,50.0,467.0,32
 | RX Characteristic | `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` (Write) |
 | TX Characteristic | `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` (Notify) |
 
+### BLE Packet Format
+
+Packets sent via BLE TX characteristic:
+
+```
+[PKT][RSSI float32 LE][SNR float32 LE][Packet Data...]
+```
 
 For packets exceeding MTU, chunked format is used:
 
@@ -197,6 +204,12 @@ Packets failing validation are counted but not forwarded.
 - Check frequency matches transmitter
 - Ensure sync word matches ("RAPT")
 - Monitor RSSI — if stuck at -120 dBm, no signal is being received
+
+### BLE Not Connecting
+- Ensure Bluetooth is enabled on your device
+- Look for "RaptorModem" in device list
+- Enter passkey `123456` when prompted
+- If previously paired, try forgetting the device and re-pairing
 
 ### Display Not Working
 - Check that TFT power pin (GPIO7) is being driven correctly
