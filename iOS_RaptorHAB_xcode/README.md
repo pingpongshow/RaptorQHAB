@@ -30,7 +30,7 @@ Full-featured iOS/iPadOS ground station app for RaptorHab high-altitude balloon 
 - **Region Download** - Pre-download maps for expected flight area
 
 ### Connectivity
-- **Bluetooth LE** - Wireless connection to RaptorModem
+- **WiFi AP** - Wireless connection to RaptorModem (BLE was tried, but it is not fast enough - Apple restricts USB access, so thats not an option)
 - **SondeHub Upload** - Share telemetry to SondeHub amateur network
 - **Internal GPS** - Uses device's built-in GPS for ground station position
 
@@ -42,8 +42,8 @@ Full-featured iOS/iPadOS ground station app for RaptorHab high-altitude balloon 
 ## Requirements
 
 - iOS 16.0+ or iPadOS 16.0+
-- iPhone or iPad with Bluetooth LE support
-- RaptorModem (Heltec Vision Master T190) with BLE firmware
+- iPhone or iPad
+- RaptorModem (Heltec Vision Master T190) with WiFi firmware
 
 ## Bluetooth Pairing
 
@@ -59,7 +59,6 @@ Full-featured iOS/iPadOS ground station app for RaptorHab high-altitude balloon 
 RaptorHabMobile/
 ├── RaptorHabMobileApp.swift    # App entry point
 ├── ContentView.swift           # Main UI with adaptive iPhone/iPad layout
-├── BLEManager.swift            # CoreBluetooth BLE communication
 ├── GroundStationManager.swift  # Main coordinator
 ├── LocationManager.swift       # Internal GPS via CoreLocation
 ├── Protocol.swift              # Packet definitions and parsing
@@ -115,21 +114,19 @@ Uses Nordic UART Service (NUS) style UUIDs:
 
 1. Open `RaptorHabMobile.xcodeproj` in Xcode 15+
 2. Set your Development Team in Signing & Capabilities
-3. Build and run on your device (BLE requires real device, not simulator)
+3. Build and run on your device
 
 ## Modem Firmware
 
-The modified modem firmware is in `modem-ble/Modem/src/main.cpp`. Changes from USB-only version:
+The modified modem firmware is in `folder/Modem/src/main.cpp`. Changes from USB-only version:
 
-1. **BLE Initialization** - ESP32-S3 native BLE with static passkey
-2. **Dual Output** - Packets forwarded via USB AND Bluetooth simultaneously
-3. **BLE Configuration** - Accept CFG commands over Bluetooth
-4. **Display Updates** - Shows BLE connection status and passkey
+**Dual Output** - Packets forwarded via USB AND WiFi simultaneously
+
 
 ### Building Modem Firmware
 
 ```bash
-cd modem-ble/Modem
+cd folder
 pio run
 pio run -t upload
 ```
