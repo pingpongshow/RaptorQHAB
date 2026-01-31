@@ -1,6 +1,6 @@
-# RaptorHab Mobile - Bluetooth LE Edition
+# RaptorHab Mobile - WiFi Edition
 
-Full-featured iOS/iPadOS ground station app for RaptorHab high-altitude balloon tracking using Bluetooth LE connection to the Heltec modem.
+Full-featured iOS/iPadOS ground station app for RaptorHab high-altitude balloon tracking using WiFi connection to the Heltec modem.
 
 ## Features
 
