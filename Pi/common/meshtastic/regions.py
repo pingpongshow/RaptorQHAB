@@ -113,6 +113,89 @@ def get_region(code: str) -> Optional[Region]:
 
 
 # --------------------------------------------------------------------------
+# Hardware band limits
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class HardwareBand:
+    """
+    The frequency range the radio module can actually transmit on.
+
+    The SX1262 die covers 150-960 MHz, but a board is not a die: the matching
+    network, filters, and PA on a Waveshare HAT are tuned for one band. Driving
+    a 900 MHz board at 433 MHz means a badly matched load -- almost no radiated
+    power, and a real risk of damaging the amplifier.
+
+    So the region logic must be constrained by what the *board* can do, not by
+    what the chip datasheet allows. A region the hardware cannot reach is
+    treated exactly like unknown territory: no transmission.
+    """
+
+    min_mhz: float
+    max_mhz: float
+    description: str = ""
+
+    def __post_init__(self):
+        if self.min_mhz <= 0 or self.max_mhz <= self.min_mhz:
+            raise ValueError(
+                f"invalid hardware band {self.min_mhz}-{self.max_mhz} MHz"
+            )
+
+    def contains(self, frequency_mhz: float) -> bool:
+        return self.min_mhz <= frequency_mhz <= self.max_mhz
+
+    def __str__(self) -> str:
+        label = f"{self.min_mhz:g}-{self.max_mhz:g} MHz"
+        return f"{label} ({self.description})" if self.description else label
+
+
+# Common Waveshare SX1262 HAT variants. The 915M board is the one this payload
+# flies; it cannot do the 433 MHz regions at all.
+HARDWARE_BANDS = {
+    "915M": HardwareBand(902.0, 928.0, "Waveshare SX1262 915M"),
+    "868M": HardwareBand(863.0, 870.0, "Waveshare SX1262 868M"),
+    "490M": HardwareBand(470.0, 510.0, "Waveshare SX1262 490M"),
+    "433M": HardwareBand(410.0, 493.0, "Waveshare SX1262 433M"),
+}
+
+DEFAULT_HARDWARE_BAND = HARDWARE_BANDS["915M"]
+
+
+def regions_within_band(
+    band: HardwareBand,
+    channel_name: str = DEFAULT_CHANNEL_NAME,
+    bandwidth_khz: int = DEFAULT_BANDWIDTH_KHZ,
+) -> List[Region]:
+    """
+    Regions whose derived channel frequency the hardware can actually reach.
+
+    Checks the frequency the balloon would really transmit on, not merely
+    whether the region's band overlaps the hardware's -- a partial overlap
+    could still put the specific channel out of reach.
+    """
+    supported = []
+    for region in REGIONS:
+        frequency = frequency_for_channel(region, channel_name, bandwidth_khz)
+        if band.contains(frequency):
+            supported.append(region)
+    return supported
+
+
+def region_is_supported(
+    region: Optional[Region],
+    band: HardwareBand,
+    channel_name: str = DEFAULT_CHANNEL_NAME,
+    bandwidth_khz: int = DEFAULT_BANDWIDTH_KHZ,
+) -> bool:
+    """Whether the hardware can transmit this region's channel frequency."""
+    if region is None:
+        return False
+    frequency = frequency_for_channel(region, channel_name, bandwidth_khz)
+    return band.contains(frequency)
+
+
+# --------------------------------------------------------------------------
 # Frequency derivation
 # --------------------------------------------------------------------------
 

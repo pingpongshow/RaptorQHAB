@@ -92,10 +92,33 @@ def test_meshtastic_starts_on_the_home_region(tmp_path):
 
 
 def test_home_region_sets_the_matching_frequency(tmp_path):
-    controller, _radio = make_controller(tmp_path, meshtastic_region="EU_868")
+    controller, _radio = make_controller(tmp_path, meshtastic_region="JP")
+    settings = controller._radio_manager.lora_settings
+    assert settings.frequency_mhz == pytest.approx(925.675, abs=0.0005)
+    assert settings.tx_power_dbm == 13, "must clamp to the Japan ceiling"
+
+
+def test_868_board_reaches_europe(tmp_path):
+    """The same logic on the 868M board variant."""
+    controller, _radio = make_controller(
+        tmp_path, radio_hardware_band="868M", meshtastic_region="EU_868",
+        radio_frequency_mhz=868.0,
+    )
     settings = controller._radio_manager.lora_settings
     assert settings.frequency_mhz == pytest.approx(869.525, abs=0.0005)
     assert settings.tx_power_dbm == 14, "must clamp to the EU 868 ceiling"
+
+
+def test_home_region_outside_the_hardware_band_refuses_to_transmit(tmp_path):
+    """
+    A 915M board configured for a 433 MHz region must not key the PA out of
+    band; it should refuse and say so.
+    """
+    controller, radio = make_controller(tmp_path, meshtastic_region="EU_433")
+
+    assert not controller._region_manager.may_transmit
+    assert controller._radio_manager.lora_settings is None
+    assert not controller._radio_manager.transmit_lora(b"\x00" * 20)
 
 
 def test_disabled_meshtastic_creates_no_beacon(tmp_path):
@@ -158,16 +181,38 @@ def test_crossing_into_a_new_region_retunes_the_radio(tmp_path):
     controller, radio = make_controller(tmp_path, meshtastic_region="US")
 
     with controller._gps_lock:
-        controller._current_gps = FakeGPS(52.52, 13.40)  # Berlin
+        controller._current_gps = FakeGPS(35.68, 139.69)  # Tokyo
 
-    controller._region_manager.update(52.52, 13.40, fix_type=2, now=1000.0)
-    controller._region_manager.update(52.52, 13.40, fix_type=2, now=1001.0)
+    controller._region_manager.update(35.68, 139.69, fix_type=2, now=1000.0)
+    controller._region_manager.update(35.68, 139.69, fix_type=2, now=1001.0)
     controller._apply_region_to_radio()
 
     settings = controller._radio_manager.lora_settings
-    assert settings.region_code == "EU_868"
-    assert settings.frequency_mhz == pytest.approx(869.525, abs=0.0005)
-    assert settings.tx_power_dbm == 14
+    assert settings.region_code == "JP"
+    assert settings.frequency_mhz == pytest.approx(925.675, abs=0.0005)
+    assert settings.tx_power_dbm == 13
+
+
+def test_crossing_into_an_unreachable_region_suspends_transmission(tmp_path):
+    """
+    Europe on a 915M board. The balloon must go quiet on Meshtastic rather
+    than transmit at 869 MHz through a 900 MHz matching network -- and the
+    image downlink must keep running.
+    """
+    controller, radio = make_controller(tmp_path, meshtastic_region="US")
+
+    with controller._gps_lock:
+        controller._current_gps = FakeGPS(52.52, 13.40)  # Berlin
+
+    controller._region_manager.update(52.52, 13.40, fix_type=2, now=1000.0)
+    controller._apply_region_to_radio()
+
+    assert controller._radio_manager.lora_settings is None
+    assert not controller._radio_manager.transmit_lora(b"\x00" * 20)
+    assert radio.lora_packets == []
+
+    assert controller._transmit_packet(b"\xAA" * 40)
+    assert len(radio.gfsk_packets) == 1
 
 
 def test_unknown_territory_stops_meshtastic_transmission(tmp_path):

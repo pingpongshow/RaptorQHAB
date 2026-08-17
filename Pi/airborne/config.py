@@ -117,6 +117,9 @@ class Config:
     meshtastic_private_psk: str = ""
 
     # === Meshtastic Region ===
+    # Which SX1262 board variant is fitted. The Waveshare 915M HAT cannot
+    # transmit the 433 MHz Meshtastic regions at all -- see params.py.
+    radio_hardware_band: str = "915M"
     meshtastic_region: str = "US"
     meshtastic_region_auto: bool = True
     meshtastic_region_dwell_sec: int = 120

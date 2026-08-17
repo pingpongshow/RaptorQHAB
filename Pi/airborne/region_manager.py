@@ -18,20 +18,33 @@ Behaviour, in priority order:
   4. If the position is in no known region, Meshtastic transmission STOPS.
      Guessing is the one thing that must not happen. Images and the RAPTOR
      downlink are unaffected.
-  5. On GPS loss the last determined region is held (per Q1).
+  5. A region the radio hardware cannot physically reach is treated the same
+     way. The SX1262 die spans 150-960 MHz, but a board is not a die: the
+     matching network, filters and PA are tuned for one band. A 900 MHz board
+     driven at 433 MHz radiates almost nothing into a badly matched load and
+     risks damaging the amplifier. So on a 915M board the 433 MHz regions are
+     simply unavailable, and flying over one means Meshtastic goes quiet.
+  6. On GPS loss the last determined region is held (per Q1).
 """
 
 import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from common.meshtastic.regions import (
+    DEFAULT_BANDWIDTH_KHZ,
+    DEFAULT_CHANNEL_NAME,
+    DEFAULT_HARDWARE_BAND,
+    HardwareBand,
     Region,
     distance_to_region_edge_km,
+    frequency_for_channel,
     get_region,
     region_for_position,
+    region_is_supported,
+    regions_within_band,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,6 +58,7 @@ class RegionSource(str, Enum):
     GPS = "gps"                    # determined from position
     HELD = "held"                  # GPS lost, holding the last determination
     NONE = "none"                  # unknown territory, do not transmit
+    UNSUPPORTED = "unsupported"    # real region, but outside the hardware band
 
 
 @dataclass
@@ -71,6 +85,9 @@ class RegionManager:
         dwell_sec: float = 120.0,
         edge_margin_km: float = 25.0,
         require_3d_fix: bool = True,
+        hardware_band: Optional[HardwareBand] = None,
+        channel_name: str = DEFAULT_CHANNEL_NAME,
+        bandwidth_khz: int = DEFAULT_BANDWIDTH_KHZ,
     ):
         """
         Args:
@@ -82,11 +99,28 @@ class RegionManager:
             edge_margin_km: How far inside a new region the balloon must be
                 before the change counts. Zero disables the margin test.
             require_3d_fix: Only act on a 3D fix.
+            hardware_band: What the radio board can physically transmit.
+                Regions outside it are unavailable regardless of position.
+            channel_name, bandwidth_khz: Needed to derive the actual channel
+                frequency, which is what gets checked against the band.
         """
         self.auto_switch = auto_switch
         self.dwell_sec = dwell_sec
         self.edge_margin_km = edge_margin_km
         self.require_3d_fix = require_3d_fix
+        self.hardware_band = hardware_band or DEFAULT_HARDWARE_BAND
+        self.channel_name = channel_name
+        self.bandwidth_khz = bandwidth_khz
+
+        supported = regions_within_band(
+            self.hardware_band, self.channel_name, self.bandwidth_khz
+        )
+        self._supported_codes = {r.code for r in supported}
+        logger.info(
+            f"Radio hardware band {self.hardware_band}; "
+            f"{len(supported)} Meshtastic regions reachable: "
+            f"{', '.join(sorted(self._supported_codes))}"
+        )
 
         self._home_region = get_region(home_region_code)
         if self._home_region is None:
@@ -96,17 +130,31 @@ class RegionManager:
             self._home_region = get_region("US")
 
         now = time.time()
-        if auto_switch:
+
+        if not self._is_supported(self._home_region):
+            # Loud, because it means Meshtastic will never transmit until the
+            # operator fixes the configuration or the balloon drifts somewhere
+            # the board can actually reach.
+            logger.error(
+                f"Home region {self._home_region.code} needs "
+                f"{self._frequency_of(self._home_region):.3f} MHz, outside the "
+                f"radio's {self.hardware_band} band. Meshtastic cannot "
+                f"transmit here. Set meshtastic_region to one of: "
+                f"{', '.join(sorted(self._supported_codes))}"
+            )
             self._state = RegionState(
                 region=self._home_region,
-                source=RegionSource.HOME_DEFAULT,
+                source=RegionSource.UNSUPPORTED,
                 changed_at=now,
-                may_transmit=True,
+                may_transmit=False,
             )
         else:
             self._state = RegionState(
                 region=self._home_region,
-                source=RegionSource.CONFIGURED,
+                source=(
+                    RegionSource.HOME_DEFAULT if auto_switch
+                    else RegionSource.CONFIGURED
+                ),
                 changed_at=now,
                 may_transmit=True,
             )
@@ -115,6 +163,32 @@ class RegionManager:
         self._candidate: Optional[Region] = None
         self._candidate_since: float = 0.0
         self._last_gps_time: float = 0.0
+
+    # -- hardware band -----------------------------------------------------
+
+    def _is_supported(self, region: Optional[Region]) -> bool:
+        return region_is_supported(
+            region, self.hardware_band, self.channel_name, self.bandwidth_khz
+        )
+
+    def _frequency_of(self, region: Optional[Region]) -> float:
+        if region is None:
+            return 0.0
+        return frequency_for_channel(
+            region, self.channel_name, self.bandwidth_khz
+        )
+
+    @property
+    def supported_region_codes(self) -> List[str]:
+        """Regions this board can actually transmit in."""
+        return sorted(self._supported_codes)
+
+    @property
+    def active_frequency_mhz(self) -> Optional[float]:
+        """The frequency the balloon would transmit on right now, if any."""
+        if not self.may_transmit:
+            return None
+        return self._frequency_of(self._state.region)
 
     @property
     def state(self) -> RegionState:
@@ -182,8 +256,12 @@ class RegionManager:
             self._handle_unknown_territory(now)
             return self._state
 
-        # Back inside known territory after being outside it.
-        if self._state.region is None:
+        if not self._is_supported(observed):
+            self._handle_unsupported_region(observed, now)
+            return self._state
+
+        # Back on the air after being suspended for any reason.
+        if self._state.region is None or not self._state.may_transmit:
             self._candidate = None
             self._adopt(observed, RegionSource.GPS, now)
             return self._state
@@ -276,11 +354,48 @@ class RegionManager:
             may_transmit=False,
         )
 
+    def _handle_unsupported_region(self, observed: Region, now: float) -> None:
+        """
+        The balloon is over a real Meshtastic region this board cannot reach.
+
+        Transmitting anyway would mean driving the PA into a matching network
+        tuned for a different band: negligible radiated power, and a genuine
+        risk of damaging the amplifier. So Meshtastic goes quiet until the
+        balloon reaches somewhere the hardware can work. The image downlink is
+        untouched.
+        """
+        if (
+            self._state.source is RegionSource.UNSUPPORTED
+            and self._state.region is not None
+            and self._state.region.code == observed.code
+        ):
+            return
+
+        self._candidate = None
+        logger.warning(
+            f"Over {observed.code} ({observed.description}), which needs "
+            f"{self._frequency_of(observed):.3f} MHz -- outside this radio's "
+            f"{self.hardware_band} band. Suspending Meshtastic transmission; "
+            f"the image downlink is unaffected."
+        )
+        self._state = RegionState(
+            region=observed,
+            source=RegionSource.UNSUPPORTED,
+            changed_at=now,
+            may_transmit=False,
+        )
+
     def _adopt(
         self, region: Region, source: RegionSource, now: Optional[float] = None
     ) -> None:
         now = time.time() if now is None else now
         previous = self._state.code
+
+        # Defence in depth: nothing should reach here with an unreachable
+        # region, but adopting one would mean keying the PA out of band.
+        if not self._is_supported(region):
+            self._handle_unsupported_region(region, now)
+            return
 
         self._state = RegionState(
             region=region,
@@ -292,8 +407,8 @@ class RegionManager:
         if previous != region.code:
             logger.info(
                 f"Meshtastic region {previous} -> {region.code} "
-                f"({region.description}, {region.freq_start_mhz}-"
-                f"{region.freq_end_mhz} MHz, max {region.power_limit_dbm} dBm)"
+                f"({region.description}) at {self._frequency_of(region):.3f} MHz, "
+                f"max {region.power_limit_dbm} dBm"
             )
 
     def get_status(self) -> dict:
@@ -303,9 +418,12 @@ class RegionManager:
             "region": self._state.code,
             "source": self._state.source.value,
             "may_transmit": self.may_transmit,
+            "frequency_mhz": self.active_frequency_mhz,
             "auto_switch": self.auto_switch,
             "home_region": self._home_region.code if self._home_region else None,
             "power_limit_dbm": region.power_limit_dbm if region else None,
             "duty_cycle_percent": region.duty_cycle_percent if region else None,
             "pending_candidate": self._candidate.code if self._candidate else None,
+            "hardware_band": str(self.hardware_band),
+            "supported_regions": self.supported_region_codes,
         }

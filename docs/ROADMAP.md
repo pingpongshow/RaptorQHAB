@@ -53,7 +53,8 @@ Two things follow that are worth stating plainly:
 | Q1 GPS-loss fallback | **Hold last known mode** |
 | Q3 External dependencies | **Prefer none** — hand-roll protobuf and AES on both sides |
 | Q6 Image link frequency | Changeable, but **must match the ground modem** — never auto-tuned |
-| Hardware | Waveshare SX1262 LoRa HAT for Pi Zero + L76K GPS |
+| Hardware | Waveshare SX1262 LoRa HAT for Pi Zero + L76K GPS, **915M variant** |
+| Hardware band | 902-928 MHz. The 433 MHz regions are physically unreachable |
 | Regional frequency | **Auto-select Meshtastic band from GPS position** (see below) |
 
 ---
@@ -391,6 +392,27 @@ rather than a bug:**
 - On GPS loss the last determined region is held (consistent with Q1).
 - Transmit power is clamped to the active region's ceiling, always.
 - Every region change is logged and reported in downlink telemetry.
+
+**Hardware band limit.** The SX1262 die spans 150-960 MHz, but a board is not
+a die: the matching network, filters and PA on the fitted HAT are tuned for one
+band. The 915M board this payload flies covers **902-928 MHz**, which means the
+433 MHz Meshtastic regions are not merely a bad idea, they are unreachable —
+transmitting there radiates almost nothing into a badly matched load and risks
+damaging the amplifier.
+
+So the hardware band is a first-class constraint, not a footnote:
+
+- `radio_hardware_band` declares the fitted variant (915M / 868M / 490M / 433M).
+- Regions whose derived channel frequency falls outside it are **unavailable**,
+  and flying over one suspends Meshtastic exactly like unmapped territory.
+- Configuration is validated up front: a home region or an image-link frequency
+  outside the board's band is rejected with the list of reachable regions.
+- The bench tool refuses out-of-band frequencies as a hard stop.
+
+On the 915M board the reachable regions are **US, JP, ANZ, KR, TW, TH, MY_919,
+SG_923, PH_915, BR_902**. Everything else — all of Europe, China, India, Russia
+— is out of band and silences Meshtastic while leaving the image downlink
+untouched.
 
 Region determination uses a coarse bounding-box table rather than a country
 polygon database — appropriate both for the payload's compute budget and for

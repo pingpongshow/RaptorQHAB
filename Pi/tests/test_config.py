@@ -402,3 +402,116 @@ def test_secrets_are_redacted_on_request():
     for spec in PARAM_SPECS:
         if spec.secret:
             assert redacted[spec.name] is None
+
+
+# --- radio hardware band --------------------------------------------------
+#
+# The SX1262 board can only transmit inside one band. Catching a mismatch at
+# configuration time means the operator finds out before flight rather than
+# discovering that Meshtastic never came up.
+
+
+def test_defaults_are_consistent_with_the_default_board():
+    config = Config()
+    assert config.radio_hardware_band == "915M"
+    assert validate_cross_field(config.to_dict()) == []
+
+
+def test_home_region_outside_the_hardware_band_is_rejected():
+    config = Config()
+    result = config.apply_updates({"meshtastic_region": "EU_433"})
+    assert not result["ok"]
+    reason = result["rejected"]["_cross_field"]
+    assert "outside" in reason
+    assert "433" in reason
+
+
+def test_the_rejection_message_lists_reachable_regions():
+    config = Config()
+    reason = config.apply_updates({"meshtastic_region": "EU_868"})["rejected"][
+        "_cross_field"
+    ]
+    assert "Reachable regions" in reason
+    assert "US" in reason
+
+
+def test_changing_the_board_variant_changes_which_regions_are_valid():
+    config = Config()
+    result = config.apply_updates(
+        {
+            "radio_hardware_band": "868M",
+            "meshtastic_region": "EU_868",
+            "radio_frequency_mhz": 868.0,
+        }
+    )
+    assert result["ok"], result["rejected"]
+    assert config.meshtastic_region == "EU_868"
+
+
+def test_image_frequency_outside_the_hardware_band_is_rejected():
+    """The RAPTOR downlink is bound by the same hardware limit."""
+    config = Config()
+    result = config.apply_updates({"radio_frequency_mhz": 903.0})
+    assert result["ok"], "903 MHz is inside the 915M band"
+
+    result = config.apply_updates(
+        {"radio_hardware_band": "868M", "meshtastic_region": "EU_868"}
+    )
+    assert not result["ok"], "915 MHz image link is outside an 868M board"
+
+
+def test_a_433_board_accepts_the_433_regions():
+    config = Config()
+    result = config.apply_updates(
+        {
+            "radio_hardware_band": "433M",
+            "meshtastic_region": "EU_433",
+            "radio_frequency_mhz": 434.0,
+        }
+    )
+    assert result["ok"], result["rejected"]
+
+
+def test_hardware_band_appears_in_the_schema_with_labels():
+    by_name = {p["name"]: p for p in Config().schema()["parameters"]}
+    entry = by_name["radio_hardware_band"]
+    assert set(entry["choices"]) == {"915M", "868M", "490M", "433M"}
+    assert any("902-928" in label for label in entry["choice_labels"])
+
+
+def test_string_enums_accept_their_string_choices():
+    """
+    Regression: Kind.ENUM coerced every value with int(), so string-valued
+    enums -- region codes, modem presets, board variants -- rejected every
+    valid value. That silently blocked setting them from the config file or
+    the companion app.
+    """
+    config = Config()
+    assert config.apply_updates({"meshtastic_modem_preset": "SHORT_FAST"})["ok"]
+    assert config.meshtastic_modem_preset == "SHORT_FAST"
+
+    assert config.apply_updates({"meshtastic_region": "ANZ"})["ok"]
+    assert config.meshtastic_region == "ANZ"
+
+
+def test_string_enums_still_reject_values_outside_their_choices():
+    config = Config()
+    assert not config.apply_updates({"meshtastic_modem_preset": "WARP_NINE"})["ok"]
+    assert not config.apply_updates({"radio_hardware_band": "2400M"})["ok"]
+
+
+def test_integer_enums_are_unaffected():
+    config = Config()
+    assert config.apply_updates({"gps_baudrate": 115200})["ok"]
+    assert config.apply_updates({"camera_awb_mode": 3})["ok"]
+
+
+def test_every_string_enum_round_trips_through_persistence(cfg_path):
+    """A string enum written to JSON must load back without being rejected."""
+    from airborne.params import Kind, PARAM_SPECS
+
+    config = Config.load(path=cfg_path)
+    for spec in PARAM_SPECS:
+        if spec.kind is Kind.ENUM and spec.choices:
+            if all(isinstance(c, str) for c in spec.choices):
+                assert spec.validate(spec.choices[0]) == spec.choices[0]
