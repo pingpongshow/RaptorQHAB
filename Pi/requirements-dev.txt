@@ -1,0 +1,13 @@
+# Development and test dependencies.
+#
+# The test suite must run on a laptop with no radio, camera, or GPS attached,
+# so it deliberately does NOT require RPi.GPIO, spidev, or picamera2.
+#
+#   python3 -m venv .venv
+#   .venv/bin/pip install -r Pi/requirements-dev.txt
+#   .venv/bin/python -m pytest Pi/tests
+
+-r requirements-test-runtime.txt
+
+pytest>=8.0
+pytest-cov>=5.0

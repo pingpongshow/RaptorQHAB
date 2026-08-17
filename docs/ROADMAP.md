@@ -42,33 +42,60 @@ Two things follow that are worth stating plainly:
 
 ---
 
-## Phase 1 — Foundation: fix the flight-critical bugs, add real config persistence
+## Decisions (confirmed 2026-08-17)
+
+| Question | Decision |
+|---|---|
+| Q2 Bench-validate RX before Phase 5 | **Yes** — a second node is available |
+| Q4 Broadcast hop limit | **`hop_limit = 0`** — heard directly, never rebroadcast by others |
+| Q5 Private channel PSK | No key defined yet; **set through configuration** |
+| LANDED mode | **Yes** — build it (folded into Phase 4) |
+| Q1 GPS-loss fallback | *Still open* — needed before Phase 4 |
+| Q3 swift-protobuf via SPM | *Still open* — needed before Phase 6 |
+
+---
+
+## Phase 1 — Foundation ✅ COMPLETE
 
 *Branch `phase-1-foundation`. No new features. Everything downstream depends on
 config that actually persists and a payload that actually recovers.*
 
-1. Fix `REVIEW.md` items A1-A5 and B1-B5.
-2. Introduce `Pi/common/configstore.py`: JSON-backed, schema-versioned,
-   atomic write (temp file + `os.replace`), falls back to defaults on a corrupt
-   or unparseable file and logs loudly. Config file at
-   `/RaptorHAB/config/airborne.json`.
-3. Refactor `AirborneConfig` to load from: defaults → JSON file → env vars →
-   CLI args (in that precedence order). Keep `from_env()` working.
-4. Tag every parameter as **live-applicable** or **restart-required**; expose
-   that in the schema so the UI can grey out the right controls.
-5. Collapse the three duplicated copies of radio defaults (C4/C5) into one.
-6. Add `Pi/tests/` with hardware-free unit tests: CRC, packet framing round-trip,
-   fountain encode/decode round-trip, scheduler slot distribution (the test that
-   would have caught B1), config store corruption recovery.
+1. ✅ Fixed `REVIEW.md` A1-A5, A7, A8, B1-B3, B5-B7, C1-C5, C8.
+2. ✅ `Pi/common/configstore.py`: JSON-backed, schema-versioned, atomic write
+   (temp file + fsync + `os.replace` + directory fsync), `0600` permissions,
+   quarantines a corrupt file, leaves an *unreadable* one alone, and preserves
+   unknown keys across a firmware downgrade.
+3. ✅ `AirborneConfig` resolves defaults → JSON file → env → CLI. `from_env()`
+   still works. One bad key no longer discards the whole file.
+4. ✅ `Pi/airborne/params.py` — every parameter carries type, range, category,
+   description, env var, and `live` vs `restart` apply semantics.
+   `--print-schema` emits the JSON the Phase 2 UI will render from.
+5. ✅ Radio defaults collapsed to one authoritative copy.
+6. ✅ `Pi/tests/` — 148 hardware-free tests.
 
-**Exit:** tests pass on a laptop; payload survives an induced error storm and
-restarts; a setting changed and rebooted persists.
+**Exit criteria — met:** `cd Pi && python -m pytest` passes on a laptop with no
+radio, camera, or GPS; the payload recovers from an induced error storm; a
+setting changed and reloaded persists.
+
+New CLI surface:
+
+```bash
+python3 -m airborne.main --print-schema
+```
+
+```bash
+python3 -m airborne.main --print-config
+```
+
+```bash
+python3 -m airborne.main --callsign RPHAB7 --save-config
+```
 
 ---
 
 ## Phase 2 — USB gadget: config + terminal over the Pi's USB port
 
-*Branch `phase-2-usb-console`.*
+*Branch `phase-2-usb-console`. **ON HOLD** at your request.*
 
 **Approach:** Pi Zero 2 W's data port supports USB OTG. Configure it as a
 **composite USB gadget** via `libcomposite`:
@@ -164,9 +191,22 @@ cruise_lora_rx_percent        = 5
 mesh_beacon_text              = "..."
 ```
 
+Plus a **LANDED** mode (confirmed): triggered by low altitude with no vertical
+movement for a sustained period, it goes Meshtastic-only at a slow beacon rate
+and stops image capture entirely to conserve battery. When terrain blocks the
+GFSK link from a payload on the ground, a low-rate LoRa beacon is very often
+what actually finds it.
+
+```
+landed_altitude_m             = 1000   # AGL relative to launch elevation
+landed_vertical_rate_mps      = 0.5    # below this counts as stationary
+landed_dwell_sec              = 120    # sustained before declaring LANDED
+landed_mesh_interval_sec      = 60
+```
+
 1. `ZoneManager` — great-circle distance from launch point, with **hysteresis**
    so a balloon drifting along the boundary doesn't thrash modes, plus the
-   altitude override.
+   altitude override and the LANDED transition.
 2. **No-GPS-fix behavior must be explicit** (see open question Q1). Proposed
    default: hold the last known zone; if no fix has *ever* been acquired,
    assume IN-ZONE (safe: keeps the bandwidth on images near the launch site
@@ -196,8 +236,10 @@ on hardware first.*
    marker. Proposed: addressed to the balloon's node id **or** a text payload
    with a configurable prefix (default `!RPT `). Never blanket-repeat.
 3. Repeat guard rails, all configurable: dedupe cache of recently-seen
-   `packet_id`s, max repeats/hour, minimum spacing, and **`hop_limit` forced to
-   a low value on rebroadcast** (see Q4 — this matters a lot from 100k ft).
+   `packet_id`s, max repeats/hour, minimum spacing, and **`hop_limit = 0` on
+   the balloon's own broadcasts** (confirmed), so nothing the balloon
+   originates is rebroadcast onward by the thousands of nodes within its
+   ~400-mile footprint.
 4. Uplink command handling — messages addressed to the balloon on the private
    channel can trigger a small, explicit allowlist of commands. Decide whether
    to reuse `airborne/commands.py` (B4) or retire it.
@@ -253,36 +295,25 @@ with the source indicator changing accordingly.
 
 ## Open questions — I'd like answers before Phase 3
 
-**Q1 — GPS-loss behavior.** If the balloon loses its fix in cruise, should it
-hold cruise mode, or fall back to in-zone (images-heavy)? My default above is
-"hold last known," but you know the recovery priorities better than I do.
+**Q1 — GPS-loss behavior.** *(still open)* If the balloon loses its fix in
+cruise, should it hold cruise mode, or fall back to in-zone (images-heavy)? My
+default is "hold last known," but you know the recovery priorities better.
 
-**Q2 — Bench-validate RX first?** Nothing has ever called `radio.receive()` on
-this hardware (finding A6), and the board drives *both* DIO2-as-RF-switch and a
-separate TXEN GPIO. Before Phase 5, I'd like a bench test with a second radio
-confirming the Pi can actually hear LoRa. Do you have a spare SX1262 or a
-Meshtastic node to transmit at it? If RX doesn't work, the repeater and uplink
-features are hardware-blocked and we should know that in week one, not week six.
+**Q2 — Bench-validate RX first.** ✅ Answered: yes, a second node is available.
+This becomes the first task of Phase 3.
 
-**Q3 — Is adding a Swift Package Manager dependency acceptable?** The Xcode
-project currently has zero external dependencies. Meshtastic's protobufs are
-large and evolving; `swift-protobuf` is the sane path for the Mac side. If
-you'd rather stay dependency-free I can hand-roll a decoder for the ~8 message
-types we need, but it becomes maintenance we own.
+**Q3 — Is adding a Swift Package Manager dependency acceptable?** *(still open)*
+The Xcode project has zero external dependencies today. `swift-protobuf` is the
+sane path for the Mac side of Meshtastic. If you'd rather stay dependency-free
+I can hand-roll a decoder for the ~8 message types we need, but it becomes
+maintenance we own. Needed before Phase 6.
 
-**Q4 — Mesh footprint / hop limit.** At 100,000 ft a 22 dBm LoRa beacon has a
-line-of-sight footprint on the order of 400 miles radius. It will be heard by a
-very large number of nodes. If those nodes rebroadcast, one balloon can
-meaningfully congest regional meshes — this has caused real friction on
-previous HAB flights. Strong recommendation: **`hop_limit = 0` on broadcasts**
-(heard directly, never rebroadcast by others), beacon interval ≥ 5 minutes in
-cruise, and the tagged-repeat gate you already specified. Are you OK with
-`hop_limit = 0` as the default?
+**Q4 — Mesh footprint / hop limit.** ✅ Answered: `hop_limit = 0` on broadcasts.
 
-**Q5 — Private channel key management.** Where does the private-channel PSK
-live? Proposal: on the Pi in the config JSON with `0600` permissions, entered
-via the USB config UI only, never transmitted over the radio and never echoed
-back over the RPC (write-only field, displayed as a fingerprint). Confirm.
+**Q5 — Private channel key management.** ✅ Answered: no key defined yet, set
+through configuration. It will be a `secret` parameter — stored in the config
+JSON at `0600`, settable over USB only, never transmitted over the radio, and
+returned as `null` rather than its value by the config RPC.
 
 **Q6 — Frequency plan.** Balloon images at 915.0 MHz, Meshtastic at
 906.875 MHz. Is the image link's frequency fixed by the ground modem's

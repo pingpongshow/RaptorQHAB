@@ -1,0 +1,9 @@
+# Runtime dependencies the test suite actually imports.
+#
+# Deliberately excludes the hardware-only packages from requirements.txt
+# (RPi.GPIO, spidev, picamera2) so the suite runs on any developer machine.
+
+raptorq
+pyserial
+Pillow
+numpy
