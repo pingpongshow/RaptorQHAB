@@ -50,8 +50,11 @@ Two things follow that are worth stating plainly:
 | Q4 Broadcast hop limit | **`hop_limit = 0`** — heard directly, never rebroadcast by others |
 | Q5 Private channel PSK | No key defined yet; **set through configuration** |
 | LANDED mode | **Yes** — build it (folded into Phase 4) |
-| Q1 GPS-loss fallback | *Still open* — needed before Phase 4 |
-| Q3 swift-protobuf via SPM | *Still open* — needed before Phase 6 |
+| Q1 GPS-loss fallback | **Hold last known mode** |
+| Q3 External dependencies | **Prefer none** — hand-roll protobuf and AES on both sides |
+| Q6 Image link frequency | Changeable, but **must match the ground modem** — never auto-tuned |
+| Hardware | Waveshare SX1262 LoRa HAT for Pi Zero + L76K GPS |
+| Regional frequency | **Auto-select Meshtastic band from GPS position** (see below) |
 
 ---
 
@@ -95,7 +98,7 @@ python3 -m airborne.main --callsign RPHAB7 --save-config
 
 ## Phase 2 — USB gadget: config + terminal over the Pi's USB port
 
-*Branch `phase-2-usb-console`. **ON HOLD** at your request.*
+*Branch `phase-2-usb-console`. **DEFERRED** — skipped for now, revisit after Phase 3.*
 
 **Approach:** Pi Zero 2 W's data port supports USB OTG. Configure it as a
 **composite USB gadget** via `libcomposite`:
@@ -140,35 +143,58 @@ involvement.
 
 ---
 
-## Phase 3 — Meshtastic transmit on the balloon
+## Phase 3 — Meshtastic transmit on the balloon ✅ COMPLETE
 
-*Branch `phase-3-meshtastic-tx`.*
+*Branch `phase-3-meshtastic-tx`. Phase 2 skipped for now.*
 
-1. `Pi/common/radio_lora.py` — LoRa mode for the existing SX1262 driver:
-   `SetPacketType(0x01)`, LoRa modulation params (SF/BW/CR/LDRO), packet params
-   (preamble 16, explicit header, CRC on, IQ standard), sync word `0x2B`.
-   Preserve the GFSK path unchanged.
-2. `RadioModeManager` — owns the SX1262 and serializes mode switches
-   (GFSK-TX / LoRa-TX / LoRa-RX). Measure and log real switch latency. This is
-   the only thing allowed to touch the radio.
-3. `Pi/common/meshtastic/` — a **minimal, dependency-free** implementation:
-   - `protobuf.py`: hand-rolled varint/length-delimited writer. We need maybe
-     six message types; pulling in the full `meshtastic` package on a Pi Zero
-     is not worth the weight or the startup cost.
-   - `packet.py`: the 16-byte header (dest, sender, packet_id, flags/hop_limit,
-     channel hash, next-hop, relay-node).
-   - `crypto.py`: AES-256-CTR, nonce = packet_id ‖ sender ‖ zero-extend.
-     Default channel PSK and a user-supplied private-channel PSK.
-   - `messages.py`: `Position`, `Telemetry/DeviceMetrics`, `NodeInfo`,
-     `TextMessage` — encoded as `Data{portnum, payload}`.
-4. Beacon content: position (lat/lon/alt/sats), telemetry (battery, CPU temp,
-   uptime), and a **configurable free-text message**.
-5. Dual-destination: broadcast (`0xFFFFFFFF`) on the primary channel **and**
-   addressed traffic on a configured private channel with its own PSK.
-6. Periodic `NodeInfo` so the balloon shows up with a name rather than a hex id.
+1. ✅ `common/radio_lora.py` — LoRa mode for the SX1262 as a mixin on the
+   existing driver, so one object owns the SPI bus and GPIO. All eight
+   Meshtastic modem presets, band-aware image calibration, and a real
+   time-on-air calculation from the datasheet.
+2. ✅ `common/radio_manager.py` — `RadioModeManager` serialises GFSK/LoRa
+   switching under one lock, measures switch latency, and clamps transmit
+   power to the region ceiling on every switch.
+3. ✅ `common/meshtastic/` — dependency-free, per Q3:
+   - `protobuf.py` hand-rolled wire-format writer and tolerant reader
+   - `crypto.py` pure-Python AES-256-CTR, validated against FIPS-197 and
+     NIST SP 800-38A
+   - `packet.py` the 16-byte header, channel hash, deterministic node id
+   - `messages.py` Position, Telemetry, EnvironmentMetrics, NodeInfo, Text
+   - `regions.py` the band table, frequency derivation, and geographic lookup
+4. ✅ Beacons carry position, telemetry, CPU temperature as an environment
+   metric, periodic NodeInfo, and a configurable operator message.
+5. ✅ Dual destination: broadcast on the primary channel plus position and
+   text on an optional private channel with its own key.
+6. ✅ NodeInfo every N cycles so the balloon appears by name.
+7. ✅ `airborne/region_manager.py` — auto region selection with dwell,
+   edge margin, hold-on-GPS-loss, and hard suspension over unknown territory.
+8. ✅ Region changes drive frequency and power together, and appear in logs
+   and status.
 
-**Exit:** a stock Meshtastic handheld receives the balloon's beacons, decodes
-position and telemetry, and shows it on the Meshtastic map.
+**Exit criteria — met in software; the on-air half needs the bench.**
+372 tests pass with no hardware. Frequency derivation reproduces the published
+Meshtastic values, AES matches the NIST vectors, and the LongFast channel hash
+matches Meshtastic's 0x08. A simulated track crossing a border retunes the
+radio and clamps power, and one crossing into unmapped territory stops
+Meshtastic transmission without touching the image downlink.
+
+**Remaining, needs hardware:** run `tools/bench_lora.py` against your second
+node. That closes Q2 and is the gate on Phase 5.
+
+```bash
+sudo python3 Pi/tools/bench_lora.py rx --duration 120
+```
+
+```bash
+sudo python3 Pi/tools/bench_lora.py tx --count 5 --power 17
+```
+
+```bash
+sudo python3 Pi/tools/bench_lora.py switch --count 50
+```
+
+The `switch` measurement matters beyond a pass/fail: it sets how finely the
+Phase 4 scheduler can interleave images with beacons.
 
 ---
 
@@ -293,35 +319,83 @@ with the source indicator changing accordingly.
 
 ---
 
-## Open questions — I'd like answers before Phase 3
+## Questions — all answered
 
-**Q1 — GPS-loss behavior.** *(still open)* If the balloon loses its fix in
-cruise, should it hold cruise mode, or fall back to in-zone (images-heavy)? My
-default is "hold last known," but you know the recovery priorities better.
+**Q1 — GPS-loss behavior.** ✅ **Hold last known mode.** If the balloon loses
+its fix, the zone state it was already in persists rather than reverting.
 
-**Q2 — Bench-validate RX first.** ✅ Answered: yes, a second node is available.
-This becomes the first task of Phase 3.
+**Q2 — Bench-validate RX first.** ✅ Yes, before Phase 5. Hardware confirmed as
+the **Waveshare SX1262 LoRa HAT for Pi Zero with an L76K GPS**.
 
-**Q3 — Is adding a Swift Package Manager dependency acceptable?** *(still open)*
-The Xcode project has zero external dependencies today. `swift-protobuf` is the
-sane path for the Mac side of Meshtastic. If you'd rather stay dependency-free
-I can hand-roll a decoder for the ~8 message types we need, but it becomes
-maintenance we own. Needed before Phase 6.
+**Q3 — Swift Package Manager dependency.** ✅ **Prefer no dependencies**, add
+one only if genuinely needed. Applied to both sides: the Pi gets a hand-rolled
+protobuf writer and a pure-Python AES-256-CTR, and Phase 6 will hand-roll the
+Swift decoder for the handful of message types we actually parse.
 
-**Q4 — Mesh footprint / hop limit.** ✅ Answered: `hop_limit = 0` on broadcasts.
+**Q4 — Mesh footprint / hop limit.** ✅ `hop_limit = 0` on broadcasts.
 
-**Q5 — Private channel key management.** ✅ Answered: no key defined yet, set
-through configuration. It will be a `secret` parameter — stored in the config
-JSON at `0600`, settable over USB only, never transmitted over the radio, and
-returned as `null` rather than its value by the config RPC.
+**Q5 — Private channel key management.** ✅ Configured through the USB terminal
+and the macOS app. Stored in the config JSON at `0600`, never transmitted over
+the radio, and returned as `null` (never its value) by the config RPC.
 
-**Q6 — Frequency plan.** Balloon images at 915.0 MHz, Meshtastic at
-906.875 MHz. Is the image link's frequency fixed by the ground modem's
-configuration, or is it retunable? If retunable, worth checking the two don't
-sit close enough to desensitize a co-located receiver.
+**Q6 — Frequency plan.** ✅ The image link frequency is changeable but **must
+match the ground modem**. It therefore stays a manually-set parameter and is
+never touched by the region logic below — only the Meshtastic frequency moves
+automatically.
 
-**Q7 — Does the balloon need a Meshtastic node id / long name registered?**
-Suggest deriving the node id from the callsign so it's stable across flights.
+**Q7 — Meshtastic node identity.** *(clarifying, not blocking)* Every
+Meshtastic node has a 32-bit node id plus a long and short name — this is what
+makes the balloon appear as `RaptorHAB-1` on someone's handheld instead of an
+anonymous `!a1b2c3d4`. Nothing is "registered" anywhere; there's no central
+authority, the node simply announces itself. The plan derives the node id
+deterministically from your callsign so it stays stable across flights and
+across reflashes, which means receivers keep a continuous history of the
+balloon rather than seeing a new stranger each launch. No action needed from
+you.
+
+---
+
+## Regional frequency compliance (added at your request)
+
+**Requirement:** in Meshtastic mode the balloon must transmit on the frequency
+used by the region it is currently over, or nobody there can hear it.
+
+This is more than a frequency change. Each Meshtastic region defines a band, a
+transmit power ceiling, and in some places a duty-cycle limit — EU 868 is
+14 dBm ERP with a 10% duty cycle, EU 433 is 12 dBm. Moving the frequency
+without also clamping power would put the balloon outside what that region
+permits, so the region table carries all three and the transmit path enforces
+them.
+
+Frequency is derived the same way Meshtastic firmware derives it, so the
+balloon lands on exactly the channel local nodes are listening to:
+
+```
+num_channels = floor((freq_end - freq_start) / bandwidth)
+channel_index = djb2(channel_name) % num_channels
+frequency = freq_start + bandwidth/2 + channel_index * bandwidth
+```
+
+Verified against published values: US → 906.875, EU_868 → 869.525,
+EU_433 → 433.875, ANZ → 919.875 MHz.
+
+**Safety rules, because transmitting on the wrong band is a licensing problem
+rather than a bug:**
+
+- A configured **home region is always the default**. Auto-switching is opt-in.
+- Auto-switch requires a **3D fix**, and applies hysteresis at the boundary so
+  a balloon tracking along a border does not oscillate between bands.
+- If the position falls in **no known region**, the balloon **stops
+  transmitting Meshtastic entirely** rather than guessing. Images and the
+  RAPTOR downlink continue unaffected.
+- On GPS loss the last determined region is held (consistent with Q1).
+- Transmit power is clamped to the active region's ceiling, always.
+- Every region change is logged and reported in downlink telemetry.
+
+Region determination uses a coarse bounding-box table rather than a country
+polygon database — appropriate both for the payload's compute budget and for
+the accuracy the task actually needs. Ocean and unassigned airspace resolve to
+"no region", which is the safe outcome.
 
 ---
 

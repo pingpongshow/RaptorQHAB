@@ -167,6 +167,9 @@ CATEGORY_ORDER: Tuple[str, ...] = (
     "Image Quality",
     "GPS",
     "Fountain Coding",
+    "Meshtastic",
+    "Meshtastic Region",
+    "Meshtastic Private",
     "Storage",
     "Reliability",
     "Debug",
@@ -393,6 +396,132 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         "Consecutive main-loop errors tolerated before entering recovery. "
         "The counter resets after a clean cycle.",
         apply=Apply.LIVE, minimum=1, maximum=1000,
+    ),
+
+    # === Meshtastic ===
+    _spec(
+        "meshtastic_enabled", Kind.BOOL, "Meshtastic",
+        "Transmit Meshtastic beacons in addition to the RAPTOR image downlink.",
+        apply=Apply.RESTART,
+    ),
+    _spec(
+        "meshtastic_modem_preset", Kind.ENUM, "Meshtastic",
+        "LoRa modem preset. Must match what local nodes use, or nobody hears "
+        "the balloon. LONG_FAST is the Meshtastic default.",
+        apply=Apply.LIVE,
+        choices=(
+            "LONG_FAST", "LONG_SLOW", "MEDIUM_SLOW", "MEDIUM_FAST",
+            "SHORT_SLOW", "SHORT_FAST", "SHORT_TURBO", "VERY_LONG_SLOW",
+        ),
+    ),
+    _spec(
+        "meshtastic_channel_name", Kind.STRING, "Meshtastic",
+        "Primary broadcast channel name. This determines the frequency slot "
+        "within the region's band, so it must match local nodes exactly.",
+        apply=Apply.LIVE,
+    ),
+    _spec(
+        "meshtastic_channel_psk", Kind.STRING, "Meshtastic",
+        "Primary channel key, base64 or hex. \"AQ==\" is the well-known default "
+        "that every Meshtastic client ships with -- traffic using it is "
+        "readable by anyone.",
+        apply=Apply.LIVE, secret=True,
+    ),
+    _spec(
+        "meshtastic_tx_power_dbm", Kind.INT, "Meshtastic",
+        "Requested Meshtastic transmit power. Automatically clamped down to "
+        "the active region's legal ceiling.",
+        apply=Apply.LIVE, minimum=-9, maximum=30, unit="dBm",
+    ),
+    _spec(
+        "meshtastic_hop_limit", Kind.INT, "Meshtastic",
+        "Hops for the balloon's broadcasts. Keep at 0: from altitude the "
+        "balloon reaches an enormous number of nodes, and letting them all "
+        "rebroadcast can congest entire regional meshes.",
+        apply=Apply.LIVE, minimum=0, maximum=7,
+    ),
+    _spec(
+        "meshtastic_beacon_interval_sec", Kind.INT, "Meshtastic",
+        "Seconds between beacon cycles. The zone scheduler may lengthen this, "
+        "never shorten it.",
+        apply=Apply.LIVE, minimum=30, maximum=3600, unit="s",
+    ),
+    _spec(
+        "meshtastic_beacon_text", Kind.STRING, "Meshtastic",
+        "Operator message broadcast with each beacon cycle. Leave empty to "
+        "send none.",
+        apply=Apply.LIVE,
+    ),
+    _spec(
+        "meshtastic_inter_packet_delay_ms", Kind.INT, "Meshtastic",
+        "Gap between the packets of one beacon cycle. A back-to-back burst "
+        "from a balloon heard across several hundred miles monopolises the "
+        "channel for everyone below it.",
+        apply=Apply.LIVE, minimum=0, maximum=10000, unit="ms",
+    ),
+    _spec(
+        "meshtastic_nodeinfo_every", Kind.INT, "Meshtastic",
+        "Send the node identity once per this many beacon cycles.",
+        apply=Apply.LIVE, minimum=1, maximum=100,
+    ),
+    _spec(
+        "meshtastic_long_name", Kind.STRING, "Meshtastic",
+        "Display name shown on receiving nodes. Empty derives it from the "
+        "callsign.",
+        apply=Apply.LIVE,
+    ),
+
+    # === Meshtastic Private Channel ===
+    _spec(
+        "meshtastic_private_enabled", Kind.BOOL, "Meshtastic Private",
+        "Also transmit position and text on a second, private channel.",
+        apply=Apply.LIVE,
+    ),
+    _spec(
+        "meshtastic_private_name", Kind.STRING, "Meshtastic Private",
+        "Private channel name.",
+        apply=Apply.LIVE,
+    ),
+    _spec(
+        "meshtastic_private_psk", Kind.STRING, "Meshtastic Private",
+        "Private channel key, base64 or hex, 16/24/32 bytes. Generate a fresh "
+        "one rather than reusing a default -- a default key means the channel "
+        "is not private at all. Never transmitted over the radio and never "
+        "read back by the configuration interface.",
+        apply=Apply.LIVE, secret=True,
+    ),
+
+    # === Meshtastic Region ===
+    _spec(
+        "meshtastic_region", Kind.ENUM, "Meshtastic Region",
+        "Home region band plan, used when auto-switching is off and before the "
+        "first GPS fix.",
+        apply=Apply.LIVE,
+        choices=(
+            "US", "EU_433", "EU_868", "CN", "JP", "ANZ", "KR", "TW", "RU",
+            "IN", "NZ_865", "TH", "UA_433", "UA_868", "MY_433", "MY_919",
+            "SG_923", "PH_433", "PH_868", "PH_915", "BR_902", "NP_865",
+        ),
+    ),
+    _spec(
+        "meshtastic_region_auto", Kind.BOOL, "Meshtastic Region",
+        "Follow the balloon's position and switch to the local band plan, so "
+        "stations in the region it is over can actually hear it. Over "
+        "territory with no known band plan, Meshtastic transmission stops "
+        "rather than guessing.",
+        apply=Apply.LIVE,
+    ),
+    _spec(
+        "meshtastic_region_dwell_sec", Kind.INT, "Meshtastic Region",
+        "How long a new region must be observed before the balloon retunes. "
+        "Prevents band thrashing along a border.",
+        apply=Apply.LIVE, minimum=0, maximum=3600, unit="s",
+    ),
+    _spec(
+        "meshtastic_region_edge_margin_km", Kind.INT, "Meshtastic Region",
+        "How far inside a new region the balloon must be before the change "
+        "counts. 0 disables the margin test.",
+        apply=Apply.LIVE, minimum=0, maximum=500, unit="km",
     ),
 
     # === Debug ===

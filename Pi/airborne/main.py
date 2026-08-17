@@ -50,6 +50,12 @@ from airborne.camera import CameraModule, ImageInfo
 from airborne.telemetry import TelemetryCollector, TelemetryLogger
 from airborne.packets import PacketScheduler, ImageTransmission
 from airborne.fountain import FountainEncoder
+from airborne.meshtastic_beacon import BeaconTelemetry, ChannelConfig, MeshtasticBeacon
+from airborne.region_manager import RegionManager
+from common.meshtastic import frequency_for_channel, get_region
+from common.meshtastic.crypto import format_psk_fingerprint, parse_psk
+from common.radio_lora import get_preset
+from common.radio_manager import RadioModeManager
 
 
 class State(Enum):
@@ -135,6 +141,15 @@ class RaptorHabAirborne:
         self._telemetry_logger: Optional[TelemetryLogger] = None
         self._scheduler: Optional[PacketScheduler] = None
         self._watchdog: Optional[Watchdog] = None
+
+        # Meshtastic (Phase 3). The zone-aware scheduling that decides how
+        # often these run relative to image downlink arrives in Phase 4; for
+        # now beacons go out on a fixed interval.
+        self._radio_manager: Optional[RadioModeManager] = None
+        self._region_manager: Optional[RegionManager] = None
+        self._beacon: Optional[MeshtasticBeacon] = None
+        self._last_beacon_time: float = 0.0
+        self._last_region_code: Optional[str] = None
         
         # Image queue for transmission
         self._image_queue: Queue[ImageInfo] = Queue(maxsize=5)
@@ -267,7 +282,135 @@ class RaptorHabAirborne:
             allow_lt_fallback=self.config.allow_lt_fallback,
         )
         
+        # Radio mode arbitration. Everything that touches the radio goes
+        # through this from here on, so a Meshtastic beacon can never land in
+        # the middle of an image packet.
+        self._radio_manager = RadioModeManager(
+            self._radio, gfsk_tx_power_dbm=self.config.radio_power_dbm
+        )
+
+        if self.config.meshtastic_enabled:
+            self._initialize_meshtastic()
+        else:
+            self._logger.info("Meshtastic disabled by configuration")
+
         self._logger.info("All components initialized successfully")
+
+    def _initialize_meshtastic(self) -> None:
+        """Set up the Meshtastic beacon and region tracking."""
+        self._logger.info("Initializing Meshtastic...")
+
+        self._region_manager = RegionManager(
+            home_region_code=self.config.meshtastic_region,
+            auto_switch=self.config.meshtastic_region_auto,
+            dwell_sec=self.config.meshtastic_region_dwell_sec,
+            edge_margin_km=self.config.meshtastic_region_edge_margin_km,
+        )
+
+        try:
+            primary_psk = parse_psk(self.config.meshtastic_channel_psk)
+        except ValueError as e:
+            self._logger.error(
+                f"Primary channel PSK is invalid ({e}); falling back to the "
+                f"Meshtastic default key"
+            )
+            primary_psk = b"\x01"
+
+        primary = ChannelConfig(
+            name=self.config.meshtastic_channel_name, psk=primary_psk
+        )
+
+        private = None
+        if self.config.meshtastic_private_enabled:
+            try:
+                private_psk = parse_psk(self.config.meshtastic_private_psk)
+            except ValueError as e:
+                self._logger.error(
+                    f"Private channel PSK is invalid ({e}); private channel "
+                    f"disabled rather than transmitting it in the clear"
+                )
+                private_psk = None
+
+            if not private_psk:
+                self._logger.error(
+                    "Private channel is enabled but has no key. Refusing to "
+                    "transmit an unencrypted 'private' channel; set "
+                    "meshtastic_private_psk or disable the channel."
+                )
+            else:
+                private = ChannelConfig(
+                    name=self.config.meshtastic_private_name, psk=private_psk
+                )
+                self._logger.info(
+                    f"Private channel key fingerprint: "
+                    f"{format_psk_fingerprint(private.key)}"
+                )
+
+        self._beacon = MeshtasticBeacon(
+            callsign=self.config.callsign,
+            payload_id=self.config.payload_id,
+            long_name=self.config.meshtastic_long_name or None,
+            primary_channel=primary,
+            private_channel=private,
+            beacon_text=self.config.meshtastic_beacon_text,
+            hop_limit=self.config.meshtastic_hop_limit,
+            nodeinfo_every=self.config.meshtastic_nodeinfo_every,
+        )
+
+        if self.config.meshtastic_hop_limit > 0:
+            self._logger.warning(
+                f"hop_limit is {self.config.meshtastic_hop_limit}, not 0. From "
+                f"altitude this balloon reaches a very large number of nodes; "
+                f"letting them rebroadcast can congest regional meshes."
+            )
+
+        self._apply_region_to_radio(force=True)
+
+    def _apply_region_to_radio(self, force: bool = False) -> None:
+        """
+        Push the active region's frequency and power ceiling to the radio.
+
+        When the region is unknown the LoRa settings are deliberately left
+        unset, which makes RadioModeManager refuse to transmit Meshtastic at
+        all. Guessing a frequency over unfamiliar territory is the one outcome
+        that must not happen; the image downlink is unaffected.
+        """
+        if not (self._region_manager and self._radio_manager):
+            return
+
+        state = self._region_manager.state
+        if not force and state.code == self._last_region_code:
+            return
+
+        self._last_region_code = state.code
+
+        if not self._region_manager.may_transmit:
+            self._radio_manager.clear_lora_settings()
+            self._logger.warning(
+                "Meshtastic suspended: no known band plan for this position"
+            )
+            return
+
+        region = state.region
+        preset = get_preset(self.config.meshtastic_modem_preset)
+        frequency = frequency_for_channel(
+            region,
+            self.config.meshtastic_channel_name,
+            int(preset.bandwidth_khz),
+        )
+
+        settings = self._radio_manager.set_lora_settings(
+            preset,
+            frequency_mhz=frequency,
+            requested_power_dbm=self.config.meshtastic_tx_power_dbm,
+            region=region,
+        )
+
+        self._logger.info(
+            f"Meshtastic region {region.code}: {frequency:.4f} MHz at "
+            f"{settings.tx_power_dbm} dBm "
+            f"(source: {state.source.value})"
+        )
     
     def _preflight_check_fountain_encoder(self) -> None:
         """
@@ -362,7 +505,12 @@ class RaptorHabAirborne:
                 # === TX CYCLE ===
                 self._set_state(State.TX_ACTIVE)
                 self._run_tx_cycle()
-                
+
+                # === MESHTASTIC BEACON ===
+                # Between cycles, never inside one: a mode switch must not
+                # interrupt an image packet.
+                self._run_beacon_if_due()
+
                 # === PAUSE CYCLE (if configured) ===
                 if self.config.tx_pause_sec > 0:
                     self._set_state(State.TX_PAUSED)
@@ -460,15 +608,98 @@ class RaptorHabAirborne:
         self._logger.debug("Pause cycle complete")
     
     def _transmit_packet(self, packet: bytes) -> bool:
-        """Transmit a single packet."""
-        if not self._radio:
+        """Transmit a single RAPTOR packet on the GFSK downlink."""
+        if not self._radio_manager:
             return False
-        
+
         try:
-            return self._radio.transmit(packet)
+            return self._radio_manager.transmit_gfsk(packet)
         except Exception as e:
             self._logger.error(f"TX error: {e}")
             return False
+
+    def _run_beacon_if_due(self) -> None:
+        """
+        Send a Meshtastic beacon cycle if the interval has elapsed.
+
+        Runs between TX cycles rather than inside one, so a mode switch can
+        never interrupt an image packet mid-flight. Phase 4 replaces this
+        fixed interval with the zone-aware schedule.
+        """
+        if not (self._beacon and self._radio_manager):
+            return
+
+        now = time.time()
+        if now - self._last_beacon_time < self.config.meshtastic_beacon_interval_sec:
+            return
+
+        self._last_beacon_time = now
+
+        # Refresh the region from the current fix before transmitting, so a
+        # border crossing retunes the radio before the beacon rather than
+        # after it.
+        if self._region_manager:
+            with self._gps_lock:
+                gps = self._current_gps
+
+            if gps is not None:
+                self._region_manager.update(
+                    latitude=gps.latitude,
+                    longitude=gps.longitude,
+                    fix_type=gps.fix_type,
+                )
+            else:
+                self._region_manager.update(fix_type=0)
+
+            self._apply_region_to_radio()
+
+            if not self._region_manager.may_transmit:
+                return
+
+        try:
+            self._beacon.transmit_cycle(
+                self._radio_manager,
+                self._collect_beacon_telemetry(),
+                region_manager=self._region_manager,
+                inter_packet_delay_sec=(
+                    self.config.meshtastic_inter_packet_delay_ms / 1000.0
+                ),
+            )
+        except Exception as e:
+            self._logger.error(f"Beacon cycle failed: {e}", exc_info=True)
+        finally:
+            # Always hand the radio back to the image downlink, even if the
+            # beacon threw partway through.
+            self._radio_manager.ensure_gfsk()
+
+    def _collect_beacon_telemetry(self) -> BeaconTelemetry:
+        """Snapshot the payload state a Meshtastic beacon reports."""
+        telemetry = BeaconTelemetry(
+            battery_mv=get_battery_voltage(),
+            cpu_temp_c=get_cpu_temperature(),
+            uptime_sec=int(time.time() - self._start_time),
+        )
+
+        # Meshtastic's battery_level is a percentage. Map a single-cell
+        # lithium range onto it; 101 would mean "externally powered".
+        millivolts = telemetry.battery_mv
+        if millivolts:
+            percent = (millivolts - 3300) / (4200 - 3300) * 100
+            telemetry.battery_percent = max(0, min(100, int(percent)))
+
+        with self._gps_lock:
+            gps = self._current_gps
+
+        if gps is not None:
+            telemetry.latitude = gps.latitude
+            telemetry.longitude = gps.longitude
+            telemetry.altitude_m = gps.altitude
+            telemetry.satellites = gps.satellites
+            telemetry.fix_type = gps.fix_type
+            telemetry.ground_speed_mps = gps.speed
+            telemetry.ground_track_deg = gps.heading
+
+        return telemetry
     
     def _process_image_queue(self) -> None:
         """Hand captured images to the transmit scheduler."""
