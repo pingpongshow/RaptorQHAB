@@ -1,0 +1,737 @@
+{% extends "base.html" %}
+{% block title %}Images - RaptorHab Ground Station{% endblock %}
+
+{% block extra_head %}
+<style>
+    .image-card {
+        transition: transform 0.2s;
+        cursor: pointer;
+        position: relative;
+    }
+    .image-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    }
+    .image-card img {
+        height: 180px;
+        object-fit: cover;
+    }
+    .image-card.selected {
+        border: 3px solid #0d6efd;
+        box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.25);
+    }
+    .image-card .select-checkbox {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        z-index: 10;
+        width: 24px;
+        height: 24px;
+        cursor: pointer;
+    }
+    .image-meta {
+        font-size: 0.8rem;
+    }
+    .pending-image {
+        border: 2px dashed #ffc107;
+        background: #fff9e6;
+    }
+    .pending-image .progress {
+        height: 8px;
+    }
+    #image-modal .modal-body {
+        text-align: center;
+        background: #000;
+    }
+    #image-modal img {
+        max-height: 80vh;
+    }
+    .mission-card {
+        transition: all 0.2s;
+        cursor: pointer;
+        position: relative;
+    }
+    .mission-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    }
+    .mission-card.current {
+        border: 2px solid #198754;
+    }
+    .mission-folder-icon {
+        font-size: 3rem;
+        color: #ffc107;
+    }
+    .breadcrumb-nav {
+        background: #f8f9fa;
+        padding: 0.75rem 1rem;
+        border-radius: 0.375rem;
+    }
+    .action-toolbar {
+        background: #e9ecef;
+        padding: 0.5rem 1rem;
+        border-radius: 0.375rem;
+        margin-bottom: 1rem;
+    }
+    .selection-count {
+        font-weight: 500;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb Navigation -->
+<div class="breadcrumb-nav mb-3" id="breadcrumb">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb mb-0">
+            <li class="breadcrumb-item">
+                <a href="#" onclick="showMissions(); return false;">
+                    <i class="bi bi-folder2"></i> Missions
+                </a>
+            </li>
+            <li class="breadcrumb-item active" id="breadcrumb-mission" style="display: none;"></li>
+        </ol>
+    </nav>
+</div>
+
+<div class="row mb-3">
+    <div class="col-md-6">
+        <h4 id="page-title"><i class="bi bi-folder2 text-warning"></i> Mission Folders</h4>
+    </div>
+    <div class="col-md-6 text-end">
+        <button class="btn btn-primary btn-sm" onclick="refreshView()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+</div>
+
+<!-- Mission Folders View -->
+<div id="missions-view">
+    <div class="row" id="missions-gallery">
+        <div class="col-12 text-center py-5" id="missions-loading">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 text-muted">Loading missions...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Images View (hidden by default) -->
+<div id="images-view" style="display: none;">
+    <!-- Action Toolbar -->
+    <div class="action-toolbar d-flex justify-content-between align-items-center" id="image-toolbar">
+        <div>
+            <button class="btn btn-outline-secondary btn-sm me-2" onclick="toggleSelectMode()">
+                <i class="bi bi-check2-square"></i> <span id="select-mode-text">Select</span>
+            </button>
+            <span id="selection-info" style="display: none;">
+                <span class="selection-count"><span id="selected-count">0</span> selected</span>
+                <button class="btn btn-outline-primary btn-sm ms-2" onclick="selectAll()">Select All</button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="deselectAll()">Deselect All</button>
+            </span>
+        </div>
+        <div id="selection-actions" style="display: none;">
+            <button class="btn btn-danger btn-sm" onclick="deleteSelectedImages()">
+                <i class="bi bi-trash"></i> Delete Selected
+            </button>
+        </div>
+    </div>
+
+    <!-- Pending Images -->
+    <div id="pending-container" style="display: none;">
+        <h5 class="mb-3"><i class="bi bi-hourglass-split text-warning"></i> Receiving Images</h5>
+        <div class="row mb-4" id="pending-images"></div>
+    </div>
+
+    <!-- Completed Images -->
+    <div class="row" id="image-gallery"></div>
+
+    <!-- No Images Message -->
+    <div id="no-images" class="text-center py-5" style="display: none;">
+        <i class="bi bi-image" style="font-size: 4rem; color: #dee2e6;"></i>
+        <p class="mt-3 text-muted">No images in this mission yet</p>
+    </div>
+</div>
+
+<!-- Image Statistics -->
+<div class="row mt-4">
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="text-warning" id="stats-missions">0</h3>
+                <small class="text-muted">Missions</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="text-primary" id="stats-total">0</h3>
+                <small class="text-muted">Total Images</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="text-success" id="stats-size">0 MB</h3>
+                <small class="text-muted">Total Size</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="text-info" id="stats-pending">0</h3>
+                <small class="text-muted">Pending</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Image Modal -->
+<div class="modal fade" id="image-modal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-image"></i> Image <span id="modal-image-id">--</span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <img id="modal-image" class="img-fluid" src="" alt="Full size image">
+            </div>
+            <div class="modal-footer justify-content-between">
+                <div id="modal-image-info" class="text-muted small"></div>
+                <div>
+                    <button class="btn btn-danger btn-sm me-2" onclick="deleteCurrentImage()">
+                        <i class="bi bi-trash"></i> Delete
+                    </button>
+                    <a id="modal-download" href="#" class="btn btn-primary btn-sm" download>
+                        <i class="bi bi-download"></i> Download
+                    </a>
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Rename Mission Modal -->
+<div class="modal fade" id="rename-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-pencil"></i> Rename Mission</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="rename-session-id">
+                <div class="mb-3">
+                    <label class="form-label">Mission Name</label>
+                    <input type="text" class="form-control" id="rename-input" placeholder="Enter mission name">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveRename()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="delete-confirm-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Confirm Delete</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p id="delete-confirm-message">Are you sure you want to delete?</p>
+                <p class="text-danger mb-0"><strong>This action cannot be undone.</strong></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="delete-confirm-btn">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    let allSessions = [];
+    let allImages = [];
+    let currentSessionId = null;
+    let selectMode = false;
+    let selectedImages = new Set();
+    let currentViewingImageId = null;
+    
+    // ========== Mission/Session Functions ==========
+    
+    function loadMissions() {
+        fetch('/api/sessions')
+            .then(r => r.json())
+            .then(sessions => {
+                allSessions = sessions;
+                document.getElementById('missions-loading').style.display = 'none';
+                renderMissions();
+                updateStats();
+            })
+            .catch(err => {
+                console.error('Error loading missions:', err);
+                document.getElementById('missions-loading').innerHTML = 
+                    '<p class="text-danger">Error loading missions</p>';
+            });
+    }
+    
+    function renderMissions() {
+        const gallery = document.getElementById('missions-gallery');
+        
+        if (allSessions.length === 0) {
+            gallery.innerHTML = `
+                <div class="col-12 text-center py-5">
+                    <i class="bi bi-folder2" style="font-size: 4rem; color: #dee2e6;"></i>
+                    <p class="mt-3 text-muted">No missions yet</p>
+                </div>
+            `;
+            return;
+        }
+        
+        gallery.innerHTML = allSessions.map(session => createMissionCard(session)).join('');
+    }
+    
+    function createMissionCard(session) {
+        const startTime = session.start_time ? new Date(session.start_time * 1000).toLocaleString() : 'Unknown';
+        const sizeKB = (session.total_size_bytes / 1024).toFixed(1);
+        const sizeMB = (session.total_size_bytes / (1024 * 1024)).toFixed(2);
+        const sizeDisplay = session.total_size_bytes > 1024*1024 ? `${sizeMB} MB` : `${sizeKB} KB`;
+        const currentBadge = session.is_current ? '<span class="badge bg-success ms-2">Current</span>' : '';
+        
+        return `
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-3">
+                <div class="card mission-card h-100 ${session.is_current ? 'current' : ''}" 
+                     onclick="openMission('${session.session_id}')">
+                    <div class="card-body text-center">
+                        <i class="bi bi-folder-fill mission-folder-icon"></i>
+                        <h6 class="card-title mt-2 mb-1">
+                            ${escapeHtml(session.display_name)}${currentBadge}
+                        </h6>
+                        <p class="card-text image-meta text-muted mb-0">
+                            ${session.image_count} images<br>
+                            ${sizeDisplay}
+                        </p>
+                    </div>
+                    <div class="card-footer p-2">
+                        <div class="btn-group btn-group-sm w-100">
+                            <button class="btn btn-outline-primary" onclick="event.stopPropagation(); downloadMission('${session.session_id}')" title="Download">
+                                <i class="bi bi-download"></i>
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="event.stopPropagation(); showRenameModal('${session.session_id}', '${escapeHtml(session.name || '')}')" title="Rename">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            ${session.is_current ? '' : `<button class="btn btn-outline-danger" onclick="event.stopPropagation(); confirmDeleteMission('${session.session_id}', '${escapeHtml(session.display_name)}')" title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>`}
+                        </div>
+                        <small class="text-muted d-block mt-1">${startTime}</small>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    function openMission(sessionId) {
+        currentSessionId = sessionId;
+        const session = allSessions.find(s => s.session_id === sessionId);
+        
+        // Reset selection state
+        selectMode = false;
+        selectedImages.clear();
+        updateSelectionUI();
+        
+        // Update UI
+        document.getElementById('missions-view').style.display = 'none';
+        document.getElementById('images-view').style.display = 'block';
+        document.getElementById('page-title').innerHTML = `<i class="bi bi-images text-primary"></i> ${escapeHtml(session.display_name)}`;
+        document.getElementById('breadcrumb-mission').textContent = session.display_name;
+        document.getElementById('breadcrumb-mission').style.display = 'block';
+        
+        // Load images for this session
+        loadSessionImages(sessionId);
+        
+        // Show pending images only for current session
+        if (session.is_current) {
+            loadPendingImages();
+        } else {
+            document.getElementById('pending-container').style.display = 'none';
+        }
+    }
+    
+    function showMissions() {
+        currentSessionId = null;
+        selectMode = false;
+        selectedImages.clear();
+        
+        // Update UI
+        document.getElementById('missions-view').style.display = 'block';
+        document.getElementById('images-view').style.display = 'none';
+        document.getElementById('page-title').innerHTML = '<i class="bi bi-folder2 text-warning"></i> Mission Folders';
+        document.getElementById('breadcrumb-mission').style.display = 'none';
+        
+        loadMissions();
+    }
+    
+    function showRenameModal(sessionId, currentName) {
+        document.getElementById('rename-session-id').value = sessionId;
+        document.getElementById('rename-input').value = currentName;
+        new bootstrap.Modal(document.getElementById('rename-modal')).show();
+    }
+    
+    function saveRename() {
+        const sessionId = document.getElementById('rename-session-id').value;
+        const newName = document.getElementById('rename-input').value;
+        
+        fetch(`/api/sessions/${sessionId}/rename`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: newName})
+        })
+        .then(r => r.json())
+        .then(data => {
+            bootstrap.Modal.getInstance(document.getElementById('rename-modal')).hide();
+            loadMissions();
+        })
+        .catch(err => console.error('Error renaming:', err));
+    }
+    
+    function downloadMission(sessionId) {
+        window.location.href = `/api/sessions/${sessionId}/download`;
+    }
+    
+    function confirmDeleteMission(sessionId, displayName) {
+        document.getElementById('delete-confirm-message').innerHTML = 
+            `Are you sure you want to delete the mission "<strong>${escapeHtml(displayName)}</strong>" and all its images?`;
+        
+        const btn = document.getElementById('delete-confirm-btn');
+        btn.onclick = () => deleteMission(sessionId);
+        
+        new bootstrap.Modal(document.getElementById('delete-confirm-modal')).show();
+    }
+    
+    function deleteMission(sessionId) {
+        fetch(`/api/sessions/${sessionId}/delete`, {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                bootstrap.Modal.getInstance(document.getElementById('delete-confirm-modal')).hide();
+                if (data.status === 'ok') {
+                    loadMissions();
+                } else {
+                    alert('Error: ' + (data.error || 'Delete failed'));
+                }
+            })
+            .catch(err => {
+                console.error('Error deleting mission:', err);
+                alert('Error deleting mission');
+            });
+    }
+    
+    // ========== Image Functions ==========
+    
+    function loadSessionImages(sessionId) {
+        fetch(`/api/sessions/${sessionId}/images?count=200`)
+            .then(r => r.json())
+            .then(images => {
+                allImages = images;
+                renderImages();
+            })
+            .catch(err => {
+                console.error('Error loading images:', err);
+            });
+    }
+    
+    function renderImages() {
+        const gallery = document.getElementById('image-gallery');
+        const noImages = document.getElementById('no-images');
+        
+        if (allImages.length === 0) {
+            gallery.innerHTML = '';
+            noImages.style.display = 'block';
+            return;
+        }
+        
+        noImages.style.display = 'none';
+        gallery.innerHTML = allImages.map(img => createImageCard(img)).join('');
+    }
+    
+    function createImageCard(img) {
+        const receivedTime = new Date(img.received_time * 1000).toLocaleString();
+        const sizeKB = (img.size_bytes / 1024).toFixed(1);
+        const sessionId = img.session_id || currentSessionId;
+        const isSelected = selectedImages.has(img.image_id);
+        
+        return `
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-3">
+                <div class="card image-card h-100 ${isSelected ? 'selected' : ''}" 
+                     data-image-id="${img.image_id}"
+                     onclick="handleImageClick(event, '${sessionId}', ${img.image_id})">
+                    ${selectMode ? `<input type="checkbox" class="select-checkbox form-check-input" 
+                        ${isSelected ? 'checked' : ''} 
+                        onclick="event.stopPropagation(); toggleImageSelection(${img.image_id})">` : ''}
+                    <img src="/api/sessions/${sessionId}/images/${img.image_id}/thumbnail" 
+                         class="card-img-top" 
+                         alt="Image ${img.image_id}"
+                         loading="lazy">
+                    <div class="card-body p-2">
+                        <h6 class="card-title mb-1">Image #${img.image_id}</h6>
+                        <p class="card-text image-meta text-muted mb-0">
+                            ${img.width}×${img.height}<br>
+                            ${sizeKB} KB
+                        </p>
+                    </div>
+                    <div class="card-footer p-2">
+                        <small class="text-muted">${receivedTime}</small>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    function handleImageClick(event, sessionId, imageId) {
+        if (selectMode) {
+            toggleImageSelection(imageId);
+        } else {
+            showImage(sessionId, imageId);
+        }
+    }
+    
+    function showImage(sessionId, imageId) {
+        const img = allImages.find(i => i.image_id === imageId);
+        if (!img) return;
+        
+        currentViewingImageId = imageId;
+        const imgUrl = `/api/sessions/${sessionId}/images/${imageId}`;
+        
+        document.getElementById('modal-image-id').textContent = imageId;
+        document.getElementById('modal-image').src = imgUrl;
+        document.getElementById('modal-download').href = imgUrl;
+        document.getElementById('modal-image-info').innerHTML = `
+            ${img.width}×${img.height} | ${(img.size_bytes/1024).toFixed(1)} KB | 
+            Captured: ${new Date(img.capture_time * 1000).toLocaleString()} | 
+            Received: ${new Date(img.received_time * 1000).toLocaleString()}
+        `;
+        
+        new bootstrap.Modal(document.getElementById('image-modal')).show();
+    }
+    
+    function deleteCurrentImage() {
+        if (!currentSessionId || !currentViewingImageId) return;
+        
+        document.getElementById('delete-confirm-message').innerHTML = 
+            `Are you sure you want to delete <strong>Image #${currentViewingImageId}</strong>?`;
+        
+        const btn = document.getElementById('delete-confirm-btn');
+        btn.onclick = () => {
+            fetch(`/api/sessions/${currentSessionId}/images/${currentViewingImageId}/delete`, {method: 'POST'})
+                .then(r => r.json())
+                .then(data => {
+                    bootstrap.Modal.getInstance(document.getElementById('delete-confirm-modal')).hide();
+                    bootstrap.Modal.getInstance(document.getElementById('image-modal')).hide();
+                    if (data.status === 'ok') {
+                        loadSessionImages(currentSessionId);
+                        loadMissions(); // Update counts
+                    }
+                });
+        };
+        
+        new bootstrap.Modal(document.getElementById('delete-confirm-modal')).show();
+    }
+    
+    // ========== Selection Functions ==========
+    
+    function toggleSelectMode() {
+        selectMode = !selectMode;
+        if (!selectMode) {
+            selectedImages.clear();
+        }
+        updateSelectionUI();
+        renderImages();
+    }
+    
+    function toggleImageSelection(imageId) {
+        if (selectedImages.has(imageId)) {
+            selectedImages.delete(imageId);
+        } else {
+            selectedImages.add(imageId);
+        }
+        updateSelectionUI();
+        
+        // Update card visual
+        const card = document.querySelector(`[data-image-id="${imageId}"]`);
+        if (card) {
+            card.classList.toggle('selected', selectedImages.has(imageId));
+            const checkbox = card.querySelector('.select-checkbox');
+            if (checkbox) checkbox.checked = selectedImages.has(imageId);
+        }
+    }
+    
+    function selectAll() {
+        allImages.forEach(img => selectedImages.add(img.image_id));
+        updateSelectionUI();
+        renderImages();
+    }
+    
+    function deselectAll() {
+        selectedImages.clear();
+        updateSelectionUI();
+        renderImages();
+    }
+    
+    function updateSelectionUI() {
+        document.getElementById('select-mode-text').textContent = selectMode ? 'Cancel' : 'Select';
+        document.getElementById('selection-info').style.display = selectMode ? 'inline' : 'none';
+        document.getElementById('selection-actions').style.display = (selectMode && selectedImages.size > 0) ? 'block' : 'none';
+        document.getElementById('selected-count').textContent = selectedImages.size;
+    }
+    
+    function deleteSelectedImages() {
+        if (selectedImages.size === 0) return;
+        
+        document.getElementById('delete-confirm-message').innerHTML = 
+            `Are you sure you want to delete <strong>${selectedImages.size} selected image(s)</strong>?`;
+        
+        const btn = document.getElementById('delete-confirm-btn');
+        btn.onclick = () => {
+            const imageIds = Array.from(selectedImages);
+            fetch(`/api/sessions/${currentSessionId}/images/delete`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({image_ids: imageIds})
+            })
+            .then(r => r.json())
+            .then(data => {
+                bootstrap.Modal.getInstance(document.getElementById('delete-confirm-modal')).hide();
+                selectedImages.clear();
+                updateSelectionUI();
+                loadSessionImages(currentSessionId);
+                loadMissions(); // Update counts
+            });
+        };
+        
+        new bootstrap.Modal(document.getElementById('delete-confirm-modal')).show();
+    }
+    
+    function loadPendingImages() {
+        fetch('/api/images/pending')
+            .then(r => r.json())
+            .then(pending => {
+                const container = document.getElementById('pending-container');
+                const gallery = document.getElementById('pending-images');
+                
+                if (pending.length === 0) {
+                    container.style.display = 'none';
+                    return;
+                }
+                
+                container.style.display = 'block';
+                gallery.innerHTML = pending.map(img => `
+                    <div class="col-md-3 col-sm-6 mb-3">
+                        <div class="card pending-image">
+                            <div class="card-body text-center">
+                                <i class="bi bi-image" style="font-size: 2rem; color: #ffc107;"></i>
+                                <h6 class="mt-2">Image #${img.image_id}</h6>
+                                <p class="mb-2 small text-muted">${img.width}×${img.height}</p>
+                                <div class="progress">
+                                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" 
+                                         style="width: ${img.progress}%"></div>
+                                </div>
+                                <small class="text-muted">${img.progress.toFixed(1)}% (${img.symbols}/${img.total_symbols})</small>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+                
+                document.getElementById('stats-pending').textContent = pending.length;
+            });
+    }
+    
+    function updateStats() {
+        // Update missions count
+        document.getElementById('stats-missions').textContent = allSessions.length;
+        
+        // Calculate totals across all sessions
+        let totalImages = 0;
+        let totalSize = 0;
+        allSessions.forEach(s => {
+            totalImages += s.image_count;
+            totalSize += s.total_size_bytes;
+        });
+        
+        document.getElementById('stats-total').textContent = totalImages;
+        document.getElementById('stats-size').textContent = (totalSize / (1024 * 1024)).toFixed(1) + ' MB';
+        
+        // Get pending count
+        fetch('/api/status')
+            .then(r => r.json())
+            .then(data => {
+                if (data.decoder) {
+                    document.getElementById('stats-pending').textContent = data.decoder.pending_images || 0;
+                }
+            });
+    }
+    
+    function refreshView() {
+        if (currentSessionId) {
+            // Viewing a specific mission - reload its images
+            loadSessionImages(currentSessionId);
+            // Check if it's the current session to load pending
+            const session = allSessions.find(s => s.session_id === currentSessionId);
+            if (session && session.is_current) {
+                loadPendingImages();
+            }
+        } else {
+            // Viewing missions list - reload missions
+            loadMissions();
+        }
+    }
+    
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // ========== WebSocket Events ==========
+    
+    socket.on('image_complete', function(data) {
+        console.log('New image complete:', data);
+        if (currentSessionId) {
+            loadSessionImages(currentSessionId);
+        }
+        loadPendingImages();
+        loadMissions(); // Update mission image counts
+    });
+    
+    socket.on('image_progress', function(data) {
+        loadPendingImages();
+    });
+    
+    // ========== Initialization ==========
+    
+    loadMissions();
+    
+    // Periodic refresh
+    setInterval(() => {
+        if (currentSessionId) {
+            loadPendingImages();
+        }
+    }, 5000);
+    
+    setInterval(updateStats, 10000);
+</script>
+{% endblock %}

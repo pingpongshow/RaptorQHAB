@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}RaptorHab Ground Station{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #0d6efd;
+            --success-color: #198754;
+            --danger-color: #dc3545;
+            --warning-color: #ffc107;
+        }
+        body {
+            background-color: #f8f9fa;
+        }
+        .navbar-brand { 
+            font-weight: bold; 
+            font-size: 1.4rem;
+        }
+        .status-card { 
+            margin-bottom: 1rem;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        }
+        .telemetry-value { 
+            font-size: 1.8rem; 
+            font-weight: bold;
+            color: #212529;
+        }
+        .telemetry-label { 
+            color: #6c757d; 
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .telemetry-unit {
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+        #map { height: 500px; }
+        .image-thumbnail { 
+            max-width: 100%; 
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .image-thumbnail:hover {
+            transform: scale(1.02);
+        }
+        .alert-badge { 
+            animation: pulse 1s infinite; 
+        }
+        @keyframes pulse { 
+            0%, 100% { opacity: 1; } 
+            50% { opacity: 0.5; } 
+        }
+        .signal-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .signal-bar-fill {
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+        .signal-excellent { background-color: #198754; }
+        .signal-good { background-color: #20c997; }
+        .signal-fair { background-color: #ffc107; }
+        .signal-poor { background-color: #dc3545; }
+        .packet-counter {
+            font-family: 'Courier New', monospace;
+            font-size: 1.1rem;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+        .status-active { background-color: #198754; }
+        .status-inactive { background-color: #dc3545; }
+        .status-warning { background-color: #ffc107; }
+        .log-container {
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            padding: 1rem;
+            border-radius: 0.375rem;
+        }
+        .log-entry {
+            margin-bottom: 2px;
+        }
+        .log-time { color: #569cd6; }
+        .log-info { color: #4ec9b0; }
+        .log-warn { color: #dcdcaa; }
+        .log-error { color: #f14c4c; }
+        .progress-ring {
+            transform: rotate(-90deg);
+        }
+        .card-header {
+            background-color: #fff;
+            border-bottom: 1px solid rgba(0,0,0,.125);
+        }
+        .btn-command {
+            min-width: 120px;
+        }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-broadcast-pin"></i> RaptorHab Ground
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.path == '/' %}active{% endif %}" href="/">
+                            <i class="bi bi-speedometer2"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.path == '/map' %}active{% endif %}" href="/map">
+                            <i class="bi bi-map"></i> Map
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.path == '/images' %}active{% endif %}" href="/images">
+                            <i class="bi bi-images"></i> Images
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <span class="nav-link" id="connection-status">
+                            <span class="status-indicator status-inactive"></span>
+                            <span id="conn-text">Connecting...</span>
+                        </span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-3">
+        <div id="alert-container"></div>
+        {% block content %}{% endblock %}
+    </div>
+
+    <footer class="mt-4 py-3 bg-light border-top">
+        <div class="container text-center text-muted">
+            <small>RaptorHab Ground Station v1.0 (Receive-Only) | 
+            <span id="footer-time"></span> | 
+            Uptime: <span id="footer-uptime">--</span></small>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // WebSocket connection
+        const socket = io();
+        let startTime = Date.now();
+        
+        socket.on('connect', function() {
+            document.getElementById('connection-status').innerHTML = 
+                '<span class="status-indicator status-active"></span>' +
+                '<span id="conn-text">Connected</span>';
+            console.log('WebSocket connected');
+        });
+        
+        socket.on('disconnect', function() {
+            document.getElementById('connection-status').innerHTML = 
+                '<span class="status-indicator status-inactive"></span>' +
+                '<span id="conn-text">Disconnected</span>';
+            console.log('WebSocket disconnected');
+        });
+        
+        socket.on('alert', function(data) {
+            showAlert(data.type, data.message);
+        });
+        
+        function showAlert(type, message) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-warning alert-dismissible fade show';
+            alertDiv.innerHTML = `
+                <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                <strong>${type}:</strong> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.getElementById('alert-container').prepend(alertDiv);
+            
+            // Auto-dismiss after 30 seconds
+            setTimeout(() => {
+                alertDiv.remove();
+            }, 30000);
+        }
+        
+        function formatTime(timestamp) {
+            if (!timestamp) return '--';
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleTimeString();
+        }
+        
+        function formatUptime(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            return `${h}h ${m}m ${s}s`;
+        }
+        
+        // Update footer time
+        setInterval(function() {
+            document.getElementById('footer-time').textContent = new Date().toLocaleString();
+        }, 1000);
+    </script>
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,447 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		DC770EA12F27164B00604B62 /* RotatorManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC770E9F2F27164B00604B62 /* RotatorManager.swift */; };
+		DC770EA22F27164B00604B62 /* RotatorSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC770EA02F27164B00604B62 /* RotatorSettingsView.swift */; };
+		DCC19FC12F25EE6300EA41D0 /* SerialPortManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FC02F25EE6300EA41D0 /* SerialPortManager.swift */; };
+		DCC19FC42F26297200EA41D0 /* raptorq_decode in CopyFiles */ = {isa = PBXBuildFile; fileRef = DCC19FC32F26297200EA41D0 /* raptorq_decode */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		DCC19FC62F262E8600EA41D0 /* OfflineMapManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FC52F262E8600EA41D0 /* OfflineMapManager.swift */; };
+		DCC19FC82F262E8D00EA41D0 /* OfflineMapSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FC72F262E8D00EA41D0 /* OfflineMapSettingsView.swift */; };
+		DCC19FCA2F26311800EA41D0 /* GPSManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FC92F26311800EA41D0 /* GPSManager.swift */; };
+		DCC19FCC2F26311F00EA41D0 /* GPSSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FCB2F26311F00EA41D0 /* GPSSettingsView.swift */; };
+		DCC19FCE2F26339B00EA41D0 /* SondeHubManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FCD2F26339B00EA41D0 /* SondeHubManager.swift */; };
+		DCC19FD02F2633A500EA41D0 /* SondeHubSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FCF2F2633A500EA41D0 /* SondeHubSettingsView.swift */; };
+		DCC19FD22F26B3C000EA41D0 /* FlightGraphsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FD12F26B3C000EA41D0 /* FlightGraphsView.swift */; };
+		DCC19FD42F26B3C700EA41D0 /* LandingPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FD32F26B3C700EA41D0 /* LandingPrediction.swift */; };
+		DCC19FD62F26B3CD00EA41D0 /* LandingPredictionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FD52F26B3CD00EA41D0 /* LandingPredictionView.swift */; };
+		DCC19FD82F26C06A00EA41D0 /* AudioAlertManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FD72F26C06A00EA41D0 /* AudioAlertManager.swift */; };
+		DCC19FDD2F26C07600EA41D0 /* MissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FDB2F26C07600EA41D0 /* MissionManager.swift */; };
+		DCC19FDE2F26C07600EA41D0 /* MissionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FDC2F26C07600EA41D0 /* MissionsView.swift */; };
+		DCC19FDF2F26C07600EA41D0 /* BurstDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FD92F26C07600EA41D0 /* BurstDetection.swift */; };
+		DCC19FE02F26C07600EA41D0 /* LandingPredictionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC19FDA2F26C07600EA41D0 /* LandingPredictionsView.swift */; };
+		F000000000000001 /* RaptorHabGSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F100000000000001 /* RaptorHabGSApp.swift */; };
+		F000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F100000000000002 /* ContentView.swift */; };
+		F000000000000003 /* Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F100000000000003 /* Protocol.swift */; };
+		F000000000000004 /* RTLSDRManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F100000000000004 /* RTLSDRManager.swift */; };
+		F000000000000005 /* FSKDemodulator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F100000000000005 /* FSKDemodulator.swift */; };
+		F000000000000006 /* GroundStationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F100000000000006 /* GroundStationManager.swift */; };
+		F000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F100000000000007 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		DCC19FC22F26292800EA41D0 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				DCC19FC42F26297200EA41D0 /* raptorq_decode in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		DC770E9F2F27164B00604B62 /* RotatorManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RotatorManager.swift; sourceTree = "<group>"; };
+		DC770EA02F27164B00604B62 /* RotatorSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RotatorSettingsView.swift; sourceTree = "<group>"; };
+		DCC19FC02F25EE6300EA41D0 /* SerialPortManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerialPortManager.swift; sourceTree = "<group>"; };
+		DCC19FC32F26297200EA41D0 /* raptorq_decode */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = raptorq_decode; path = RaptorHabGS/raptorq_decode; sourceTree = "<group>"; };
+		DCC19FC52F262E8600EA41D0 /* OfflineMapManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapManager.swift; sourceTree = "<group>"; };
+		DCC19FC72F262E8D00EA41D0 /* OfflineMapSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapSettingsView.swift; sourceTree = "<group>"; };
+		DCC19FC92F26311800EA41D0 /* GPSManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GPSManager.swift; sourceTree = "<group>"; };
+		DCC19FCB2F26311F00EA41D0 /* GPSSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GPSSettingsView.swift; sourceTree = "<group>"; };
+		DCC19FCD2F26339B00EA41D0 /* SondeHubManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SondeHubManager.swift; sourceTree = "<group>"; };
+		DCC19FCF2F2633A500EA41D0 /* SondeHubSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SondeHubSettingsView.swift; sourceTree = "<group>"; };
+		DCC19FD12F26B3C000EA41D0 /* FlightGraphsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlightGraphsView.swift; sourceTree = "<group>"; };
+		DCC19FD32F26B3C700EA41D0 /* LandingPrediction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingPrediction.swift; sourceTree = "<group>"; };
+		DCC19FD52F26B3CD00EA41D0 /* LandingPredictionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingPredictionView.swift; sourceTree = "<group>"; };
+		DCC19FD72F26C06A00EA41D0 /* AudioAlertManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAlertManager.swift; sourceTree = "<group>"; };
+		DCC19FD92F26C07600EA41D0 /* BurstDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BurstDetection.swift; sourceTree = "<group>"; };
+		DCC19FDA2F26C07600EA41D0 /* LandingPredictionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingPredictionsView.swift; sourceTree = "<group>"; };
+		DCC19FDB2F26C07600EA41D0 /* MissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MissionManager.swift; sourceTree = "<group>"; };
+		DCC19FDC2F26C07600EA41D0 /* MissionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MissionsView.swift; sourceTree = "<group>"; };
+		F100000000000000 /* RaptorHabGS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RaptorHabGS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F100000000000001 /* RaptorHabGSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RaptorHabGSApp.swift; sourceTree = "<group>"; };
+		F100000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		F100000000000003 /* Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocol.swift; sourceTree = "<group>"; };
+		F100000000000004 /* RTLSDRManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RTLSDRManager.swift; sourceTree = "<group>"; };
+		F100000000000005 /* FSKDemodulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSKDemodulator.swift; sourceTree = "<group>"; };
+		F100000000000006 /* GroundStationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroundStationManager.swift; sourceTree = "<group>"; };
+		F100000000000007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F100000000000008 /* RaptorHabGS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = RaptorHabGS.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F200000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		F300000000000001 = {
+			isa = PBXGroup;
+			children = (
+				DCC19FC32F26297200EA41D0 /* raptorq_decode */,
+				F300000000000002 /* RaptorHabGS */,
+				F300000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		F300000000000002 /* RaptorHabGS */ = {
+			isa = PBXGroup;
+			children = (
+				F100000000000001 /* RaptorHabGSApp.swift */,
+				DC770E9F2F27164B00604B62 /* RotatorManager.swift */,
+				DC770EA02F27164B00604B62 /* RotatorSettingsView.swift */,
+				F100000000000002 /* ContentView.swift */,
+				DCC19FCD2F26339B00EA41D0 /* SondeHubManager.swift */,
+				DCC19FCF2F2633A500EA41D0 /* SondeHubSettingsView.swift */,
+				DCC19FC92F26311800EA41D0 /* GPSManager.swift */,
+				DCC19FCB2F26311F00EA41D0 /* GPSSettingsView.swift */,
+				DCC19FC52F262E8600EA41D0 /* OfflineMapManager.swift */,
+				DCC19FC72F262E8D00EA41D0 /* OfflineMapSettingsView.swift */,
+				F100000000000003 /* Protocol.swift */,
+				F100000000000004 /* RTLSDRManager.swift */,
+				F100000000000005 /* FSKDemodulator.swift */,
+				F100000000000006 /* GroundStationManager.swift */,
+				DCC19FC02F25EE6300EA41D0 /* SerialPortManager.swift */,
+				F100000000000007 /* Assets.xcassets */,
+				F100000000000008 /* RaptorHabGS.entitlements */,
+				DCC19FD12F26B3C000EA41D0 /* FlightGraphsView.swift */,
+				DCC19FD32F26B3C700EA41D0 /* LandingPrediction.swift */,
+				DCC19FD52F26B3CD00EA41D0 /* LandingPredictionView.swift */,
+				DCC19FD72F26C06A00EA41D0 /* AudioAlertManager.swift */,
+				DCC19FD92F26C07600EA41D0 /* BurstDetection.swift */,
+				DCC19FDA2F26C07600EA41D0 /* LandingPredictionsView.swift */,
+				DCC19FDB2F26C07600EA41D0 /* MissionManager.swift */,
+				DCC19FDC2F26C07600EA41D0 /* MissionsView.swift */,
+			);
+			path = RaptorHabGS;
+			sourceTree = "<group>";
+		};
+		F300000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F100000000000000 /* RaptorHabGS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F400000000000001 /* RaptorHabGS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F600000000000001 /* Build configuration list for PBXNativeTarget "RaptorHabGS" */;
+			buildPhases = (
+				F500000000000001 /* Sources */,
+				F200000000000001 /* Frameworks */,
+				F500000000000002 /* Resources */,
+				DCC19FC22F26292800EA41D0 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RaptorHabGS;
+			productName = RaptorHabGS;
+			productReference = F100000000000000 /* RaptorHabGS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		F700000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					F400000000000001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = F600000000000002 /* Build configuration list for PBXProject "RaptorHabGS" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = F300000000000001;
+			productRefGroup = F300000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F400000000000001 /* RaptorHabGS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		F500000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F000000000000007 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F500000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F000000000000001 /* RaptorHabGSApp.swift in Sources */,
+				DCC19FC82F262E8D00EA41D0 /* OfflineMapSettingsView.swift in Sources */,
+				DCC19FCA2F26311800EA41D0 /* GPSManager.swift in Sources */,
+				DCC19FC12F25EE6300EA41D0 /* SerialPortManager.swift in Sources */,
+				F000000000000002 /* ContentView.swift in Sources */,
+				DCC19FD82F26C06A00EA41D0 /* AudioAlertManager.swift in Sources */,
+				DC770EA12F27164B00604B62 /* RotatorManager.swift in Sources */,
+				DC770EA22F27164B00604B62 /* RotatorSettingsView.swift in Sources */,
+				F000000000000003 /* Protocol.swift in Sources */,
+				F000000000000004 /* RTLSDRManager.swift in Sources */,
+				DCC19FD22F26B3C000EA41D0 /* FlightGraphsView.swift in Sources */,
+				DCC19FCE2F26339B00EA41D0 /* SondeHubManager.swift in Sources */,
+				DCC19FDD2F26C07600EA41D0 /* MissionManager.swift in Sources */,
+				DCC19FDE2F26C07600EA41D0 /* MissionsView.swift in Sources */,
+				DCC19FDF2F26C07600EA41D0 /* BurstDetection.swift in Sources */,
+				DCC19FE02F26C07600EA41D0 /* LandingPredictionsView.swift in Sources */,
+				DCC19FCC2F26311F00EA41D0 /* GPSSettingsView.swift in Sources */,
+				DCC19FD02F2633A500EA41D0 /* SondeHubSettingsView.swift in Sources */,
+				DCC19FD42F26B3C700EA41D0 /* LandingPrediction.swift in Sources */,
+				F000000000000005 /* FSKDemodulator.swift in Sources */,
+				DCC19FC62F262E8600EA41D0 /* OfflineMapManager.swift in Sources */,
+				F000000000000006 /* GroundStationManager.swift in Sources */,
+				DCC19FD62F26B3CD00EA41D0 /* LandingPredictionView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		F800000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		F800000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		F800000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = RaptorHabGS/RaptorHabGS.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 64L6B86X7S;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					/usr/local/lib,
+					/opt/homebrew/lib,
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.raptorhab.groundstation;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		F800000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = RaptorHabGS/RaptorHabGS.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 64L6B86X7S;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					/usr/local/lib,
+					/opt/homebrew/lib,
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.raptorhab.groundstation;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		F600000000000001 /* Build configuration list for PBXNativeTarget "RaptorHabGS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F800000000000003 /* Debug */,
+				F800000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F600000000000002 /* Build configuration list for PBXProject "RaptorHabGS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F800000000000001 /* Debug */,
+				F800000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = F700000000000001 /* Project object */;
+}

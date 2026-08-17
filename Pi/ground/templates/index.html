@@ -1,0 +1,646 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - RaptorHab Ground Station{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Left Column: Telemetry -->
+    <div class="col-lg-8">
+        <!-- Position Card -->
+        <div class="card status-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-geo-alt-fill text-primary"></i> Current Position</h5>
+                <span class="badge bg-secondary" id="fix-type">No Fix</span>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-3 col-6 mb-3">
+                        <div class="telemetry-value" id="latitude">--</div>
+                        <div class="telemetry-label">Latitude</div>
+                    </div>
+                    <div class="col-md-3 col-6 mb-3">
+                        <div class="telemetry-value" id="longitude">--</div>
+                        <div class="telemetry-label">Longitude</div>
+                    </div>
+                    <div class="col-md-3 col-6 mb-3">
+                        <div class="telemetry-value">
+                            <span id="altitude">--</span>
+                            <span class="telemetry-unit">m</span>
+                        </div>
+                        <div class="telemetry-label">Altitude</div>
+                    </div>
+                    <div class="col-md-3 col-6 mb-3">
+                        <div class="telemetry-value">
+                            <span id="speed">--</span>
+                            <span class="telemetry-unit">m/s</span>
+                        </div>
+                        <div class="telemetry-label">Speed</div>
+                    </div>
+                </div>
+                <div class="row text-center">
+                    <div class="col-md-3 col-6">
+                        <div class="telemetry-value">
+                            <span id="heading">--</span>
+                            <span class="telemetry-unit">°</span>
+                        </div>
+                        <div class="telemetry-label">Heading</div>
+                    </div>
+                    <div class="col-md-3 col-6">
+                        <div class="telemetry-value" id="satellites">--</div>
+                        <div class="telemetry-label">Satellites</div>
+                    </div>
+                    <div class="col-md-3 col-6">
+                        <div class="telemetry-value" id="max-altitude">--</div>
+                        <div class="telemetry-label">Max Altitude</div>
+                    </div>
+                    <div class="col-md-3 col-6">
+                        <div class="telemetry-value" id="vertical-speed">--</div>
+                        <div class="telemetry-label">Vert. Speed</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Status Card -->
+        <div class="card status-card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-cpu-fill text-success"></i> Payload Status</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-3 col-6 mb-3">
+                        <div class="telemetry-value">
+                            <span id="battery">--</span>
+                            <span class="telemetry-unit">mV</span>
+                        </div>
+                        <div class="telemetry-label">Battery</div>
+                        <div class="progress mt-2" style="height: 6px;">
+                            <div class="progress-bar bg-success" id="battery-bar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 col-6 mb-3">
+                        <div class="telemetry-value">
+                            <span id="cpu_temp">--</span>
+                            <span class="telemetry-unit">°C</span>
+                        </div>
+                        <div class="telemetry-label">CPU Temp</div>
+                    </div>
+                    <div class="col-md-3 col-6 mb-3">
+                        <div class="telemetry-value">
+                            <span id="radio_temp">--</span>
+                            <span class="telemetry-unit">°C</span>
+                        </div>
+                        <div class="telemetry-label">Radio Temp</div>
+                    </div>
+                    <div class="col-md-3 col-6 mb-3">
+                        <div class="telemetry-value" id="image_progress">--</div>
+                        <div class="telemetry-label">Image TX</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mini Map -->
+        <div class="card status-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-map-fill text-info"></i> Track Preview</h5>
+                <a href="/map" class="btn btn-sm btn-outline-primary">Full Map</a>
+            </div>
+            <div class="card-body p-0">
+                <div id="mini-map" style="height: 250px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: Reception & Images -->
+    <div class="col-lg-4">
+        <!-- Signal Quality Card -->
+        <div class="card status-card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-reception-4 text-warning"></i> Signal Quality</h5>
+            </div>
+            <div class="card-body">
+                <div class="text-center mb-3">
+                    <div class="telemetry-value">
+                        <span id="rssi">--</span>
+                        <span class="telemetry-unit">dBm</span>
+                    </div>
+                    <div class="telemetry-label">RSSI</div>
+                </div>
+                <div class="signal-bar mb-3">
+                    <div class="signal-bar-fill signal-good" id="rssi-bar" style="width: 0%"></div>
+                </div>
+                <div class="row text-center">
+                    <div class="col-6">
+                        <div class="packet-counter text-success" id="packets_valid">0</div>
+                        <small class="text-muted">Valid Packets</small>
+                    </div>
+                    <div class="col-6">
+                        <div class="packet-counter text-danger" id="packets_invalid">0</div>
+                        <small class="text-muted">Invalid</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tracking Card -->
+        <div class="card status-card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-compass-fill text-info"></i> Tracking</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-6 mb-3">
+                        <div class="telemetry-value">
+                            <span id="track-distance">--</span>
+                            <span class="telemetry-unit">km</span>
+                        </div>
+                        <div class="telemetry-label">Distance</div>
+                    </div>
+                    <div class="col-6 mb-3">
+                        <div class="telemetry-value">
+                            <span id="track-bearing">--</span>
+                            <span class="telemetry-unit">°</span>
+                        </div>
+                        <div class="telemetry-label">Bearing</div>
+                    </div>
+                </div>
+                <div class="row text-center">
+                    <div class="col-6">
+                        <div class="telemetry-value">
+                            <span id="track-elevation">--</span>
+                            <span class="telemetry-unit">°</span>
+                        </div>
+                        <div class="telemetry-label">Elevation</div>
+                    </div>
+                    <div class="col-6">
+                        <div class="telemetry-value">
+                            <span id="track-direction">--</span>
+                        </div>
+                        <div class="telemetry-label">Direction</div>
+                    </div>
+                </div>
+                <hr class="my-2">
+                <small class="text-muted">
+                    Ground: <span id="ground-lat">--</span>, <span id="ground-lon">--</span>
+                    (<span id="ground-sats">--</span> sats)
+                </small>
+            </div>
+        </div>
+
+        <!-- Packet Stats Card -->
+        <div class="card status-card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-bar-chart-fill text-primary"></i> Packet Statistics</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm mb-0">
+                    <tr>
+                        <td><i class="bi bi-broadcast"></i> Telemetry</td>
+                        <td class="text-end packet-counter" id="telemetry_packets">0</td>
+                    </tr>
+                    <tr>
+                        <td><i class="bi bi-info-circle"></i> Image Meta</td>
+                        <td class="text-end packet-counter" id="image_meta_packets">0</td>
+                    </tr>
+                    <tr>
+                        <td><i class="bi bi-image"></i> Image Data</td>
+                        <td class="text-end packet-counter" id="image_data_packets">0</td>
+                    </tr>
+                    <tr>
+                        <td><i class="bi bi-chat-dots"></i> Text Messages</td>
+                        <td class="text-end packet-counter" id="text_packets">0</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- Latest Image Card -->
+        <div class="card status-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-image-fill text-success"></i> Latest Image</h5>
+                <a href="/images" class="btn btn-sm btn-outline-primary">Gallery</a>
+            </div>
+            <div class="card-body text-center">
+                <img id="latest_image" class="img-fluid rounded" src="" alt="No image yet" 
+                     style="max-height: 200px; display: none; cursor: pointer;"
+                     onclick="showLatestImageModal()"
+                     title="Click to enlarge">
+                <div id="no-image-placeholder" class="text-muted py-4">
+                    <i class="bi bi-image" style="font-size: 3rem;"></i>
+                    <p class="mt-2 mb-0">Waiting for images...</p>
+                </div>
+                <div class="mt-2">
+                    <small class="text-muted">
+                        Images: <span id="images_completed">0</span> | 
+                        Pending: <span id="images_pending">0</span>
+                    </small>
+                </div>
+                <!-- Image progress bar -->
+                <div id="image-progress-container" style="display: none;" class="mt-2">
+                    <small>Receiving image <span id="receiving-image-id">--</span></small>
+                    <div class="progress" style="height: 10px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                             id="image-progress-bar" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+<!-- Latest Image Modal -->
+<div class="modal fade" id="latest-image-modal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-image"></i> Latest Image
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0 text-center" style="background: #000;">
+                <img id="modal-latest-image" class="img-fluid" src="" alt="Latest image" style="max-height: 80vh;">
+            </div>
+            <div class="modal-footer justify-content-between">
+                <small class="text-muted" id="modal-image-details"></small>
+                <div>
+                    <a id="modal-image-download" href="#" class="btn btn-primary btn-sm" download>
+                        <i class="bi bi-download"></i> Download
+                    </a>
+                    <a href="/images" class="btn btn-outline-primary btn-sm">
+                        <i class="bi bi-images"></i> Gallery
+                    </a>
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+<!-- Last Update Info -->
+<div class="row mt-2">
+    <div class="col-12 text-center">
+        <small class="text-muted">
+            Last telemetry: <span id="last-telemetry-time">--</span> | 
+            Last packet: <span id="last-packet-time">--</span>
+        </small>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    // Mini map setup
+    const miniMap = L.map('mini-map').setView([{{ config.map_default_lat }}, {{ config.map_default_lon }}], {{ config.map_default_zoom }});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OSM'
+    }).addTo(miniMap);
+    
+    let marker = null;
+    let track = L.polyline([], {color: '#dc3545', weight: 2}).addTo(miniMap);
+    let trackPoints = [];
+    let maxAltitude = 0;
+    let lastAltitude = null;
+    let lastAltitudeTime = null;
+    
+    // RSSI smoothing - keep last N values for moving average
+    const rssiHistory = [];
+    const RSSI_HISTORY_SIZE = 5;
+    
+    // Current latest image info
+    let latestImageInfo = null;
+    
+    // Store telemetry data for persistence
+    function storeTelemetry(data) {
+        try {
+            sessionStorage.setItem('lastTelemetry', JSON.stringify(data));
+        } catch(e) {}
+    }
+    
+    // Load stored telemetry on page load
+    function loadStoredTelemetry() {
+        try {
+            const stored = sessionStorage.getItem('lastTelemetry');
+            if (stored) {
+                const data = JSON.parse(stored);
+                updateTelemetryDisplay(data);
+            }
+        } catch(e) {}
+    }
+    
+    // Calculate smoothed RSSI using moving average
+    function smoothRssi(newRssi) {
+        rssiHistory.push(newRssi);
+        if (rssiHistory.length > RSSI_HISTORY_SIZE) {
+            rssiHistory.shift();
+        }
+        const sum = rssiHistory.reduce((a, b) => a + b, 0);
+        return Math.round(sum / rssiHistory.length);
+    }
+    
+    // Update telemetry display (extracted for reuse)
+    function updateTelemetryDisplay(data) {
+        // Position
+        document.getElementById('latitude').textContent = data.latitude ? data.latitude.toFixed(6) : '--';
+        document.getElementById('longitude').textContent = data.longitude ? data.longitude.toFixed(6) : '--';
+        document.getElementById('altitude').textContent = data.altitude ? data.altitude.toFixed(0) : '--';
+        document.getElementById('speed').textContent = data.speed ? data.speed.toFixed(1) : '--';
+        document.getElementById('heading').textContent = data.heading ? data.heading.toFixed(0) : '--';
+        document.getElementById('satellites').textContent = data.satellites || '--';
+        
+        // Calculate vertical speed
+        if (lastAltitude !== null && lastAltitudeTime !== null && data.received_at) {
+            const dt = (data.received_at - lastAltitudeTime);
+            if (dt > 0 && dt < 60) { // Ignore if gap too large
+                const vSpeed = (data.altitude - lastAltitude) / dt;
+                document.getElementById('vertical-speed').textContent = vSpeed.toFixed(1) + ' m/s';
+            }
+        }
+        if (data.altitude) {
+            lastAltitude = data.altitude;
+            lastAltitudeTime = data.received_at;
+        }
+        
+        // Max altitude
+        if (data.altitude && data.altitude > maxAltitude) {
+            maxAltitude = data.altitude;
+            document.getElementById('max-altitude').textContent = maxAltitude.toFixed(0) + ' m';
+        }
+        
+        // Fix type badge
+        const fixTypes = ['No Fix', '2D Fix', '3D Fix'];
+        const fixBadge = document.getElementById('fix-type');
+        fixBadge.textContent = fixTypes[data.fix_type] || 'Unknown';
+        fixBadge.className = 'badge ' + (data.fix_type >= 2 ? 'bg-success' : 'bg-warning');
+        
+        // System status
+        document.getElementById('battery').textContent = data.battery_mv || '--';
+        document.getElementById('cpu_temp').textContent = data.cpu_temp ? data.cpu_temp.toFixed(1) : '--';
+        document.getElementById('radio_temp').textContent = data.radio_temp ? data.radio_temp.toFixed(1) : '--';
+        
+        // RSSI with smoothing
+        if (data.rssi) {
+            const smoothedRssi = smoothRssi(data.rssi);
+            document.getElementById('rssi').textContent = smoothedRssi;
+            
+            // RSSI bar (assuming -120 to -40 dBm range)
+            const rssiPercent = Math.max(0, Math.min(100, (smoothedRssi + 120) * 1.25));
+            const rssiBar = document.getElementById('rssi-bar');
+            rssiBar.style.width = rssiPercent + '%';
+            rssiBar.className = 'signal-bar-fill ' + 
+                (rssiPercent > 70 ? 'signal-excellent' : 
+                 rssiPercent > 50 ? 'signal-good' : 
+                 rssiPercent > 30 ? 'signal-fair' : 'signal-poor');
+        }
+        
+        // Image progress
+        if (data.image_id > 0) {
+            document.getElementById('image_progress').textContent = 
+                `#${data.image_id}: ${data.image_progress}%`;
+        }
+        
+        // Battery bar (assuming 3.0V-4.2V range = 3000-4200mV)
+        if (data.battery_mv) {
+            const battPercent = Math.max(0, Math.min(100, (data.battery_mv - 3000) / 12));
+            const battBar = document.getElementById('battery-bar');
+            battBar.style.width = battPercent + '%';
+            battBar.className = 'progress-bar ' + 
+                (battPercent > 50 ? 'bg-success' : battPercent > 20 ? 'bg-warning' : 'bg-danger');
+        }
+        
+        // Update mini map
+        if (data.latitude && data.longitude && data.latitude !== 0) {
+            const pos = [data.latitude, data.longitude];
+            
+            if (!marker) {
+                marker = L.marker(pos).addTo(miniMap);
+                miniMap.setView(pos, 10);
+            } else {
+                marker.setLatLng(pos);
+            }
+            
+            // Only add to track if this is new data (has received_at)
+            if (data.received_at) {
+                trackPoints.push(pos);
+                if (trackPoints.length > 500) trackPoints.shift();
+                track.setLatLngs(trackPoints);
+            }
+        }
+        
+        if (data.received_at) {
+            document.getElementById('last-telemetry-time').textContent = 
+                new Date(data.received_at * 1000).toLocaleTimeString();
+        }
+    }
+    
+    // Update telemetry display
+    socket.on('telemetry', function(data) {
+        updateTelemetryDisplay(data);
+        storeTelemetry(data);
+    });
+    
+    // Update status display
+    socket.on('status', function(data) {
+        if (data.receiver) {
+            document.getElementById('packets_valid').textContent = data.receiver.packets_valid || 0;
+            document.getElementById('packets_invalid').textContent = data.receiver.packets_invalid || 0;
+            document.getElementById('telemetry_packets').textContent = data.receiver.telemetry_packets || 0;
+            document.getElementById('image_meta_packets').textContent = data.receiver.image_meta_packets || 0;
+            document.getElementById('image_data_packets').textContent = data.receiver.image_data_packets || 0;
+            document.getElementById('text_packets').textContent = data.receiver.text_packets || 0;
+            
+            if (data.receiver.last_packet_time) {
+                document.getElementById('last-packet-time').textContent = 
+                    new Date(data.receiver.last_packet_time * 1000).toLocaleTimeString();
+            }
+        }
+        
+        if (data.decoder) {
+            document.getElementById('images_completed').textContent = data.decoder.completed_images || 0;
+            document.getElementById('images_pending').textContent = data.decoder.pending_images || 0;
+            
+            // Show progress for pending images
+            if (data.decoder.pending && data.decoder.pending.length > 0) {
+                const pending = data.decoder.pending[0];
+                document.getElementById('image-progress-container').style.display = 'block';
+                document.getElementById('receiving-image-id').textContent = pending.image_id;
+                document.getElementById('image-progress-bar').style.width = pending.progress + '%';
+            } else {
+                document.getElementById('image-progress-container').style.display = 'none';
+            }
+        }
+        
+        if (data.uptime) {
+            document.getElementById('footer-uptime').textContent = formatUptime(data.uptime);
+        }
+    });
+    
+    // New image complete
+    socket.on('image_complete', function(data) {
+        const img = document.getElementById('latest_image');
+        // Use session-aware URL
+        const imageUrl = '/api/sessions/' + data.session_id + '/images/' + data.image_id + '?t=' + Date.now();
+        img.src = imageUrl;
+        img.style.display = 'block';
+        document.getElementById('no-image-placeholder').style.display = 'none';
+        
+        // Store latest image info for modal
+        latestImageInfo = {
+            session_id: data.session_id,
+            image_id: data.image_id,
+            width: data.width,
+            height: data.height,
+            size: data.size,
+            time: new Date().toLocaleString()
+        };
+    });
+    
+    // Show latest image in modal
+    function showLatestImageModal() {
+        const img = document.getElementById('latest_image');
+        if (!img.src || img.style.display === 'none') return;
+        
+        document.getElementById('modal-latest-image').src = img.src;
+        document.getElementById('modal-image-download').href = img.src;
+        
+        // Show details if available
+        if (latestImageInfo) {
+            document.getElementById('modal-image-details').textContent = 
+                `Image #${latestImageInfo.image_id} | ${latestImageInfo.width}×${latestImageInfo.height} | ${(latestImageInfo.size/1024).toFixed(1)} KB | ${latestImageInfo.time}`;
+        } else {
+            document.getElementById('modal-image-details').textContent = '';
+        }
+        
+        new bootstrap.Modal(document.getElementById('latest-image-modal')).show();
+    }
+    
+    // Quick action functions removed - commands not supported
+    // Configuration must be done via config file on airborne unit
+    
+    // Initial data load
+    fetch('/api/status')
+        .then(r => r.json())
+        .then(data => {
+            socket.emit('status', data);
+        });
+    
+    // Load stored telemetry first (for immediate display)
+    loadStoredTelemetry();
+    
+    // Then fetch latest from server
+    fetch('/api/telemetry/latest')
+        .then(r => r.json())
+        .then(data => {
+            if (data.latitude) {
+                updateTelemetryDisplay(data);
+                storeTelemetry(data);
+            }
+        });
+    
+    // Load existing track
+    fetch('/api/telemetry/track?interval=5&session=current')
+        .then(r => r.json())
+        .then(data => {
+            trackPoints = data.map(p => [p.lat, p.lon]);
+            track.setLatLngs(trackPoints);
+            if (trackPoints.length > 0) {
+                miniMap.fitBounds(track.getBounds(), {padding: [20, 20]});
+            }
+        });
+    
+    // Load latest image
+    fetch('/api/images?count=1')
+        .then(r => r.json())
+        .then(images => {
+            if (images.length > 0) {
+                const imgData = images[0];
+                const img = document.getElementById('latest_image');
+                // Use session-aware URL
+                const imageUrl = '/api/sessions/' + imgData.session_id + '/images/' + imgData.image_id;
+                img.src = imageUrl;
+                img.style.display = 'block';
+                document.getElementById('no-image-placeholder').style.display = 'none';
+                
+                // Store latest image info for modal
+                latestImageInfo = {
+                    session_id: imgData.session_id,
+                    image_id: imgData.image_id,
+                    width: imgData.width,
+                    height: imgData.height,
+                    size: imgData.size_bytes,
+                    time: new Date(imgData.received_time * 1000).toLocaleString()
+                };
+            }
+        });
+    
+    // Periodic status refresh
+    setInterval(function() {
+        fetch('/api/status')
+            .then(r => r.json())
+            .then(data => {
+                socket.emit('status', data);
+                
+                // Update tracking info if available
+                if (data.tracking) {
+                    updateTrackingDisplay(data.tracking);
+                }
+            });
+    }, 2000);
+    
+    // Fetch tracking info separately (in case status doesn't include it)
+    setInterval(function() {
+        fetch('/api/tracking')
+            .then(r => r.json())
+            .then(data => {
+                if (!data.error) {
+                    updateTrackingDisplay(data);
+                }
+            })
+            .catch(() => {});
+    }, 2000);
+    
+    // Ground station marker
+    let groundMarker = null;
+    const groundIcon = L.divIcon({
+        html: '<i class="bi bi-house-fill" style="font-size: 20px; color: #28a745;"></i>',
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+        className: 'ground-marker'
+    });
+    
+    function updateTrackingDisplay(data) {
+        document.getElementById('track-distance').textContent = data.distance_km ? data.distance_km.toFixed(2) : '--';
+        document.getElementById('track-bearing').textContent = data.bearing_deg ? data.bearing_deg.toFixed(0) : '--';
+        document.getElementById('track-elevation').textContent = data.elevation_deg ? data.elevation_deg.toFixed(1) : '--';
+        document.getElementById('track-direction').textContent = data.bearing_deg ? bearingToCompass(data.bearing_deg) : '--';
+        
+        if (data.ground_lat) {
+            document.getElementById('ground-lat').textContent = data.ground_lat.toFixed(5);
+            document.getElementById('ground-lon').textContent = data.ground_lon.toFixed(5);
+            document.getElementById('ground-sats').textContent = data.ground_sats || '--';
+            
+            // Update ground marker on mini map
+            const groundPos = [data.ground_lat, data.ground_lon];
+            if (!groundMarker) {
+                groundMarker = L.marker(groundPos, {icon: groundIcon}).addTo(miniMap);
+                groundMarker.bindPopup('Ground Station');
+            } else {
+                groundMarker.setLatLng(groundPos);
+            }
+        }
+    }
+    
+    function bearingToCompass(bearing) {
+        const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 
+                           'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+        const index = Math.round(bearing / 22.5) % 16;
+        return directions[index];
+    }
+</script>
+{% endblock %}

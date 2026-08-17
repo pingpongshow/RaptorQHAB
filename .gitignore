@@ -1,0 +1,35 @@
+# === OS ===
+.DS_Store
+._*
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# === PlatformIO (Heltec modem) ===
+.pio/
+*.elf
+*.map
+
+# === Xcode ===
+*.xcuserdatad/
+xcuserdata/
+DerivedData/
+build/
+
+# === Large binaries / build outputs (not source) ===
+RasberryPi Images/*.zip
+RasberryPi Images/*.img
+MacRaptorHab.app/
+BLE Experimental.zip
+
+# === Runtime data ===
+Pi/airborne/images/*
+!Pi/airborne/images/.gitkeep
+Pi/airborne/logs/*
+!Pi/airborne/logs/.gitkeep
+Pi/ground/data/
+*.log

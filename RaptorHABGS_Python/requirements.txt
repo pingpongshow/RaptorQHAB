@@ -1,0 +1,32 @@
+# RaptorHabGS Python - Requirements
+# Install with: pip install -r requirements.txt
+
+# ===== Desktop GUI (PyQt6) =====
+PyQt6
+PyQt6-WebEngine
+
+# ===== Web GUI (Flask) =====
+Flask
+Flask-SocketIO
+python-socketio
+python-engineio
+
+# ===== Core Dependencies =====
+# Serial Communication
+pyserial
+
+# GPS NMEA parsing
+pynmea2
+
+# HTTP/Network
+requests
+
+# RaptorQ Forward Error Correction
+raptorq
+
+# Image Processing
+Pillow
+
+# Data Processing
+numpy
+pynmea2
