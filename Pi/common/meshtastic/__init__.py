@@ -49,15 +49,20 @@ from .packet import (
 from .regions import (
     DEFAULT_BANDWIDTH_KHZ,
     DEFAULT_CHANNEL_NAME,
+    DEFAULT_HARDWARE_BAND,
     DEFAULT_REGION_CODE,
+    HARDWARE_BANDS,
     REGIONS,
     REGIONS_BY_CODE,
     SUB_GHZ_REGION_CODES,
+    HardwareBand,
     Region,
     clamp_power_to_region,
     frequency_for_channel,
     get_region,
     region_for_position,
+    region_is_supported,
+    regions_within_band,
 )
 
 __all__ = [
@@ -97,13 +102,18 @@ __all__ = [
     # regions
     "DEFAULT_BANDWIDTH_KHZ",
     "DEFAULT_CHANNEL_NAME",
+    "DEFAULT_HARDWARE_BAND",
     "DEFAULT_REGION_CODE",
+    "HARDWARE_BANDS",
     "REGIONS",
     "REGIONS_BY_CODE",
     "SUB_GHZ_REGION_CODES",
+    "HardwareBand",
     "Region",
     "clamp_power_to_region",
     "frequency_for_channel",
     "get_region",
     "region_for_position",
+    "region_is_supported",
+    "regions_within_band",
 ]

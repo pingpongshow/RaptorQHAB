@@ -72,7 +72,17 @@ class ParamSpec:
                 return False
             raise ValueError(f"{self.name}: cannot interpret {value!r} as a boolean")
 
-        if self.kind is Kind.INT or self.kind is Kind.ENUM:
+        if self.kind is Kind.ENUM:
+            # An enum's value type follows its choices. Several parameters are
+            # string enums (region codes, modem presets, board variants), and
+            # coercing those to int rejects every valid value.
+            if self.choices and all(isinstance(c, str) for c in self.choices):
+                return str(value)
+            if isinstance(value, bool):
+                raise ValueError(f"{self.name}: expected a number, got a boolean")
+            return int(value)
+
+        if self.kind is Kind.INT:
             if isinstance(value, bool):
                 raise ValueError(f"{self.name}: expected a number, got a boolean")
             return int(value)
@@ -197,8 +207,11 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
     # === Radio ===
     _spec(
         "radio_frequency_mhz", Kind.FLOAT, "Radio",
-        "GFSK image/telemetry downlink centre frequency.",
-        apply=Apply.LIVE, minimum=902.0, maximum=928.0, unit="MHz",
+        "GFSK image/telemetry downlink centre frequency. Must match the ground "
+        "modem, and must fall inside the radio board's hardware band -- the "
+        "bounds here are the SX1262 chip's full range, while the real limit is "
+        "the fitted board's, enforced against radio_hardware_band.",
+        apply=Apply.LIVE, minimum=150.0, maximum=960.0, unit="MHz",
         env="RAPTORHAB_FREQUENCY",
     ),
     _spec(
@@ -493,9 +506,23 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
 
     # === Meshtastic Region ===
     _spec(
+        "radio_hardware_band", Kind.ENUM, "Meshtastic Region",
+        "Which frequency variant this SX1262 board is. The chip spans "
+        "150-960 MHz but the board's matching network, filters and PA are "
+        "tuned for one band -- driving a 915M board at 433 MHz radiates almost "
+        "nothing and can damage the amplifier. Regions outside this band are "
+        "unavailable, and flying over one silences Meshtastic rather than "
+        "transmitting out of band.",
+        apply=Apply.RESTART, choices=("915M", "868M", "490M", "433M"),
+        choice_labels=(
+            "915M (902-928 MHz)", "868M (863-870 MHz)",
+            "490M (470-510 MHz)", "433M (410-493 MHz)",
+        ),
+    ),
+    _spec(
         "meshtastic_region", Kind.ENUM, "Meshtastic Region",
         "Home region band plan, used when auto-switching is off and before the "
-        "first GPS fix.",
+        "first GPS fix. Must be reachable by the configured hardware band.",
         apply=Apply.LIVE,
         choices=(
             "US", "EU_433", "EU_868", "CN", "JP", "ANZ", "KR", "TW", "RU",
@@ -627,6 +654,45 @@ def validate_cross_field(values: Dict[str, Any]) -> List[str]:
                 f"6-byte image data header within the 243-byte maximum payload; "
                 f"use {243 - 6} or less."
             )
+
+    # The radio board can only transmit inside one band. Catching a mismatch
+    # here means the operator finds out at configuration time rather than
+    # discovering mid-flight that Meshtastic never came up, or worse, keying
+    # the PA into a matching network tuned for a different band.
+    band_code = values.get("radio_hardware_band")
+    if isinstance(band_code, str) and band_code:
+        from common.meshtastic.regions import (
+            HARDWARE_BANDS,
+            get_region,
+            frequency_for_channel,
+            regions_within_band,
+        )
+
+        band = HARDWARE_BANDS.get(band_code)
+        if band is not None:
+            channel = values.get("meshtastic_channel_name") or "LongFast"
+
+            home_code = values.get("meshtastic_region")
+            home = get_region(home_code) if isinstance(home_code, str) else None
+            if home is not None:
+                frequency = frequency_for_channel(home, channel)
+                if not band.contains(frequency):
+                    reachable = [
+                        r.code for r in regions_within_band(band, channel)
+                    ]
+                    problems.append(
+                        f"meshtastic_region {home.code} puts channel "
+                        f"{channel!r} at {frequency:.3f} MHz, outside the "
+                        f"{band_code} board's {band}. Reachable regions: "
+                        f"{', '.join(reachable) or 'none'}."
+                    )
+
+            image_freq = values.get("radio_frequency_mhz")
+            if isinstance(image_freq, (int, float)) and not band.contains(image_freq):
+                problems.append(
+                    f"radio_frequency_mhz {image_freq} MHz is outside the "
+                    f"{band_code} board's {band}."
+                )
 
     fdev = values.get("radio_fdev_hz")
     bitrate = values.get("radio_bitrate_bps")

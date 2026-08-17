@@ -20,8 +20,12 @@ Run against a second Meshtastic node, or a second Pi running this same tool.
     sudo python3 tools/bench_lora.py switch --count 50
 
     # Full loopback between two boards running this tool
-    sudo python3 tools/bench_lora.py rx --region EU_868
-    sudo python3 tools/bench_lora.py tx --region EU_868
+    sudo python3 tools/bench_lora.py rx --region ANZ
+    sudo python3 tools/bench_lora.py tx --region ANZ
+
+Frequencies outside the board's own band are refused: a 915M HAT driven at
+433 MHz radiates almost nothing into a badly matched load and can damage the
+PA. Pass --band if the fitted board is a different variant.
 
 Run as root, or with SPI and GPIO access.
 """
@@ -41,6 +45,7 @@ from common.meshtastic import (
     PortNum,
     frequency_for_channel,
     get_region,
+    regions_within_band,
     node_id_to_string,
     parse_data,
     parse_packet,
@@ -48,6 +53,7 @@ from common.meshtastic import (
     parse_user,
 )
 from common.meshtastic.crypto import expand_psk, parse_psk
+from common.meshtastic.regions import HARDWARE_BANDS
 from common.meshtastic.messages import parse_text_message
 from common.radio import SX1262
 from common.radio_lora import get_preset
@@ -84,15 +90,45 @@ def build_radio(config: Config, simulate: bool) -> SX1262:
     return radio
 
 
-def resolve_frequency(args) -> tuple:
+def resolve_frequency(args, config: Config) -> tuple:
+    """
+    Work out the frequency to use, and refuse to key the PA out of band.
+
+    This tool is the one place a human can pick an arbitrary frequency, so it
+    is also the one place most likely to drive the board somewhere its
+    matching network cannot handle. A 915M HAT at 433 MHz radiates almost
+    nothing and can damage the amplifier, so the check is a hard stop rather
+    than a warning.
+    """
     region = get_region(args.region)
     if region is None:
         print(f"ERROR: unknown region {args.region!r}")
         sys.exit(2)
 
+    band = HARDWARE_BANDS.get(args.band or config.radio_hardware_band)
+    if band is None:
+        print(f"ERROR: unknown hardware band {args.band!r}; "
+              f"choose from {', '.join(sorted(HARDWARE_BANDS))}")
+        sys.exit(2)
+
     frequency = args.frequency or frequency_for_channel(
         region, args.channel, int(get_preset(args.preset).bandwidth_khz)
     )
+
+    if not band.contains(frequency):
+        reachable = ", ".join(r.code for r in regions_within_band(band, args.channel))
+        print(
+            f"ERROR: {frequency:.3f} MHz is outside this board's {band}.\n"
+            f"\n"
+            f"  Transmitting there would drive the PA into a matching network\n"
+            f"  tuned for a different band: almost no radiated power, and a\n"
+            f"  real risk of damaging the amplifier.\n"
+            f"\n"
+            f"  Regions this board can reach: {reachable}\n"
+            f"  If the board really is a different variant, pass --band."
+        )
+        sys.exit(2)
+
     return region, frequency
 
 
@@ -103,7 +139,7 @@ def resolve_frequency(args) -> tuple:
 
 def command_rx(args, config: Config) -> int:
     """Listen for LoRa packets and decode anything on the configured channel."""
-    region, frequency = resolve_frequency(args)
+    region, frequency = resolve_frequency(args, config)
     preset = get_preset(args.preset)
     key = expand_psk(parse_psk(args.psk))
 
@@ -218,7 +254,7 @@ def _describe(plaintext: bytes) -> str:
 
 def command_tx(args, config: Config) -> int:
     """Transmit beacons a stock Meshtastic client should show on its map."""
-    region, frequency = resolve_frequency(args)
+    region, frequency = resolve_frequency(args, config)
     preset = get_preset(args.preset)
 
     radio = build_radio(config, args.simulate)
@@ -290,7 +326,7 @@ def command_switch(args, config: Config) -> int:
     downlink with Meshtastic beacons, so it is worth having a real measurement
     rather than an estimate.
     """
-    region, frequency = resolve_frequency(args)
+    region, frequency = resolve_frequency(args, config)
 
     radio = build_radio(config, args.simulate)
     manager = RadioModeManager(radio, gfsk_tx_power_dbm=config.radio_power_dbm)
@@ -332,6 +368,9 @@ def main() -> int:
     )
     parser.add_argument("command", choices=["rx", "tx", "switch"])
     parser.add_argument("--region", default="US", help="Meshtastic region code")
+    parser.add_argument("--band", default=None,
+                        help="Radio board variant (915M/868M/490M/433M). "
+                             "Defaults to radio_hardware_band from the config.")
     parser.add_argument("--preset", default="LONG_FAST", help="Modem preset")
     parser.add_argument("--channel", default="LongFast", help="Channel name")
     parser.add_argument("--psk", default="AQ==", help="Channel key, base64 or hex")

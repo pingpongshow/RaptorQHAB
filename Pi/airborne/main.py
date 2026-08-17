@@ -54,6 +54,7 @@ from airborne.meshtastic_beacon import BeaconTelemetry, ChannelConfig, Meshtasti
 from airborne.region_manager import RegionManager
 from common.meshtastic import frequency_for_channel, get_region
 from common.meshtastic.crypto import format_psk_fingerprint, parse_psk
+from common.meshtastic.regions import HARDWARE_BANDS
 from common.radio_lora import get_preset
 from common.radio_manager import RadioModeManager
 
@@ -300,11 +301,23 @@ class RaptorHabAirborne:
         """Set up the Meshtastic beacon and region tracking."""
         self._logger.info("Initializing Meshtastic...")
 
+        preset = get_preset(self.config.meshtastic_modem_preset)
+        hardware_band = HARDWARE_BANDS.get(self.config.radio_hardware_band)
+        if hardware_band is None:
+            self._logger.error(
+                f"Unknown radio_hardware_band {self.config.radio_hardware_band!r}; "
+                f"assuming 915M (902-928 MHz)"
+            )
+            hardware_band = HARDWARE_BANDS["915M"]
+
         self._region_manager = RegionManager(
             home_region_code=self.config.meshtastic_region,
             auto_switch=self.config.meshtastic_region_auto,
             dwell_sec=self.config.meshtastic_region_dwell_sec,
             edge_margin_km=self.config.meshtastic_region_edge_margin_km,
+            hardware_band=hardware_band,
+            channel_name=self.config.meshtastic_channel_name,
+            bandwidth_khz=int(preset.bandwidth_khz),
         )
 
         try:
@@ -393,11 +406,17 @@ class RaptorHabAirborne:
 
         region = state.region
         preset = get_preset(self.config.meshtastic_modem_preset)
-        frequency = frequency_for_channel(
-            region,
-            self.config.meshtastic_channel_name,
-            int(preset.bandwidth_khz),
-        )
+        frequency = self._region_manager.active_frequency_mhz
+
+        if frequency is None:
+            # may_transmit was true, so this should be unreachable; refusing
+            # is still better than transmitting on an unknown frequency.
+            self._radio_manager.clear_lora_settings()
+            self._logger.error(
+                "Region reports transmittable but yielded no frequency; "
+                "suspending Meshtastic"
+            )
+            return
 
         settings = self._radio_manager.set_lora_settings(
             preset,
