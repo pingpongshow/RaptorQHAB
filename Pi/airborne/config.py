@@ -96,6 +96,32 @@ class Config:
     fountain_symbol_size: int = 200
     fountain_overhead_percent: int = 25
 
+    # === Meshtastic ===
+    meshtastic_enabled: bool = False
+    meshtastic_modem_preset: str = "LONG_FAST"
+    meshtastic_channel_name: str = "LongFast"
+    # "AQ==" is the well-known default key every Meshtastic client ships with;
+    # it obfuscates but does not protect.
+    meshtastic_channel_psk: str = "AQ=="
+    meshtastic_tx_power_dbm: int = 22
+    meshtastic_hop_limit: int = 0
+    meshtastic_beacon_interval_sec: int = 300
+    meshtastic_beacon_text: str = ""
+    meshtastic_inter_packet_delay_ms: int = 500
+    meshtastic_nodeinfo_every: int = 6
+    meshtastic_long_name: str = ""
+
+    # === Meshtastic Private Channel ===
+    meshtastic_private_enabled: bool = False
+    meshtastic_private_name: str = "RaptorHAB"
+    meshtastic_private_psk: str = ""
+
+    # === Meshtastic Region ===
+    meshtastic_region: str = "US"
+    meshtastic_region_auto: bool = True
+    meshtastic_region_dwell_sec: int = 120
+    meshtastic_region_edge_margin_km: int = 25
+
     # === Storage ===
     image_storage_path: str = "/RaptorHAB/airborne/images"
     log_path: str = "/RaptorHAB/airborne/logs"

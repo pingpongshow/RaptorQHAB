@@ -31,6 +31,8 @@ try:
 except ImportError:
     GPIO = None
 
+from common.radio_lora import LoRaModeMixin
+
 logger = logging.getLogger(__name__)
 
 
@@ -168,8 +170,16 @@ class SX1262Config:
             self.sync_word = bytes([0x52, 0x41, 0x50, 0x54])  # "RAPT"
 
 
-class SX1262:
-    """SX1262 FSK radio driver with optional hardware SPI"""
+class SX1262(LoRaModeMixin):
+    """
+    SX1262 driver with optional hardware SPI.
+
+    GFSK is the primary mode, carrying the RAPTOR image and telemetry downlink.
+    LoRaModeMixin adds the LoRa half used for Meshtastic; the chip can only be
+    in one mode at a time, so RadioModeManager serialises switching. Both modes
+    live on one object because two drivers sharing a chip select would be a
+    miserable bug to chase in flight.
+    """
     
     # Oscillator frequency
     XTAL_FREQ = 32000000  # 32 MHz

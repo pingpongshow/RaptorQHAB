@@ -143,42 +143,58 @@ involvement.
 
 ---
 
-## Phase 3 — Meshtastic transmit on the balloon
+## Phase 3 — Meshtastic transmit on the balloon ✅ COMPLETE
 
-*Branch `phase-3-meshtastic-tx`.*
+*Branch `phase-3-meshtastic-tx`. Phase 2 skipped for now.*
 
-1. `Pi/common/radio_lora.py` — LoRa mode for the existing SX1262 driver:
-   `SetPacketType(0x01)`, LoRa modulation params (SF/BW/CR/LDRO), packet params
-   (preamble 16, explicit header, CRC on, IQ standard), sync word `0x2B`.
-   Preserve the GFSK path unchanged.
-2. `RadioModeManager` — owns the SX1262 and serializes mode switches
-   (GFSK-TX / LoRa-TX / LoRa-RX). Measure and log real switch latency. This is
-   the only thing allowed to touch the radio.
-3. `Pi/common/meshtastic/` — a **minimal, dependency-free** implementation:
-   - `protobuf.py`: hand-rolled varint/length-delimited writer. We need maybe
-     six message types; pulling in the full `meshtastic` package on a Pi Zero
-     is not worth the weight or the startup cost.
-   - `packet.py`: the 16-byte header (dest, sender, packet_id, flags/hop_limit,
-     channel hash, next-hop, relay-node).
-   - `crypto.py`: AES-256-CTR, nonce = packet_id ‖ sender ‖ zero-extend.
-     Default channel PSK and a user-supplied private-channel PSK.
-   - `messages.py`: `Position`, `Telemetry/DeviceMetrics`, `NodeInfo`,
-     `TextMessage` — encoded as `Data{portnum, payload}`.
-4. Beacon content: position (lat/lon/alt/sats), telemetry (battery, CPU temp,
-   uptime), and a **configurable free-text message**.
-5. Dual-destination: broadcast (`0xFFFFFFFF`) on the primary channel **and**
-   addressed traffic on a configured private channel with its own PSK.
-6. Periodic `NodeInfo` so the balloon shows up with a name rather than a hex id.
-7. `Pi/common/meshtastic/regions.py` — the regional band table, the Meshtastic
-   frequency derivation, and lat/lon region lookup. See "Regional frequency
-   compliance" below for the rules this must obey.
-8. Region changes drive both frequency and the transmit power ceiling, and are
-   surfaced in logs and downlink telemetry.
+1. ✅ `common/radio_lora.py` — LoRa mode for the SX1262 as a mixin on the
+   existing driver, so one object owns the SPI bus and GPIO. All eight
+   Meshtastic modem presets, band-aware image calibration, and a real
+   time-on-air calculation from the datasheet.
+2. ✅ `common/radio_manager.py` — `RadioModeManager` serialises GFSK/LoRa
+   switching under one lock, measures switch latency, and clamps transmit
+   power to the region ceiling on every switch.
+3. ✅ `common/meshtastic/` — dependency-free, per Q3:
+   - `protobuf.py` hand-rolled wire-format writer and tolerant reader
+   - `crypto.py` pure-Python AES-256-CTR, validated against FIPS-197 and
+     NIST SP 800-38A
+   - `packet.py` the 16-byte header, channel hash, deterministic node id
+   - `messages.py` Position, Telemetry, EnvironmentMetrics, NodeInfo, Text
+   - `regions.py` the band table, frequency derivation, and geographic lookup
+4. ✅ Beacons carry position, telemetry, CPU temperature as an environment
+   metric, periodic NodeInfo, and a configurable operator message.
+5. ✅ Dual destination: broadcast on the primary channel plus position and
+   text on an optional private channel with its own key.
+6. ✅ NodeInfo every N cycles so the balloon appears by name.
+7. ✅ `airborne/region_manager.py` — auto region selection with dwell,
+   edge margin, hold-on-GPS-loss, and hard suspension over unknown territory.
+8. ✅ Region changes drive frequency and power together, and appear in logs
+   and status.
 
-**Exit:** a stock Meshtastic handheld receives the balloon's beacons, decodes
-position and telemetry, and shows it on the Meshtastic map; a simulated GPS
-track crossing a regional boundary retunes the radio and clamps power without
-ever transmitting outside a permitted band.
+**Exit criteria — met in software; the on-air half needs the bench.**
+372 tests pass with no hardware. Frequency derivation reproduces the published
+Meshtastic values, AES matches the NIST vectors, and the LongFast channel hash
+matches Meshtastic's 0x08. A simulated track crossing a border retunes the
+radio and clamps power, and one crossing into unmapped territory stops
+Meshtastic transmission without touching the image downlink.
+
+**Remaining, needs hardware:** run `tools/bench_lora.py` against your second
+node. That closes Q2 and is the gate on Phase 5.
+
+```bash
+sudo python3 Pi/tools/bench_lora.py rx --duration 120
+```
+
+```bash
+sudo python3 Pi/tools/bench_lora.py tx --count 5 --power 17
+```
+
+```bash
+sudo python3 Pi/tools/bench_lora.py switch --count 50
+```
+
+The `switch` measurement matters beyond a pass/fail: it sets how finely the
+Phase 4 scheduler can interleave images with beacons.
 
 ---
 
