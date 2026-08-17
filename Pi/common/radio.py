@@ -150,11 +150,15 @@ class SX1262Config:
     spi_speed_hz: int = 8_000_000  # 8 MHz default
     use_hardware_spi: bool = True  # Enable hardware SPI
     
-    # Radio parameters
+    # Radio parameters.
+    # These are fallbacks only -- the airborne payload always constructs the
+    # driver with explicit values from airborne/config.py, which is the
+    # authoritative source. They are kept aligned with that config's defaults
+    # so a driver constructed bare behaves like the real payload.
     frequency_mhz: float = 915.0
     tx_power_dbm: int = 22
-    bitrate_bps: int = 200000
-    fdev_hz: int = 125000
+    bitrate_bps: int = 96000
+    fdev_hz: int = 50000
     rx_bandwidth_hz: int = 467000
     preamble_length: int = 32
     sync_word: bytes = None

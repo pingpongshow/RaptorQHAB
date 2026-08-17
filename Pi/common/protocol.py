@@ -3,6 +3,7 @@ RaptorHab Protocol Definitions
 Packet structures and serialization/deserialization
 """
 
+import logging
 import struct
 import time
 from dataclasses import dataclass, field
@@ -392,91 +393,97 @@ def parse_packet(data: bytes) -> Optional[Tuple[PacketType, int, int, bytes]]:
         header = PacketHeader.deserialize(data[4:8])
         packet_type = header.packet_type
         
-        # Calculate expected packet length based on packet type
+        # Work out where the packet ends inside a possibly-padded buffer.
         # Packet = HEADER(8) + PAYLOAD + CRC(4)
-        expected_payload_len = _get_expected_payload_length(packet_type, data)
-        
-        if expected_payload_len is None:
-            # Unknown packet type or can't determine length
-            # Fall back to trying full received length
-            logger.debug(f"Unknown packet type {packet_type}, trying full length")
-            expected_payload_len = len(data) - HEADER_SIZE - CRC_SIZE
-        
-        expected_total = HEADER_SIZE + expected_payload_len + CRC_SIZE
-        
-        if len(data) < expected_total:
-            logger.debug(f"Packet too short: {len(data)} < {expected_total}")
-            return None
-        
-        # Extract just the actual packet (not padding)
-        actual_packet = data[:expected_total]
-        
-        # Verify CRC on actual packet
-        if not verify_crc32_packet(actual_packet):
-            # Try the full received data as fallback
-            if len(data) >= HEADER_SIZE + CRC_SIZE:
-                if verify_crc32_packet(data):
-                    actual_packet = data
-                    expected_payload_len = len(data) - HEADER_SIZE - CRC_SIZE
-                else:
-                    calculated = crc32(actual_packet[:-4])
-                    received = struct.unpack('>I', actual_packet[-4:])[0]
-                    logger.debug(f"CRC mismatch: calc=0x{calculated:08x}, recv=0x{received:08x}, pkt_len={expected_total}")
-                    return None
-            else:
-                return None
-        
-        # Extract payload (between header and CRC)
-        payload = actual_packet[HEADER_SIZE:-CRC_SIZE]
-        
-        logger.debug(f"Valid packet: type={packet_type}, seq={header.sequence}, payload_len={len(payload)}")
-        return (packet_type, header.sequence, header.flags, payload)
+        #
+        # A packet type can have more than one valid length -- IMAGE_DATA is
+        # 4 bytes longer when produced by the RaptorQ encoder than by the LT
+        # encoder, because RaptorQ prefixes each symbol with a payload ID.
+        # Each candidate is tried in turn and the CRC decides which is right.
+        candidates = _candidate_payload_lengths(packet_type)
+
+        # Always consider "the whole buffer is the packet" last: correct when
+        # the radio reported an exact length, and the only option for
+        # variable-length types such as TEXT_MSG.
+        full_len = len(data) - HEADER_SIZE - CRC_SIZE
+        if full_len >= 0 and full_len not in candidates:
+            candidates.append(full_len)
+
+        for payload_len in candidates:
+            expected_total = HEADER_SIZE + payload_len + CRC_SIZE
+            if payload_len < 0 or len(data) < expected_total:
+                continue
+            candidate = data[:expected_total]
+            if verify_crc32_packet(candidate):
+                payload = candidate[HEADER_SIZE:-CRC_SIZE]
+                logger.debug(
+                    f"Valid packet: type={packet_type}, seq={header.sequence}, "
+                    f"payload_len={len(payload)}"
+                )
+                return (packet_type, header.sequence, header.flags, payload)
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"CRC mismatch for type={packet_type} seq={header.sequence}; "
+                f"tried payload lengths {candidates} against {len(data)} bytes"
+            )
+        return None
         
     except Exception as e:
         logger.debug(f"Parse exception: {e}")
         return None
 
 
-def _get_expected_payload_length(packet_type: int, data: bytes) -> Optional[int]:
+def _candidate_payload_lengths(packet_type: int) -> list:
     """
-    Calculate expected payload length based on packet type
-    
+    Payload lengths that are valid for a given packet type, most likely first.
+
+    The SX1262 can hand back a padded buffer, so the parser cannot simply
+    trust ``len(data)``; it needs to know where the CRC should be. Returning a
+    list rather than a single value matters for IMAGE_DATA, which has two
+    legitimate sizes on the wire.
+
     Args:
         packet_type: The packet type byte
-        data: Full received data (for types that need to peek at payload)
-        
+
     Returns:
-        Expected payload length in bytes, or None if unknown
+        Candidate payload lengths in bytes. May be empty for variable-length
+        types, in which case the caller falls back to the full buffer length.
     """
-    # Import here to avoid circular imports
-    from common.constants import TELEMETRY_PAYLOAD_SIZE, FOUNTAIN_SYMBOL_SIZE
-    
+    from common.constants import (
+        IMAGE_DATA_HEADER_SIZE,
+        RAPTORQ_PAYLOAD_ID_SIZE,
+        TELEMETRY_PAYLOAD_SIZE,
+        FOUNTAIN_SYMBOL_SIZE,
+    )
+
     if packet_type == PacketType.TELEMETRY:
-        # Fixed size telemetry payload
-        return TELEMETRY_PAYLOAD_SIZE  # 36 bytes
-    
-    elif packet_type == PacketType.IMAGE_META:
-        # Image metadata: image_id(2) + total_size(4) + symbol_size(2) + 
-        #                 num_source_symbols(2) + checksum(4) + width(2) + height(2) + timestamp(4)
-        return 22
-    
-    elif packet_type == PacketType.IMAGE_DATA:
-        # Image data: image_id(2) + symbol_id(4) + symbol_data(FOUNTAIN_SYMBOL_SIZE)
-        return 2 + 4 + FOUNTAIN_SYMBOL_SIZE  # 206 bytes
-    
-    elif packet_type == PacketType.TEXT_MSG:
-        # Variable length - we need to scan for valid CRC
-        # Try common lengths
-        return None
-    
-    elif packet_type == PacketType.CMD_ACK:
-        # Command ack: acked_type(1) + acked_seq(2) + status(1) + optional data
-        # Minimum is 4 bytes
-        return 4
-    
-    else:
-        # Unknown type
-        return None
+        return [TELEMETRY_PAYLOAD_SIZE]  # 36 bytes
+
+    if packet_type == PacketType.IMAGE_META:
+        # image_id(2) + total_size(4) + symbol_size(2) + num_source_symbols(2)
+        # + checksum(4) + width(2) + height(2) + timestamp(4)
+        return [22]
+
+    if packet_type == PacketType.IMAGE_DATA:
+        # RaptorQ first: it is the encoder used whenever the wheel is present,
+        # which is the normal flight configuration. Its symbols carry a 4-byte
+        # payload ID that the LT encoder does not emit.
+        #
+        # This previously returned only the LT length (206). Every RaptorQ
+        # image packet therefore failed the primary CRC check and survived
+        # only via a fallback that assumed the receive buffer had no padding.
+        return [
+            IMAGE_DATA_HEADER_SIZE + FOUNTAIN_SYMBOL_SIZE + RAPTORQ_PAYLOAD_ID_SIZE,
+            IMAGE_DATA_HEADER_SIZE + FOUNTAIN_SYMBOL_SIZE,
+        ]
+
+    if packet_type == PacketType.CMD_ACK:
+        # acked_type(1) + acked_seq(2) + status(1), plus optional response data
+        return [4]
+
+    # TEXT_MSG and anything unrecognised are variable length.
+    return []
 
 
 def parse_packet_header(data: bytes) -> Tuple[PacketHeader, bytes]:
@@ -513,26 +520,38 @@ def parse_packet_header(data: bytes) -> Tuple[PacketHeader, bytes]:
     return header, payload
 
 
-def parse_packet_full(data: bytes) -> Tuple[PacketHeader, object]:
+def parse_packet_full(data: bytes) -> Optional[Tuple[PacketHeader, object]]:
     """
-    Parse a raw packet and deserialize the payload
-    
+    Parse a raw packet and deserialize the payload.
+
     Args:
         data: Raw packet bytes
-        
+
     Returns:
-        Tuple of (header, payload_object)
+        Tuple of (header, payload_object), or None if the packet is invalid.
+        For a packet type with no registered payload class, the second element
+        is the raw payload bytes.
     """
-    header, payload_bytes = parse_packet(data)
-    
-    # Get payload class for this packet type
-    payload_class = PAYLOAD_TYPES.get(header.packet_type)
-    
+    # parse_packet returns a 4-tuple (type, sequence, flags, payload) or None.
+    # This function previously unpacked it into two names, which raised a
+    # ValueError on every well-formed packet and a TypeError on every
+    # malformed one.
+    parsed = parse_packet(data)
+    if parsed is None:
+        return None
+
+    packet_type, sequence, flags, payload_bytes = parsed
+    header = PacketHeader(packet_type, sequence, flags)
+
+    payload_class = PAYLOAD_TYPES.get(packet_type)
     if payload_class is None:
         # Unknown packet type, return raw bytes
         return header, payload_bytes
-    
-    # Deserialize payload
-    payload = payload_class.deserialize(payload_bytes)
-    
-    return header, payload
+
+    try:
+        return header, payload_class.deserialize(payload_bytes)
+    except (ValueError, struct.error) as e:
+        logging.getLogger(__name__).debug(
+            f"Payload deserialization failed for type {packet_type}: {e}"
+        )
+        return None

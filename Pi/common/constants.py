@@ -73,37 +73,44 @@ class PacketFlags(IntEnum):
     COMPRESSED = 0x08
 
 
-# Radio configuration defaults
-DEFAULT_FREQUENCY_MHZ = 915.0
-DEFAULT_BITRATE_BPS = 200000
-DEFAULT_FDEV_HZ = 125000
-DEFAULT_TX_POWER_DBM = 22
+# -----------------------------------------------------------------------
+# Operational defaults
+#
+# NOTE: The authoritative source for every *configurable* payload setting is
+# airborne/config.py, which is what the persisted config file and the USB
+# configuration UI operate on. This module previously carried a second,
+# divergent copy of those values (bitrate 200000 vs 96000, fdev 125000 vs
+# 50000, tx period 10 vs 2) which was never read by anything and only served
+# to mislead. Only values that are genuinely shared protocol constants, or
+# that are used as fallback defaults by shared code, remain here.
+# -----------------------------------------------------------------------
 
-# Timing constants (in seconds)
-TX_PERIOD_SEC = 10
-RX_PERIOD_SEC = 10
+# Packet scheduling fallbacks, used only when PacketScheduler is constructed
+# without explicit intervals. These two must not be multiples of one another:
+# the scheduler offers the rarer image-metadata slot first, but keeping them
+# coprime avoids the two slots repeatedly colliding.
 TELEMETRY_INTERVAL_PACKETS = 10
-IMAGE_META_INTERVAL_PACKETS = 100
+IMAGE_META_INTERVAL_PACKETS = 101
 
-# Fountain code defaults
+# Fountain symbol size, in bytes.
+#
+# This is load-bearing for the receive path: protocol._get_expected_payload_length
+# uses it to work out how much of a padded SX1262 receive buffer belongs to an
+# IMAGE_DATA packet. The airborne fountain_symbol_size setting MUST match this
+# value, and both ends must agree, or image packets fail CRC and are discarded.
 FOUNTAIN_SYMBOL_SIZE = 200
-FOUNTAIN_OVERHEAD_PERCENT = 25
 
-# Camera defaults
-DEFAULT_CAMERA_RESOLUTION = (1280, 960)
-DEFAULT_WEBP_QUALITY = 75
-DEFAULT_BURST_COUNT = 5
+# A RaptorQ encoded packet is the symbol plus a 4-byte payload identifier
+# (SBN + ESI, RFC 6330 section 3.2). The LT encoder emits a bare symbol with
+# no prefix, so IMAGE_DATA packets are one of two sizes on the wire depending
+# on which encoder produced them, and the receive path must accept both.
+RAPTORQ_PAYLOAD_ID_SIZE = 4
 
-# Image transmission
-IMAGE_SYMBOL_SIZE = 200
+# IMAGE_DATA payload prefix: image_id(2) + symbol_id(4)
+IMAGE_DATA_HEADER_SIZE = 6
+
+# Largest image the payload will attempt to transmit.
 MAX_IMAGE_SIZE_BYTES = 100000  # 100KB max
 
-# GPS
-GPS_BAUDRATE = 9600
+# GPS read timeout.
 GPS_TIMEOUT_SEC = 2.0
-
-# Hardware watchdog timeout (seconds)
-WATCHDOG_TIMEOUT_SEC = 60
-
-# Maximum stored images on payload
-MAX_STORED_IMAGES = 100

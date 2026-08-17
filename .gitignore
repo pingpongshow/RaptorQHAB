@@ -33,3 +33,7 @@ Pi/airborne/logs/*
 !Pi/airborne/logs/.gitkeep
 Pi/ground/data/
 *.log
+
+# Test virtualenv
+.venv-test/
+.pytest_cache/

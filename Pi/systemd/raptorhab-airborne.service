@@ -4,6 +4,11 @@ Documentation=https://github.com/raptorhab/raptorhab
 After=network.target
 Wants=network.target
 
+# Never stop trying to restart the payload. systemd's default rate limiting
+# (5 starts in 10s) would put the unit permanently in a failed state after a
+# short burst of crashes -- which on a balloon means the flight is over.
+StartLimitIntervalSec=0
+
 [Service]
 Type=simple
 User=pi
@@ -11,7 +16,8 @@ Group=pi
 WorkingDirectory=/home/pi/raptorhab
 ExecStart=/usr/bin/python3 -m airborne.main
 Restart=always
-RestartSec=10
+# Every second here is dead air on the downlink.
+RestartSec=3
 TimeoutStopSec=30
 
 # Resource limits

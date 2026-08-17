@@ -336,47 +336,92 @@ class RaptorQEncoder:
         return int(self.num_source_symbols * (1 + overhead_percent / 100))
 
 
+class IncompatibleEncoderError(RuntimeError):
+    """Raised when the only available encoder cannot be decoded on the ground."""
+
+
+def raptorq_available() -> bool:
+    """Whether the RaptorQ implementation loaded successfully."""
+    return RAPTORQ_AVAILABLE
+
+
 class FountainEncoder:
     """
-    Fountain code encoder facade
-    Uses RaptorQ if available, falls back to LT codes
+    Fountain code encoder facade.
+
+    RaptorQ is the only encoder the ground station can currently decode: its
+    FountainDecoder constructs a RaptorQDecoder and has no LT path wired in,
+    and the standalone LTDecoder does not correctly invert LTEncoder. Falling
+    back to LT therefore does not degrade the link, it silently severs it --
+    the payload transmits happily for the whole flight and not one image can
+    be reconstructed.
+
+    So the fallback is off by default. Pass allow_lt_fallback=True only for
+    bench work where nothing needs to decode the output.
     """
-    
+
     def __init__(
         self,
         data: bytes,
         symbol_size: int = 200,
         seed: int = None,
-        prefer_raptorq: bool = True
+        prefer_raptorq: bool = True,
+        allow_lt_fallback: bool = False,
     ):
         """
         Initialize fountain encoder
-        
+
         Args:
             data: Data to encode
             symbol_size: Size of each symbol in bytes
             seed: Random seed (for LT codes)
             prefer_raptorq: Prefer RaptorQ if available
+            allow_lt_fallback: Permit the undecodable LT encoder rather than
+                raising. Bench use only.
+
+        Raises:
+            IncompatibleEncoderError: if RaptorQ is unavailable or fails and
+                the LT fallback has not been explicitly allowed.
         """
         self.data = data
         self.symbol_size = symbol_size
         self.original_size = len(data)
-        
-        # Choose encoder
-        if prefer_raptorq and RAPTORQ_AVAILABLE:
+
+        reason = None
+        if not prefer_raptorq:
+            reason = "RaptorQ disabled by caller"
+        elif not RAPTORQ_AVAILABLE:
+            reason = "raptorq library is not installed"
+        else:
             try:
                 self._encoder = RaptorQEncoder(data, symbol_size)
                 self._encoder_type = "RaptorQ"
+                logger.debug(f"Using {self._encoder_type} fountain encoder")
+                return
             except Exception as e:
-                logger.warning(f"RaptorQ failed, using LT codes: {e}")
-                self._encoder = LTEncoder(data, symbol_size, seed)
-                self._encoder_type = "LT"
-        else:
-            self._encoder = LTEncoder(data, symbol_size, seed)
-            self._encoder_type = "LT"
-        
-        logger.info(f"Using {self._encoder_type} fountain encoder")
+                reason = f"RaptorQ encoder failed: {e}"
+
+        if not allow_lt_fallback:
+            raise IncompatibleEncoderError(
+                f"{reason}. The LT fallback produces symbols the ground station "
+                f"cannot decode, so the payload would transmit images that are "
+                f"impossible to reconstruct. Install the raptorq wheel "
+                f"(Pi/raptor_wheel/) or pass allow_lt_fallback=True for bench "
+                f"testing only."
+            )
+
+        logger.error(
+            f"{reason}. Falling back to LT codes -- THESE IMAGES CANNOT BE "
+            f"DECODED BY THE GROUND STATION. Bench use only."
+        )
+        self._encoder = LTEncoder(data, symbol_size, seed)
+        self._encoder_type = "LT"
     
+    @property
+    def encoder_type(self) -> str:
+        """Which fountain code is in use: "RaptorQ" or "LT"."""
+        return self._encoder_type
+
     @property
     def num_source_symbols(self) -> int:
         """Number of source symbols"""

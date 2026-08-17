@@ -14,9 +14,11 @@ State Machine:
 """
 
 import argparse
+import json
 import logging
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -24,7 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
-from queue import Queue, Empty
+from queue import Queue, Empty, Full
 from typing import Optional, Dict, Any
 
 # Add parent to path for imports
@@ -68,7 +70,8 @@ class SystemStatus:
     gps_sats: int
     altitude_m: float
     images_captured: int
-    images_transmitted: int
+    images_queued_for_tx: int
+    images_dropped: int
     packets_sent: int
     error_count: int
     cpu_temp: float
@@ -102,16 +105,27 @@ class RaptorHabAirborne:
         
         # Shutdown flag
         self._shutdown = threading.Event()
+
+        # Set when the main loop finishes, so the watchdog can tell a loop that
+        # unwound cooperatively from one that is genuinely wedged in a driver.
+        self._main_loop_exited = threading.Event()
         
-        # Error tracking
+        # Error tracking.
+        # _consecutive_errors drives recovery and is reset by any clean cycle,
+        # so a transient SPI glitch every few minutes across a long flight
+        # cannot slowly accumulate into a shutdown. _error_count is a lifetime
+        # total, reported in telemetry only.
         self._error_count = 0
-        self._max_errors = 10
+        self._consecutive_errors = 0
+        self._max_errors = config.max_consecutive_errors
         self._last_error: Optional[str] = None
+        self._watchdog_fired = False
         
         # Statistics
         self._packets_sent = 0
         self._images_captured = 0
-        self._images_transmitted = 0
+        self._images_queued_for_tx = 0
+        self._images_dropped = 0
         
         # Components (initialized in start())
         self._radio: Optional[SX1262Radio] = None
@@ -151,25 +165,36 @@ class RaptorHabAirborne:
             self._logger.info("Keyboard interrupt received")
         except Exception as e:
             self._logger.critical(f"Fatal error: {e}", exc_info=True)
+            self._last_error = str(e)
             self._set_state(State.ERROR_STATE)
         finally:
             self._cleanup()
+            # Recovery runs after cleanup so the radio and GPIO are released
+            # before the service restarts. Previously _handle_error_state was
+            # never reached at all and the payload simply stopped transmitting
+            # for the remainder of the flight.
+            if self._state is State.ERROR_STATE:
+                self._handle_error_state()
     
     def _initialize_components(self) -> None:
         """Initialize all hardware and software components."""
         self._logger.info("Initializing components...")
         
         # Create directories
-        os.makedirs(self.config.image_storage_path, exist_ok=True)
-        os.makedirs(self.config.log_path, exist_ok=True)
-        
+        self.config.ensure_directories()
+
         # Initialize watchdog
-        self._logger.info("Starting watchdog...")
-        self._watchdog = Watchdog(
-            timeout_sec=60,
-            callback=self._watchdog_triggered,
-        )
-        self._watchdog.start()
+        if self.config.watchdog_enabled:
+            self._logger.info(
+                f"Starting watchdog ({self.config.watchdog_timeout_sec}s timeout)..."
+            )
+            self._watchdog = Watchdog(
+                timeout_sec=self.config.watchdog_timeout_sec,
+                callback=self._watchdog_triggered,
+            )
+            self._watchdog.start()
+        else:
+            self._logger.warning("Watchdog disabled by configuration")
         
         # Initialize radio
         self._logger.info("Initializing radio...")
@@ -228,6 +253,10 @@ class RaptorHabAirborne:
             callsign=self.config.callsign,
         )
         
+        # Verify the image path end to end before flight rather than
+        # discovering on the first capture that nothing can decode us.
+        self._preflight_check_fountain_encoder()
+
         # Initialize packet scheduler
         self._logger.info("Initializing packet scheduler...")
         self._scheduler = PacketScheduler(
@@ -235,10 +264,39 @@ class RaptorHabAirborne:
             image_meta_interval=self.config.image_meta_interval_packets,
             symbol_size=self.config.fountain_symbol_size,
             overhead_percent=self.config.fountain_overhead_percent,
+            allow_lt_fallback=self.config.allow_lt_fallback,
         )
         
         self._logger.info("All components initialized successfully")
     
+    def _preflight_check_fountain_encoder(self) -> None:
+        """
+        Confirm the payload can produce image symbols the ground can decode.
+
+        The encoder used to fall back silently from RaptorQ to LT whenever the
+        raptorq wheel failed to import. The ground station has no LT decoding
+        path, so that fallback cost the entire flight's imagery while logging
+        only a single INFO line at startup. Failing here instead means the
+        problem is found on the bench.
+        """
+        from airborne.fountain import raptorq_available
+
+        if raptorq_available():
+            self._logger.info("Fountain encoder preflight: RaptorQ available")
+            return
+
+        message = (
+            "RaptorQ is not available. The ground station cannot decode the LT "
+            "fallback, so no image transmitted this flight would be "
+            "recoverable. Install the wheel from Pi/raptor_wheel/."
+        )
+
+        if self.config.allow_lt_fallback:
+            self._logger.error(f"{message} Continuing because allow_lt_fallback is set.")
+            return
+
+        raise RuntimeError(message)
+
     def _apply_camera_settings(self) -> None:
         """Apply camera settings from config."""
         if not self._camera:
@@ -267,17 +325,23 @@ class RaptorHabAirborne:
     
     def _run_main_loop(self) -> None:
         """Main control loop implementing TX with duty cycle.
-        
-        FIXED: Now properly alternates between TX_ACTIVE and TX_PAUSED states
-        using the tx_period_sec and tx_pause_sec configuration values.
+
+        Alternates between TX_ACTIVE and TX_PAUSED using the tx_period_sec and
+        tx_pause_sec configuration values.
         """
         self._logger.info(f"Entering main loop (TX: {self.config.tx_period_sec}s, Pause: {self.config.tx_pause_sec}s)")
-        
+
         # Initial image capture
         self._trigger_capture()
         last_capture_time = time.time()
         last_status_time = time.time()
-        
+
+        try:
+            self._main_loop_body(last_capture_time, last_status_time)
+        finally:
+            self._main_loop_exited.set()
+
+    def _main_loop_body(self, last_capture_time: float, last_status_time: float) -> None:
         while not self._shutdown.is_set():
             try:
                 # Pet the watchdog
@@ -303,15 +367,34 @@ class RaptorHabAirborne:
                 if self.config.tx_pause_sec > 0:
                     self._set_state(State.TX_PAUSED)
                     self._run_pause_cycle()
-                
+
+                # A complete cycle without an exception clears the consecutive
+                # error run.
+                if self._consecutive_errors:
+                    self._logger.info(
+                        f"Recovered after {self._consecutive_errors} consecutive "
+                        f"error(s); resetting counter"
+                    )
+                    self._consecutive_errors = 0
+
             except Exception as e:
-                self._logger.error(f"Error in main loop: {e}", exc_info=True)
                 self._error_count += 1
+                self._consecutive_errors += 1
                 self._last_error = str(e)
-                
-                if self._error_count >= self._max_errors:
+                self._logger.error(
+                    f"Error in main loop "
+                    f"({self._consecutive_errors}/{self._max_errors} consecutive, "
+                    f"{self._error_count} total): {e}",
+                    exc_info=True,
+                )
+
+                if self._consecutive_errors >= self._max_errors:
                     self._set_state(State.ERROR_STATE)
                     break
+
+                # Back off briefly so a tight failure loop cannot starve the
+                # watchdog thread or spin the CPU.
+                time.sleep(min(1.0 * self._consecutive_errors, 5.0))
     
     def _run_tx_cycle(self) -> None:
         """Execute one TX cycle (transmit telemetry and images)."""
@@ -388,23 +471,42 @@ class RaptorHabAirborne:
             return False
     
     def _process_image_queue(self) -> None:
-        """Process queued images for transmission."""
-        try:
-            while not self._image_queue.empty():
+        """Hand captured images to the transmit scheduler."""
+        while True:
+            try:
                 image_info = self._image_queue.get_nowait()
-                
-                if image_info.webp_data:
-                    self._logger.info(f"Adding image {image_info.image_id} to scheduler")
-                    self._scheduler.add_image(
-                        image_id=image_info.image_id,
-                        image_data=image_info.webp_data,
-                        width=image_info.width,
-                        height=image_info.height,
-                        timestamp=image_info.timestamp,
+            except Empty:
+                return
+
+            if not image_info.webp_data:
+                continue
+
+            self._logger.info(f"Adding image {image_info.image_id} to scheduler")
+            queued = self._scheduler.add_image(
+                image_id=image_info.image_id,
+                image_data=image_info.webp_data,
+                width=image_info.width,
+                height=image_info.height,
+                timestamp=image_info.timestamp,
+            )
+
+            if queued:
+                self._images_queued_for_tx += 1
+            else:
+                # The scheduler's queue is bounded. Put the image back and stop
+                # draining, rather than discarding it and still counting it as
+                # transmitted the way the previous version did.
+                self._images_dropped += 1
+                self._logger.warning(
+                    f"Scheduler queue full; image {image_info.image_id} deferred"
+                )
+                try:
+                    self._image_queue.put_nowait(image_info)
+                except Full:
+                    self._logger.error(
+                        f"Image {image_info.image_id} dropped: both queues full"
                     )
-                    self._images_transmitted += 1
-        except Empty:
-            pass
+                return
     
     def _trigger_capture(self) -> None:
         """Trigger image capture."""
@@ -432,9 +534,13 @@ class RaptorHabAirborne:
                 # Queue for transmission
                 try:
                     self._image_queue.put_nowait(image_info)
-                except:
-                    self._logger.warning("Image queue full, dropping image")
-                    
+                except Full:
+                    self._images_dropped += 1
+                    self._logger.warning(
+                        f"Capture queue full; dropping image {image_info.image_id}"
+                    )
+
+
         except Exception as e:
             self._logger.error(f"Capture error: {e}")
     
@@ -518,21 +624,69 @@ class RaptorHabAirborne:
                 self._logger.info(f"State change: {old_state.name} -> {new_state.name}")
     
     def _handle_error_state(self) -> None:
-        """Handle error state - attempt recovery or reboot."""
-        self._logger.critical(f"Error state entered. Error count: {self._error_count}")
-        self._logger.critical(f"Last error: {self._last_error}")
-        
-        # Wait a bit then reboot
+        """
+        Handle error state: exit non-zero so systemd restarts the service, and
+        only fall back to a full reboot if the service manager is not running
+        us.
+
+        A service restart is dramatically cheaper than a reboot -- roughly a
+        second of lost transmit time instead of thirty -- and it clears the
+        same failure modes. The reboot path stays as a last resort for cases
+        where the process was started by hand.
+        """
+        self._logger.critical(
+            f"Error state entered after {self._consecutive_errors} consecutive "
+            f"errors ({self._error_count} total). Last error: {self._last_error}"
+        )
+
+        if not self.config.reboot_on_fatal_error:
+            self._logger.critical("Automatic recovery disabled by configuration")
+            return
+
+        # INVOCATION_ID is set by systemd for every unit it starts.
+        if os.getenv("INVOCATION_ID"):
+            self._logger.critical(
+                "Exiting non-zero; systemd will restart the payload service"
+            )
+            sys.exit(1)
+
+        self._logger.critical("Not under systemd - initiating system reboot")
         time.sleep(5)
-        
-        if self.config.reboot_on_fatal_error:
-            self._logger.critical("Initiating reboot due to error state")
-            os.system("sudo reboot")
-    
+        try:
+            subprocess.run(["sudo", "systemctl", "reboot"], check=True, timeout=30)
+        except (subprocess.SubprocessError, OSError) as e:
+            self._logger.critical(f"Reboot command failed: {e}")
+
     def _watchdog_triggered(self) -> None:
-        """Callback when watchdog times out."""
-        self._logger.critical("WATCHDOG TIMEOUT - System appears hung")
+        """
+        Callback when the watchdog times out.
+
+        Runs on the watchdog thread. It sets the shutdown event so a wedged
+        main loop actually unwinds -- previously this only set a state field
+        that nothing ever read, so a genuine hang stayed hung for the rest of
+        the flight.
+        """
+        self._logger.critical("WATCHDOG TIMEOUT - main loop is not making progress")
+        self._watchdog_fired = True
+        self._last_error = "watchdog timeout"
         self._set_state(State.ERROR_STATE)
+        self._shutdown.set()
+
+        # A cooperative shutdown only works if the main loop can still reach a
+        # check of the shutdown event. If it is blocked in a driver call it
+        # never will, so give it a grace period and then terminate hard.
+        # os._exit skips atexit and cleanup deliberately: we are already in an
+        # unrecoverable state and systemd restarting us is the fastest way back
+        # on the air.
+        grace_sec = 15.0
+        if self._main_loop_exited.wait(timeout=grace_sec):
+            return  # Main loop unwound cleanly; normal recovery path takes over.
+
+        self._logger.critical(
+            f"Main loop still wedged {grace_sec:.0f}s after watchdog; "
+            f"terminating process"
+        )
+        os._exit(1)
     
     def _cleanup(self) -> None:
         """Clean up resources."""
@@ -576,7 +730,8 @@ class RaptorHabAirborne:
             gps_sats=gps_sats,
             altitude_m=altitude,
             images_captured=self._images_captured,
-            images_transmitted=self._images_transmitted,
+            images_queued_for_tx=self._images_queued_for_tx,
+            images_dropped=self._images_dropped,
             packets_sent=self._packets_sent,
             error_count=self._error_count,
             cpu_temp=get_cpu_temperature(),
@@ -611,7 +766,27 @@ def main():
         "--config",
         type=str,
         default=None,
-        help="Path to configuration file",
+        help="Path to the JSON configuration file",
+    )
+    parser.add_argument(
+        "--no-config-file",
+        action="store_true",
+        help="Ignore the persisted config file; use defaults plus environment only",
+    )
+    parser.add_argument(
+        "--print-config",
+        action="store_true",
+        help="Print the resolved configuration as JSON and exit",
+    )
+    parser.add_argument(
+        "--print-schema",
+        action="store_true",
+        help="Print the parameter schema as JSON and exit",
+    )
+    parser.add_argument(
+        "--save-config",
+        action="store_true",
+        help="Write the resolved configuration back to the config file and exit",
     )
     parser.add_argument(
         "--log-level",
@@ -646,20 +821,46 @@ def main():
     )
     
     args = parser.parse_args()
-    
-    # Load configuration
-    config = AirborneConfig.from_env()
-    
-    # Apply command line overrides
+
+    # Schema does not depend on the resolved config, so serve it first.
+    if args.print_schema:
+        print(json.dumps(AirborneConfig().schema(), indent=2))
+        return
+
+    # Load configuration: defaults -> file -> environment.
+    if args.no_config_file:
+        config = AirborneConfig.from_env()
+    else:
+        config = AirborneConfig.load(path=args.config)
+
+    # Apply command line overrides last; they win over everything.
+    cli_overrides = {}
     if args.callsign:
-        config.callsign = args.callsign
+        cli_overrides["callsign"] = args.callsign
     if args.frequency:
-        config.radio_frequency_mhz = args.frequency
+        cli_overrides["radio_frequency_mhz"] = args.frequency
     if args.power:
-        config.radio_power_dbm = args.power
+        cli_overrides["radio_power_dbm"] = args.power
     if args.tx_pause is not None:
-        config.tx_pause_sec = args.tx_pause
-    
+        cli_overrides["tx_pause_sec"] = args.tx_pause
+
+    if cli_overrides:
+        result = config.apply_updates(cli_overrides)
+        if not result["ok"]:
+            for name, reason in result["rejected"].items():
+                print(f"error: invalid --{name.replace('_', '-')}: {reason}",
+                      file=sys.stderr)
+            sys.exit(2)
+
+    if args.print_config:
+        print(json.dumps(config.to_dict(redact_secrets=True), indent=2, sort_keys=True))
+        return
+
+    if args.save_config:
+        ok = config.save()
+        print(f"{'Saved' if ok else 'FAILED to save'} config to {config.config_path}")
+        sys.exit(0 if ok else 1)
+
     # Setup logging
     log_level = getattr(logging, args.log_level.upper())
     setup_logging(

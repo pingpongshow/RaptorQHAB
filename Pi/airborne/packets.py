@@ -90,29 +90,41 @@ class PacketScheduler:
         telemetry_interval: int = TELEMETRY_INTERVAL_PACKETS,
         image_meta_interval: int = IMAGE_META_INTERVAL_PACKETS,
         symbol_size: int = 200,
-        overhead_percent: float = 25
+        overhead_percent: float = 25,
+        allow_lt_fallback: bool = False
     ):
         """
         Initialize packet scheduler
-        
+
         Args:
             telemetry_callback: Optional function to get current telemetry
             telemetry_interval: Packets between telemetry
             image_meta_interval: Packets between image metadata
             symbol_size: Fountain code symbol size
             overhead_percent: Fountain code overhead
+            allow_lt_fallback: Permit the LT encoder, whose output the ground
+                station cannot decode. Bench testing only.
         """
         self.telemetry_callback = telemetry_callback
         self.telemetry_interval = telemetry_interval
         self.image_meta_interval = image_meta_interval
         self.symbol_size = symbol_size
         self.overhead_percent = overhead_percent
+        self.allow_lt_fallback = allow_lt_fallback
         
         self._sequence: int = 0
         self._packet_counter: int = 0
         self._current_image: Optional[ImageTransmission] = None
         self._image_queue: Queue = Queue(maxsize=5)
         self._priority_queue: List[QueuedPacket] = []
+        self._telemetry_bytes: Optional[bytes] = None
+
+        # Independent countdowns rather than modulo of a shared counter.
+        # With a shared counter, an image_meta_interval that happens to be a
+        # multiple of telemetry_interval is permanently shadowed by the
+        # telemetry slot and image metadata is never scheduled at all.
+        self._since_telemetry: int = 0
+        self._since_image_meta: int = 0
     
     def queue_image(
         self,
@@ -140,7 +152,8 @@ class PacketScheduler:
             encoder = FountainEncoder(
                 image_data,
                 self.symbol_size,
-                prefer_raptorq=True
+                prefer_raptorq=True,
+                allow_lt_fallback=self.allow_lt_fallback
             )
             
             total_symbols = encoder.get_recommended_symbol_count(self.overhead_percent)
@@ -203,8 +216,8 @@ class PacketScheduler:
         self.queue_packet(
             PacketType.CMD_ACK,
             CommandAckPayload(
-                command_type=command_type,
-                command_seq=command_seq,
+                acked_type=command_type,
+                acked_seq=command_seq,
                 status=status
             ),
             priority=PacketPriority.HIGH
@@ -221,37 +234,48 @@ class PacketScheduler:
             Packet bytes or None if nothing to send
         """
         self._telemetry_bytes = telemetry_bytes
-        
+
         # Check for priority packets first
         if self._priority_queue:
             queued = self._priority_queue.pop(0)
             return self._build_and_advance(queued.packet_type, queued.payload, queued.flags)
-        
+
         self._packet_counter += 1
-        
-        # Check if this slot is for telemetry
-        if self._packet_counter % self.telemetry_interval == 0:
-            return self._get_telemetry_packet()
-        
-        # Check if this slot is for image metadata
-        if self._packet_counter % self.image_meta_interval == 0:
+        self._since_telemetry += 1
+        self._since_image_meta += 1
+
+        # Image metadata is the rarer slot, so it is offered first. Its counter
+        # only resets when a metadata packet is actually produced, so a slot
+        # missed because no image was queued is retried on the next packet.
+        # Repeating metadata matters: a receiver that joins mid-image, or that
+        # drops the single metadata packet sent at image start, otherwise has
+        # no way to learn symbol_size / num_source_symbols / checksum and
+        # cannot decode the image at all.
+        if self._since_image_meta >= self.image_meta_interval:
             packet = self._get_image_meta_packet()
             if packet:
+                self._since_image_meta = 0
                 return packet
-        
+
+        # Telemetry slot
+        if self._since_telemetry >= self.telemetry_interval:
+            self._since_telemetry = 0
+            return self._get_telemetry_packet()
+
         # Otherwise, send image data
         packet = self._get_image_data_packet()
         if packet:
             return packet
-        
+
         # Fallback to telemetry if no image data
+        self._since_telemetry = 0
         return self._get_telemetry_packet()
     
     def _get_telemetry_packet(self) -> bytes:
         """Get telemetry packet"""
         try:
             # Use pre-serialized telemetry if available
-            if hasattr(self, '_telemetry_bytes') and self._telemetry_bytes:
+            if self._telemetry_bytes:
                 return self._build_and_advance_raw(PacketType.TELEMETRY, self._telemetry_bytes)
             
             # Otherwise use callback if available
@@ -425,4 +449,6 @@ class PacketScheduler:
             except Empty:
                 break
         self._current_image = None
+        self._since_telemetry = 0
+        self._since_image_meta = 0
         logger.info("Transmission queues cleared")
