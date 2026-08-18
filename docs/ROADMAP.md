@@ -56,6 +56,7 @@ Two things follow that are worth stating plainly:
 | Hardware | Waveshare SX1262 (HF) LoRa HAT for Pi Zero + L76K GPS |
 | Hardware band | **850-930 MHz** (Core1262-HF). The 433 MHz regions and China are unreachable |
 | Regional frequency | **Auto-select Meshtastic band from GPS position** (see below) |
+| Phase status | 1, 2, 3, 4, 6, 7 complete. **5 blocked on the RX bench test** |
 
 ---
 
@@ -97,62 +98,36 @@ python3 -m airborne.main --callsign RPHAB7 --save-config
 
 ---
 
-## Phase 2 — USB gadget: config + terminal over the Pi's USB port
+## Phase 2 — USB gadget: config + terminal ✅ COMPLETE
 
-*Branch `phase-2-usb-console`. **DEFERRED** — the transport half is done; the
-protocol and the macOS app are not.*
+1. ✅ CDC-ACM composite gadget via libcomposite, with a distinct product
+   string so the app can tell the payload apart from a Heltec modem or a
+   Meshtastic node on the same bus.
+2. ✅ `common/linkproto.py` + `LinkProtocol.swift` — length-prefixed frames
+   with a channel id and CRC-32, so config traffic and terminal output share
+   one line without corrupting each other. Resynchronises mid-stream, which is
+   what makes attaching to an already-running payload work.
+3. ✅ `airborne/usbconsole.py` — the config RPC (`hello`, `get_schema`,
+   `get_config`, `set_config`, `reset_config`, `get_status`, `list_images`,
+   `fetch_image`, `get_logs`, `generate_psk`, `restart_service`) plus a real
+   PTY shell. **Binds only to the gadget TTY** and refuses anything else, so a
+   shell can never be served over the radio — enforced in code and tested.
+4. ✅ macOS **Config** tab: the entire form is generated from the schema the
+   payload sends, so a parameter added on the Pi appears with no Swift change.
+   Restart-required fields are marked, unsaved edits flagged, batches applied
+   all-or-nothing.
+5. ✅ macOS **Console** tab: terminal with history, Ctrl-C/Ctrl-D, and a
+   scrollback cap. Disabled with an explanation when USB is not connected.
+6. ✅ M2/M3 fixed — `RawSerialPort` takes a per-connection baud rate, and
+   `SerialDeviceDiscovery` identifies devices by USB vendor/product ID and
+   product string instead of matching `cu.` against every port on the Mac.
 
-**Already landed** (with the installer, `phase-4b-install`): the CDC-ACM gadget
-itself, brought up by `setup/usb-gadget.sh` via libcomposite with a distinct
-product string, plus a login shell on `/dev/ttyGS0`. Enable with
-`sudo ./setup/install.sh --usb-gadget`. That gives a working terminal over USB
-today. What remains is the multiplexed config RPC and the macOS app.
+Secrets are write-only across the link: a channel key can be set and its
+fingerprint read back, but the value itself never crosses the cable.
 
-Deliberately **CDC-ACM only, no `g_ether`**: an ethernet gadget creates an
-interface that `systemd-networkd-wait-online` blocks on, adding tens of
-seconds to every boot when nothing is plugged in. On a battery-powered payload
-that is a bad trade for bench convenience.
-
-**Approach:** Pi Zero 2 W's data port supports USB OTG. Configure it as a
-**composite USB gadget** via `libcomposite`:
-
-- **CDC-ACM serial** (primary) → appears on the Mac as `/dev/cu.usbmodemXXXX`,
-  no drivers, no networking. This carries a multiplexed protocol:
-  channel 0 = JSON config/telemetry RPC, channel 1 = PTY console bytes.
-- **CDC-ECM ethernet** (secondary, optional) → gives you real `ssh` for
-  development. Recommended to enable but not depended on by the app.
-
-Steps:
-
-1. `Pi/setup/usb-gadget.sh` + a systemd unit to bring up the composite gadget at
-   boot. Document the `dtoverlay=dwc2` / `modules-load` prerequisites.
-2. `Pi/airborne/usbconsole.py` — service on the gadget TTY:
-   - Length-prefixed frames with a 1-byte channel id, so config traffic and
-     console output never interleave-corrupt each other at 921600 baud.
-   - **Config RPC** (JSON): `get_schema`, `get_config`, `set_config`,
-     `get_status`, `get_telemetry`, `capture_now`, `radio_test_tx`,
-     `list_images`, `fetch_image`, `restart_service`.
-   - **Console**: `pty.fork()` a login shell, pipe both directions, forward
-     window size. **Bound to the gadget TTY only** — never reachable over the
-     radio, enforced in code, not by convention.
-3. Bench-test mode: a `radio_test_tx` that keys the transmitter at a chosen
-   power/mode for N seconds so you can verify RF on a spectrum analyzer
-   without launching the full stack.
-4. macOS app: new **Config** tab (`ConfigView.swift`, `PiLinkManager.swift`).
-   Schema-driven form generated from `get_schema` — so adding a Pi-side setting
-   later requires no Swift changes. Restart-required fields visibly marked.
-5. macOS app: new **Console** tab (`ConsoleView.swift`) — a real terminal view
-   over channel 1. Gated on an active USB connection; the tab is disabled and
-   explains why when the Pi is not plugged in.
-6. Fix M2/M3 — per-connection baud rate, and VID/PID-based device
-   identification so the app can tell the Pi gadget, the Heltec modem, and a
-   Meshtastic node apart.
-7. Check `RaptorHabGS.entitlements` for the USB / serial-device entitlement; if
-   the app is sandboxed this will need `com.apple.security.device.usb`.
-
-**Exit:** plug in the Pi, the Mac app finds it, you can read and change every
-setting, and you get a working shell — all over one USB cable, with no radio
-involvement.
+Deliberately **no `g_ether`**: an ethernet gadget creates an interface
+`systemd-networkd-wait-online` blocks on, adding tens of seconds to every boot
+when nothing is plugged in.
 
 ---
 
@@ -286,46 +261,51 @@ same channel is provably ignored.
 
 ---
 
-## Phase 6 — macOS app: Meshtastic device integration
+## Phase 6 — macOS Meshtastic integration ✅ COMPLETE
 
-*Branch `phase-6-mac-meshtastic`.*
-
-1. `MeshtasticManager.swift` — connect a Meshtastic node by **USB serial**
-   (115200, `0x94 0xC3` framed stream API) or **BLE** (CoreBluetooth: `toRadio`
-   / `fromRadio` / `fromNum` characteristics).
-2. Protobuf codec — see Q3; recommend `swift-protobuf` via SPM plus the
-   official `.proto` files, over hand-rolling on the Swift side.
-3. New **Meshtastic** tab: node list, channel config, message log, send a
-   message to the balloon (broadcast or private channel), live RSSI/SNR.
-4. Decode the balloon's beacons and surface them as a first-class position
-   source.
-
-**Exit:** a Meshtastic node plugged into the Mac shows received balloon beacons
-and can send a message that the balloon acts on.
+1. ✅ `MeshtasticTransport.swift` — USB serial (the `0x94 0xC3` framed stream
+   API, picking messages out of a stream that also carries plain log text) and
+   BLE (CoreBluetooth, draining `fromRadio` until empty on each `fromNum`
+   notification rather than reading once and losing queued messages).
+2. ✅ Hand-rolled protobuf and AES-256-CTR, per Q3. CommonCrypto provides CTR;
+   CryptoKit does not expose it.
+3. ✅ **Meshtastic** tab: node list with position, battery, signal and hop
+   count; message log with send-to-mesh or send-to-balloon; channel management
+   with key entry and a warning when a channel uses the published default key.
+4. ✅ The balloon's node id is derived from its callsign exactly as the payload
+   derives it, so its beacons are attributed automatically and feed the map.
 
 ---
 
-## Phase 7 — Unified position fusion on the map
+## Phase 7 — Unified position fusion ✅ COMPLETE
 
-*Branch `phase-7-position-fusion`.*
+`PositionFusion.swift` maintains one authoritative position from four sources,
+in priority order:
 
-A `PositionSource` priority chain, each entry with its own staleness timeout,
-shown on the map with distinct styling and an explicit "source + age" label:
+| Priority | Source | Stale after |
+|---|---|---|
+| 1 | RAPTOR modem (your own receiver) | 45 s |
+| 2 | Meshtastic node attached to this Mac | 10 min |
+| 3 | Meshtastic MQTT (third-party relay) | 15 min |
+| 4 | Dead reckoning from the last two fixes | 5 min |
 
-1. **RAPTOR direct** (GFSK modem) — highest trust.
-2. **Meshtastic beacon** via locally-connected node.
-3. **Meshtastic MQTT** — subscribe to the public server
-   (`mqtt.meshtastic.org`, topic `msh/US/2/json/#` for pre-decoded JSON, or
-   `msh/US/2/e/#` for encrypted). Fully configurable, **off by default**, and
-   the app must show clearly when a position came from a third-party node
-   rather than from your own receiver.
-4. Last known + dead reckoning, clearly marked as extrapolated.
+The staleness windows differ because the sources do: RAPTOR updates
+constantly, so a gap means trouble and should hand over quickly, while
+Meshtastic beacons are minutes apart by design.
 
-Never let a lower-priority source overwrite a fresher higher-priority fix.
-The existing SondeHub integration is the model to follow here.
-
-**Exit:** pull the modem's antenna and the map keeps tracking via Meshtastic,
-with the source indicator changing accordingly.
+- A lower-priority source never overwrites a *fresher* higher-priority one, so
+  losing the modem briefly does not make the map jump to a stranger's report
+  and back.
+- The map always shows **which source it is drawing and how old it is**, with
+  third-party fixes explicitly flagged. A position relayed from someone else's
+  node is useful, but only if you know that is what you are looking at.
+- Dead reckoning is capped at five minutes and clearly labelled. A balloon's
+  track curves and the wind changes with altitude, so a long projection is a
+  confident lie.
+- `MeshtasticMQTTClient.swift` is a minimal MQTT 3.1.1 client (no dependency),
+  **off by default** — connecting reaches a public broker, which should be a
+  deliberate choice — and filters to the balloon's node id so it does not
+  ingest the whole public mesh.
 
 ---
 

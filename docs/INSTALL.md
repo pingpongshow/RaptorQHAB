@@ -192,9 +192,25 @@ screen /dev/cu.usbmodem14201 115200
 
 You get a login prompt. Log in with the account you created in the Imager.
 
-Phase 2 replaces this bare console with a multiplexed protocol carrying both a
-configuration API and a terminal, and a macOS app that speaks it. The gadget
-transport is the same either way, so enabling it now costs nothing later.
+### The companion app
+
+With `--usb-gadget`, the installer also enables `raptorhab-usbconsole`, which
+serves the configuration API and terminal the macOS app talks to. Open the app
+and use the **Config** and **Console** tabs; the app finds the payload by its
+USB product string.
+
+Note the two are mutually exclusive on the same port: the installer disables
+any plain `getty` on `ttyGS0`, because the console service owns it. If you want
+a bare `screen` session instead of the app, stop the service first:
+
+```bash
+sudo systemctl stop raptorhab-usbconsole
+```
+
+The service runs as root, unlike the flight software, because it offers a login
+shell — and the whole point is that the shell belongs to whoever is holding the
+cable. It refuses to bind to any device other than the USB gadget TTY, so that
+privilege is never reachable over the radio.
 
 ---
 

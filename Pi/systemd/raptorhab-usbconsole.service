@@ -1,0 +1,38 @@
+[Unit]
+Description=RaptorHab USB configuration and terminal service
+Documentation=file:///opt/raptorhab/docs/INSTALL.md
+After=raptorhab-usb-gadget.service
+Wants=raptorhab-usb-gadget.service
+
+# The payload keeps flying whether or not anyone is plugged in, so a failure
+# here must never take the flight software with it.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+
+# Runs as root, unlike the flight service. It offers a login shell, and the
+# whole point is that the shell belongs to whoever is holding the cable. The
+# service refuses to bind to anything but the USB gadget TTY, so this
+# privilege is not reachable over the radio.
+User=root
+
+WorkingDirectory=/opt/raptorhab
+ExecStart=/opt/raptorhab/.venv/bin/python -m airborne.usbconsole
+Restart=always
+RestartSec=5
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/raptorhab
+
+# Lower priority than the flight software. If the Pi Zero is short of CPU,
+# transmitting matters more than serving a config UI.
+Nice=5
+CPUWeight=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=raptorhab-usbconsole
+
+[Install]
+WantedBy=multi-user.target

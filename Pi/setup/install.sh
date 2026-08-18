@@ -311,10 +311,19 @@ if [[ $ENABLE_USB_GADGET -eq 1 ]]; then
     systemctl enable raptorhab-usb-gadget.service >/dev/null
     ok "gadget service installed and enabled"
 
-    # A login shell on the gadget TTY. This is what makes the USB port useful
-    # before the Phase 2 companion app exists.
-    systemctl enable serial-getty@ttyGS0.service >/dev/null 2>&1 || true
-    ok "login shell enabled on the USB serial port"
+    # The configuration and terminal service the companion app talks to.
+    install -m 0644 "$CODE_DIR/systemd/raptorhab-usbconsole.service" \
+        /etc/systemd/system/raptorhab-usbconsole.service
+    systemctl daemon-reload
+    systemctl enable raptorhab-usbconsole.service >/dev/null
+    ok "configuration and terminal service enabled"
+
+    # A plain login shell on the same TTY would fight the console service for
+    # it, so only one may own /dev/ttyGS0.
+    if systemctl is-enabled --quiet serial-getty@ttyGS0.service 2>/dev/null; then
+        systemctl disable --now serial-getty@ttyGS0.service >/dev/null 2>&1 || true
+        warn "disabled the plain getty on ttyGS0; the console service owns it now"
+    fi
 fi
 
 # --------------------------------------------------------------------------
