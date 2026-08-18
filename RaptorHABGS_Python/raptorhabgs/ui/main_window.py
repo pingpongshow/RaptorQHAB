@@ -21,6 +21,8 @@ from .prediction_tab import PredictionTab
 from .images_tab import ImagesTab
 from .missions_tab import MissionsTab
 from .settings_dialogs import SettingsDialog
+from .payload_tab import PayloadConfigTab, PayloadConsoleTab
+from ..core.payload_link import PayloadLink
 
 
 class MainWindow(QMainWindow):
@@ -78,12 +80,21 @@ class MainWindow(QMainWindow):
         )
         self.images_tab = ImagesTab(self.ground_station)
         self.missions_tab = MissionsTab(self.mission_manager)
+
+        # One USB link shared by both payload tabs: the config form and
+        # the terminal are two channels of the same connection, and
+        # opening the port twice would fail.
+        self.payload_link = PayloadLink()
+        self.payload_config_tab = PayloadConfigTab(self.payload_link)
+        self.payload_console_tab = PayloadConsoleTab(self.payload_link)
         
         # Add tabs
         self.tabs.addTab(self.tracking_tab, "📍 Live Tracking")
         self.tabs.addTab(self.prediction_tab, "🎯 Landing Prediction")
         self.tabs.addTab(self.images_tab, "🖼️ Images")
         self.tabs.addTab(self.missions_tab, "📁 Missions")
+        self.tabs.addTab(self.payload_config_tab, "🎛️ Payload Config")
+        self.tabs.addTab(self.payload_console_tab, "⌨️ Console")
         
         layout.addWidget(self.tabs)
         
