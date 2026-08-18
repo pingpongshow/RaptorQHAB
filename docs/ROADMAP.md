@@ -99,7 +99,19 @@ python3 -m airborne.main --callsign RPHAB7 --save-config
 
 ## Phase 2 — USB gadget: config + terminal over the Pi's USB port
 
-*Branch `phase-2-usb-console`. **DEFERRED** — skipped for now, revisit after Phase 3.*
+*Branch `phase-2-usb-console`. **DEFERRED** — the transport half is done; the
+protocol and the macOS app are not.*
+
+**Already landed** (with the installer, `phase-4b-install`): the CDC-ACM gadget
+itself, brought up by `setup/usb-gadget.sh` via libcomposite with a distinct
+product string, plus a login shell on `/dev/ttyGS0`. Enable with
+`sudo ./setup/install.sh --usb-gadget`. That gives a working terminal over USB
+today. What remains is the multiplexed config RPC and the macOS app.
+
+Deliberately **CDC-ACM only, no `g_ether`**: an ethernet gadget creates an
+interface that `systemd-networkd-wait-online` blocks on, adding tens of
+seconds to every boot when nothing is plugged in. On a battery-powered payload
+that is a bad trade for bench convenience.
 
 **Approach:** Pi Zero 2 W's data port supports USB OTG. Configure it as a
 **composite USB gadget** via `libcomposite`:

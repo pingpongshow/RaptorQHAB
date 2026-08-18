@@ -1,8 +1,8 @@
 [Unit]
 Description=RaptorHab Airborne Payload
-Documentation=https://github.com/raptorhab/raptorhab
-After=network.target
-Wants=network.target
+Documentation=file:///opt/raptorhab/docs/INSTALL.md
+After=time-sync.target
+Wants=time-sync.target
 
 # Never stop trying to restart the payload. systemd's default rate limiting
 # (5 starts in 10s) would put the unit permanently in a failed state after a
@@ -11,27 +11,40 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=pi
-Group=pi
-WorkingDirectory=/home/pi/raptorhab
-ExecStart=/usr/bin/python3 -m airborne.main
+User=raptorhab
+Group=raptorhab
+
+# The payload needs SPI (radio), GPIO (radio control lines), the serial port
+# (GPS), and video (camera). Group membership is granted by the installer;
+# this does not need root.
+SupplementaryGroups=spi gpio dialout video i2c
+
+WorkingDirectory=/opt/raptorhab
+ExecStart=/opt/raptorhab/.venv/bin/python -m airborne.main
 Restart=always
 # Every second here is dead air on the downlink.
 RestartSec=3
 TimeoutStopSec=30
 
-# Resource limits
+# Resource limits. The Pi Zero 2 W has 512 MB; leave room for the camera
+# pipeline, which allocates outside this process.
 MemoryMax=256M
 CPUQuota=80%
 
-# Security hardening
-NoNewPrivileges=false
-ProtectSystem=false
-ProtectHome=false
+# Writable state. ReadWritePaths is what lets an otherwise-protected service
+# write its images, logs, and configuration.
+ReadWritePaths=/var/lib/raptorhab
+
+# Security hardening. The payload has no reason to touch anything outside its
+# own state directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
 
 # Environment
 Environment=PYTHONUNBUFFERED=1
-Environment=PYTHONPATH=/home/pi/raptorhab
+Environment=PYTHONPATH=/opt/raptorhab
 
 # Logging
 StandardOutput=journal

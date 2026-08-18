@@ -32,7 +32,13 @@ from airborne.params import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_PATH = "/RaptorHAB/config/airborne.json"
+# State lives under /var/lib, which is where a system service's writable data
+# belongs and, more practically, is a directory the unprivileged service user
+# can actually own. The previous /RaptorHAB default could only be created by
+# root, so the service failed at startup on any fresh install.
+STATE_ROOT = os.environ.get("RAPTORHAB_STATE_ROOT", "/var/lib/raptorhab")
+
+DEFAULT_CONFIG_PATH = os.path.join(STATE_ROOT, "config", "airborne.json")
 
 
 @dataclass
@@ -158,8 +164,8 @@ class Config:
     zone_landed_beacon_interval_sec: int = 60
 
     # === Storage ===
-    image_storage_path: str = "/RaptorHAB/airborne/images"
-    log_path: str = "/RaptorHAB/airborne/logs"
+    image_storage_path: str = os.path.join(STATE_ROOT, "images")
+    log_path: str = os.path.join(STATE_ROOT, "logs")
     max_stored_images: int = 20000
 
     # === Operational ===

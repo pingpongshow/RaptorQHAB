@@ -45,7 +45,36 @@ def test_constructing_config_creates_no_directories():
         config.image_storage_path
     )
     # The real assertion: this did not raise, and no path was created here.
-    assert config.image_storage_path == "/RaptorHAB/airborne/images"
+    assert config.image_storage_path.endswith("/images")
+
+
+def test_state_lives_somewhere_the_service_user_can_own():
+    """
+    Regression: state defaulted to /RaptorHAB, an absolute path only root can
+    create. The unprivileged service user could not make its own directories,
+    so the unit failed at startup on every fresh install.
+    """
+    from airborne.config import STATE_ROOT
+
+    config = Config()
+    assert STATE_ROOT.startswith("/var/lib/") or STATE_ROOT.startswith("/tmp")
+    for path in (config.image_storage_path, config.log_path, config.config_path):
+        assert path.startswith(STATE_ROOT), f"{path} escapes the state root"
+
+
+def test_state_root_can_be_overridden_for_testing(monkeypatch, tmp_path):
+    """Lets a developer run the payload without touching system directories."""
+    import importlib
+
+    import airborne.config as config_module
+
+    monkeypatch.setenv("RAPTORHAB_STATE_ROOT", str(tmp_path))
+    reloaded = importlib.reload(config_module)
+    try:
+        assert reloaded.Config().image_storage_path == str(tmp_path / "images")
+    finally:
+        monkeypatch.delenv("RAPTORHAB_STATE_ROOT", raising=False)
+        importlib.reload(config_module)
 
 
 def test_module_has_no_eager_default_instance():

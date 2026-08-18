@@ -1,0 +1,22 @@
+[Unit]
+Description=RaptorHab USB serial gadget
+Documentation=file:///opt/raptorhab/docs/INSTALL.md
+After=sys-kernel-config.mount
+Requires=sys-kernel-config.mount
+
+# The gadget must exist before anything tries to open /dev/ttyGS0.
+Before=serial-getty@ttyGS0.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/raptorhab-usb-gadget start
+ExecStop=/usr/local/sbin/raptorhab-usb-gadget stop
+
+# A missing UDC means the board is not in OTG mode yet -- almost always a
+# pending reboot after dtoverlay=dwc2 was added. Failing the unit would be
+# noise, and it must never hold up the payload service.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target
