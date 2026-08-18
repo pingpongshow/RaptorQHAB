@@ -214,27 +214,32 @@ privilege is never reachable over the radio.
 
 ---
 
-## What a finder can read off the card
+## Protecting flight recordings
 
-The SD card is **not encrypted**, and on a balloon it fundamentally cannot be
-in a way that helps: the payload has to boot on the pad with nobody there to
-type a passphrase, so any key it can use travels with it. File permissions
-mean nothing to whoever holds the card.
+The SD card is not encrypted and on a balloon cannot usefully be — the payload
+boots unattended, so any key it could use would travel with it.
 
-The workable approach is to carry fewer secrets. Audit what is aboard:
+Instead, seal recordings to a public key the payload cannot read back.
+Generate a keypair on your Mac:
 
 ```bash
-sudo /opt/raptorhab/tools/preflight_secrets.py
+python3 Pi/tools/recording_key.py generate
 ```
+
+Set `recording_encryption_enabled` and `recording_public_key` on the payload,
+then after recovery:
+
+```bash
+python3 Pi/tools/recording_key.py decrypt /Volumes/SDCARD/var/lib/raptorhab --out ./recovered
+```
+
+Separately, audit the credentials already on the card:
 
 ```bash
 sudo /opt/raptorhab/tools/preflight_secrets.py --sanitize --keep-wifi
 ```
 
-It reports Wi-Fi credentials, SSH key material, the Meshtastic private channel
-key, leftover flight logs, and any passwordless-sudo rules, and removes what
-can be removed. The channel key cannot be — the payload needs it to transmit —
-so treat it as compromised after any flight you do not recover yourself.
+Full reasoning in [SECURITY.md](SECURITY.md).
 
 ## Reference
 

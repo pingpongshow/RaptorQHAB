@@ -164,19 +164,26 @@ class TelemetryCollector:
 class TelemetryLogger:
     """Logs telemetry data to file for post-flight analysis"""
     
-    def __init__(self, log_path: str, callsign: str = "RAPTOR"):
+    def __init__(self, log_path: str, callsign: str = "RAPTOR", sealed_writer=None):
         """
         Initialize telemetry logger
-        
+
         Args:
             log_path: Directory for telemetry logs
             callsign: Station callsign for log filename
+            sealed_writer: Optional SealedWriter. When it holds a public key,
+                each row is sealed as its own record -- a flight log is the
+                complete position history of the balloon, including where it
+                launched from.
         """
         import os
         from datetime import datetime
-        
+
+        from common.sealedwriter import SealedWriter
+
         os.makedirs(log_path, exist_ok=True)
         self.callsign = callsign
+        self._writer = sealed_writer or SealedWriter(enabled=False)
         
         # Create log file with timestamp and callsign
         filename = datetime.now().strftime(f"telemetry_{callsign}_%Y%m%d_%H%M%S.csv")
@@ -197,8 +204,11 @@ class TelemetryLogger:
             "image_id", "image_progress", "rssi"
         ]
         
-        with open(self.filepath, 'w') as f:
-            f.write(','.join(headers) + '\n')
+        # Truncate any previous file, then let the writer own the format.
+        open(self.filepath, "w").close()
+        self.filepath = self._writer.append_line(
+            self.filepath, ','.join(headers) + '\n'
+        )
     
     def log(
         self,
@@ -270,8 +280,7 @@ class TelemetryLogger:
             ]
         
         try:
-            with open(self.filepath, 'a') as f:
-                f.write(','.join(values) + '\n')
+            self._writer.append_line(self.filepath, ','.join(values) + '\n')
         except IOError as e:
             logger.error(f"Failed to log telemetry: {e}")
     

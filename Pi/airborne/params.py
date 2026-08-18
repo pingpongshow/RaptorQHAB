@@ -177,6 +177,7 @@ CATEGORY_ORDER: Tuple[str, ...] = (
     "Image Quality",
     "GPS",
     "Fountain Coding",
+    "Recording Encryption",
     "Flight Zones",
     "Zone Launch",
     "Zone Cruise",
@@ -373,6 +374,25 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         "fountain_overhead_percent", Kind.INT, "Fountain Coding",
         "Extra symbols transmitted beyond the minimum needed to decode.",
         apply=Apply.LIVE, minimum=0, maximum=300, unit="%",
+    ),
+
+    # === Recording Encryption ===
+    _spec(
+        "recording_encryption_enabled", Kind.BOOL, "Recording Encryption",
+        "Seal captured images and telemetry logs to a public key as they are "
+        "written. The payload holds only the public half and cannot read the "
+        "files back, so a stranger who recovers the balloon gets ciphertext. "
+        "The SD card itself cannot usefully be encrypted -- the payload must "
+        "boot unattended, so any key it could use would travel with it.",
+        apply=Apply.RESTART,
+    ),
+    _spec(
+        "recording_public_key", Kind.STRING, "Recording Encryption",
+        "X25519 public key, base64 or 64-char hex. Generate a keypair with "
+        "tools/recording_key.py on the ground station and put only the public "
+        "half here. Keep the private half off the balloon -- it is the one "
+        "thing that must not fly.",
+        apply=Apply.RESTART,
     ),
 
     # === Storage ===

@@ -56,6 +56,7 @@ Two things follow that are worth stating plainly:
 | Hardware | Waveshare SX1262 (HF) LoRa HAT for Pi Zero + L76K GPS |
 | Hardware band | **850-930 MHz** (Core1262-HF). The 433 MHz regions and China are unreachable |
 | Regional frequency | **Auto-select Meshtastic band from GPS position** (see below) |
+| Recording encryption | **X25519 sealed boxes** — payload cannot read its own recordings |
 | Phase status | 1, 2, 3, 4, 6, 7 complete and **hardware-validated**. 5 unblocked |
 
 ---
@@ -269,7 +270,14 @@ Three bugs this found, all fixed:
 3. **The installer failed on Debian 13** (`libatlas-base-dev` was dropped) and
    seeded the initial config from a directory the service account cannot read.
 
-Still outstanding: **the camera is not detected** (`detected=0`, no CSI
+Since resolved: the camera is an **IMX219** and works — auto-detection simply
+never probed it, which is common with third-party modules and adapter cables.
+`install.sh --camera imx219` names it explicitly; `--check` now reports the
+sensor. Two installer bugs surfaced doing so: `rpicam-hello` prints its camera
+list on **stderr**, and a `set -o pipefail` interaction where a pipeline ending
+in `grep -q` reports failure when the producer dies of SIGPIPE.
+
+Previously outstanding: **the camera was not detected** (`detected=0`, no CSI
 activity), which looks like a ribbon-cable seating problem rather than
 software.
 

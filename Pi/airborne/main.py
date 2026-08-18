@@ -254,6 +254,19 @@ class RaptorHabAirborne:
         else:
             self._logger.warning("GPS initialization failed - continuing without GPS")
         
+        # One sealed writer, shared by the camera and the telemetry logger, so
+        # imagery and position history are protected the same way.
+        from common.sealedwriter import SealedWriter
+        self._sealed_writer = SealedWriter(
+            public_key_text=self.config.recording_public_key,
+            enabled=self.config.recording_encryption_enabled,
+        )
+        if self.config.recording_encryption_enabled and not self._sealed_writer.active:
+            self._logger.error(
+                "Recording encryption is enabled but no usable public key is "
+                "configured; images and logs will be written UNENCRYPTED"
+            )
+
         # Initialize camera with settings from config
         self._logger.info("Initializing camera...")
         self._camera = CameraModule(
@@ -264,6 +277,7 @@ class RaptorHabAirborne:
             storage_path=self.config.image_storage_path,
             callsign=self.config.callsign,
             simulation=self.debug,
+            sealed_writer=self._sealed_writer,
         )
         self._camera.init()
         
@@ -277,6 +291,7 @@ class RaptorHabAirborne:
         self._telemetry_logger = TelemetryLogger(
             log_path=self.config.log_path,
             callsign=self.config.callsign,
+            sealed_writer=self._sealed_writer,
         )
         
         # Verify the image path end to end before flight rather than

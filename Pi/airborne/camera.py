@@ -70,6 +70,7 @@ class Camera:
         callsign: str = "RPHAB1",
         simulate: bool = False,
         simulation: bool = None,  # Alias for simulate
+        sealed_writer=None,
     ):
         """
         Initialize camera
@@ -83,6 +84,8 @@ class Camera:
             callsign: Callsign for overlay
             simulate: Enable simulation mode (alias: simulation)
             simulation: Alias for simulate
+            sealed_writer: Optional SealedWriter. When it holds a public key,
+                captures are sealed so the payload cannot read them back.
         """
         # Handle alias
         if simulation is not None:
@@ -112,6 +115,9 @@ class Camera:
         self._red_gain = 100
         self._blue_gain = 100
         
+        from common.sealedwriter import SealedWriter
+        self._writer = sealed_writer or SealedWriter(enabled=False)
+
         # Create storage directory
         os.makedirs(storage_path, exist_ok=True)
     
@@ -340,8 +346,7 @@ class Camera:
             filepath = os.path.join(self.storage_path, filename)
             
             # Save to disk
-            with open(filepath, 'wb') as f:
-                f.write(webp_data)
+            filepath = self._writer.write(filepath, webp_data)
             
             info = ImageInfo(
                 image_id=image_id,
@@ -582,8 +587,7 @@ class Camera:
         filepath = os.path.join(self.storage_path, filename)
         
         # Save to disk
-        with open(filepath, 'wb') as f:
-            f.write(webp_data)
+        filepath = self._writer.write(filepath, webp_data)
         
         return ImageInfo(
             image_id=image_id,

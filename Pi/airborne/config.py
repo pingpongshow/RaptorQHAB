@@ -163,6 +163,12 @@ class Config:
     zone_landed_mesh_percent: float = 5.0
     zone_landed_beacon_interval_sec: int = 60
 
+    # === Recording Encryption ===
+    # Off by default: it changes how files are written, and a flight should
+    # never fail because of a feature the operator did not ask for.
+    recording_encryption_enabled: bool = False
+    recording_public_key: str = ""
+
     # === Storage ===
     image_storage_path: str = os.path.join(STATE_ROOT, "images")
     log_path: str = os.path.join(STATE_ROOT, "logs")
