@@ -117,13 +117,45 @@ class Config:
     meshtastic_private_psk: str = ""
 
     # === Meshtastic Region ===
-    # Which SX1262 board variant is fitted. The Waveshare 915M HAT cannot
-    # transmit the 433 MHz Meshtastic regions at all -- see params.py.
-    radio_hardware_band: str = "915M"
+    # Which SX1262 front end is fitted. The Waveshare Core1262-HF covers
+    # 850-930 MHz and so cannot reach the 433 MHz Meshtastic regions or China
+    # -- see params.py.
+    radio_hardware_band: str = "HF"
+    radio_band_min_mhz: float = 850.0
+    radio_band_max_mhz: float = 930.0
     meshtastic_region: str = "US"
     meshtastic_region_auto: bool = True
     meshtastic_region_dwell_sec: int = 120
     meshtastic_region_edge_margin_km: int = 25
+
+    # === Flight Zones ===
+    zone_scheduling_enabled: bool = True
+    # 0,0 means "capture the launch point from the first 3D fix".
+    zone_launch_latitude: float = 0.0
+    zone_launch_longitude: float = 0.0
+    zone_radius_m: int = 8000
+    zone_hysteresis_m: int = 800
+    zone_altitude_override_m: int = 3000
+    zone_slice_sec: float = 2.0
+
+    # Inside the launch radius: almost everything to images.
+    zone_launch_image_percent: float = 98.0
+    zone_launch_mesh_percent: float = 1.0
+    zone_launch_beacon_interval_sec: int = 600
+
+    # Outside it: mostly idle, to conserve battery for the descent.
+    zone_cruise_image_percent: float = 5.0
+    zone_cruise_mesh_percent: float = 5.0
+    zone_cruise_beacon_interval_sec: int = 300
+
+    # On the ground: a slow recovery beacon and nothing else.
+    zone_landed_enabled: bool = True
+    zone_landed_altitude_m: int = 1000
+    zone_landed_vertical_rate_mps: float = 0.5
+    zone_landed_dwell_sec: int = 120
+    zone_landed_arm_altitude_m: int = 2000
+    zone_landed_mesh_percent: float = 5.0
+    zone_landed_beacon_interval_sec: int = 60
 
     # === Storage ===
     image_storage_path: str = "/RaptorHAB/airborne/images"

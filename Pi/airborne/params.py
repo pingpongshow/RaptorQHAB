@@ -177,6 +177,10 @@ CATEGORY_ORDER: Tuple[str, ...] = (
     "Image Quality",
     "GPS",
     "Fountain Coding",
+    "Flight Zones",
+    "Zone Launch",
+    "Zone Cruise",
+    "Zone Landed",
     "Meshtastic",
     "Meshtastic Region",
     "Meshtastic Private",
@@ -507,17 +511,32 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
     # === Meshtastic Region ===
     _spec(
         "radio_hardware_band", Kind.ENUM, "Meshtastic Region",
-        "Which frequency variant this SX1262 board is. The chip spans "
-        "150-960 MHz but the board's matching network, filters and PA are "
-        "tuned for one band -- driving a 915M board at 433 MHz radiates almost "
-        "nothing and can damage the amplifier. Regions outside this band are "
-        "unavailable, and flying over one silences Meshtastic rather than "
-        "transmitting out of band.",
-        apply=Apply.RESTART, choices=("915M", "868M", "490M", "433M"),
+        "Which front end this SX1262 board has. The chip spans 150-960 MHz but "
+        "the board's matching network, filters and PA are tuned for one range "
+        "-- driving an HF board at 433 MHz radiates almost nothing and can "
+        "damage the amplifier. Regions outside the band are unavailable, and "
+        "flying over one silences Meshtastic rather than transmitting out of "
+        "band.",
+        apply=Apply.RESTART, choices=("HF", "LF", "CUSTOM"),
         choice_labels=(
-            "915M (902-928 MHz)", "868M (863-870 MHz)",
-            "490M (470-510 MHz)", "433M (410-493 MHz)",
+            "HF - Waveshare Core1262-HF (850-930 MHz)",
+            "LF - Waveshare Core1262-LF (410-510 MHz)",
+            "Custom range",
         ),
+    ),
+    _spec(
+        "radio_band_min_mhz", Kind.FLOAT, "Meshtastic Region",
+        "Lower edge of the front end's range. Used only when "
+        "radio_hardware_band is CUSTOM.",
+        apply=Apply.RESTART, minimum=150.0, maximum=960.0, unit="MHz",
+        advanced=True,
+    ),
+    _spec(
+        "radio_band_max_mhz", Kind.FLOAT, "Meshtastic Region",
+        "Upper edge of the front end's range. Used only when "
+        "radio_hardware_band is CUSTOM.",
+        apply=Apply.RESTART, minimum=150.0, maximum=960.0, unit="MHz",
+        advanced=True,
     ),
     _spec(
         "meshtastic_region", Kind.ENUM, "Meshtastic Region",
@@ -549,6 +568,135 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         "How far inside a new region the balloon must be before the change "
         "counts. 0 disables the margin test.",
         apply=Apply.LIVE, minimum=0, maximum=500, unit="km",
+    ),
+
+    # === Flight Zones ===
+    _spec(
+        "zone_scheduling_enabled", Kind.BOOL, "Flight Zones",
+        "Vary the image/Meshtastic airtime split by flight zone. With this "
+        "off, images run continuously and Meshtastic uses its fixed interval.",
+        apply=Apply.LIVE,
+    ),
+    _spec(
+        "zone_launch_latitude", Kind.FLOAT, "Flight Zones",
+        "Launch site latitude. Leave both coordinates at 0 to capture the "
+        "launch point automatically from the first 3D fix.",
+        apply=Apply.LIVE, minimum=-90.0, maximum=90.0, unit="deg",
+    ),
+    _spec(
+        "zone_launch_longitude", Kind.FLOAT, "Flight Zones",
+        "Launch site longitude. Leave both coordinates at 0 to capture the "
+        "launch point automatically from the first 3D fix.",
+        apply=Apply.LIVE, minimum=-180.0, maximum=180.0, unit="deg",
+    ),
+    _spec(
+        "zone_radius_m", Kind.INT, "Flight Zones",
+        "Radius of the launch zone. Inside it the balloon spends almost all "
+        "its airtime on images, because the recovery crew and ground station "
+        "are here and the link is short.",
+        apply=Apply.LIVE, minimum=100, maximum=200000, unit="m",
+    ),
+    _spec(
+        "zone_hysteresis_m", Kind.INT, "Flight Zones",
+        "How far past the radius the balloon must go to leave the launch "
+        "zone, and how far back inside to return. Stops a balloon tracking "
+        "the boundary from thrashing between schedules.",
+        apply=Apply.LIVE, minimum=0, maximum=50000, unit="m",
+    ),
+    _spec(
+        "zone_altitude_override_m", Kind.INT, "Flight Zones",
+        "Above this height over the launch site, force cruise mode whatever "
+        "the ground distance. A balloon at altitude is no longer a "
+        "launch-site problem even if it is still overhead. 0 disables.",
+        apply=Apply.LIVE, minimum=0, maximum=40000, unit="m",
+    ),
+
+    # === Zone: Launch ===
+    _spec(
+        "zone_launch_image_percent", Kind.FLOAT, "Zone Launch",
+        "Share of airtime spent on images inside the launch zone.",
+        apply=Apply.LIVE, minimum=0.0, maximum=100.0, unit="%",
+    ),
+    _spec(
+        "zone_launch_mesh_percent", Kind.FLOAT, "Zone Launch",
+        "Share of airtime spent on Meshtastic inside the launch zone.",
+        apply=Apply.LIVE, minimum=0.0, maximum=100.0, unit="%",
+    ),
+    _spec(
+        "zone_launch_beacon_interval_sec", Kind.INT, "Zone Launch",
+        "Meshtastic beacon interval inside the launch zone. This is a hard "
+        "floor: a beacon that comes due wins over any image backlog.",
+        apply=Apply.LIVE, minimum=30, maximum=7200, unit="s",
+    ),
+
+    # === Zone: Cruise ===
+    _spec(
+        "zone_cruise_image_percent", Kind.FLOAT, "Zone Cruise",
+        "Share of airtime spent on images outside the launch zone.",
+        apply=Apply.LIVE, minimum=0.0, maximum=100.0, unit="%",
+    ),
+    _spec(
+        "zone_cruise_mesh_percent", Kind.FLOAT, "Zone Cruise",
+        "Share of airtime spent on Meshtastic outside the launch zone. The "
+        "remainder is idle, which is what conserves battery for the descent.",
+        apply=Apply.LIVE, minimum=0.0, maximum=100.0, unit="%",
+    ),
+    _spec(
+        "zone_cruise_beacon_interval_sec", Kind.INT, "Zone Cruise",
+        "Meshtastic beacon interval outside the launch zone.",
+        apply=Apply.LIVE, minimum=30, maximum=7200, unit="s",
+    ),
+
+    # === Zone: Landed ===
+    _spec(
+        "zone_landed_enabled", Kind.BOOL, "Zone Landed",
+        "Detect landing and switch to a Meshtastic-only recovery beacon. When "
+        "the payload is on the ground the image link is usually blocked by "
+        "terrain, and a low-rate LoRa beacon is often what actually finds it.",
+        apply=Apply.LIVE,
+    ),
+    _spec(
+        "zone_landed_altitude_m", Kind.INT, "Zone Landed",
+        "Below this height above the launch site, landing becomes possible.",
+        apply=Apply.LIVE, minimum=0, maximum=10000, unit="m",
+    ),
+    _spec(
+        "zone_landed_vertical_rate_mps", Kind.FLOAT, "Zone Landed",
+        "Below this ascent or descent rate counts as stationary.",
+        apply=Apply.LIVE, minimum=0.05, maximum=20.0, unit="m/s",
+    ),
+    _spec(
+        "zone_landed_dwell_sec", Kind.INT, "Zone Landed",
+        "How long the landed conditions must hold before switching. A false "
+        "landing before apogee would stop image capture for the whole flight, "
+        "so this is deliberately hard to trigger.",
+        apply=Apply.LIVE, minimum=10, maximum=3600, unit="s",
+    ),
+    _spec(
+        "zone_landed_arm_altitude_m", Kind.INT, "Zone Landed",
+        "Landing detection stays disarmed until the balloon has been this "
+        "high above the launch site. Without it a payload sitting on the pad "
+        "during setup -- low and stationary for far longer than any dwell "
+        "period -- declares itself landed before launch and stops capturing.",
+        apply=Apply.LIVE, minimum=100, maximum=20000, unit="m",
+    ),
+    _spec(
+        "zone_landed_mesh_percent", Kind.FLOAT, "Zone Landed",
+        "Share of airtime spent on Meshtastic after landing. Keep it low: on "
+        "the ground the battery has to outlast the drive to the site.",
+        apply=Apply.LIVE, minimum=0.0, maximum=100.0, unit="%",
+    ),
+    _spec(
+        "zone_landed_beacon_interval_sec", Kind.INT, "Zone Landed",
+        "Recovery beacon interval after landing.",
+        apply=Apply.LIVE, minimum=15, maximum=3600, unit="s",
+    ),
+    _spec(
+        "zone_slice_sec", Kind.FLOAT, "Flight Zones",
+        "Length of one airtime grant. Shorter interleaves images and beacons "
+        "more finely at the cost of more radio mode switches; measure the "
+        "switch cost with tools/bench_lora.py before reducing it.",
+        apply=Apply.LIVE, minimum=0.25, maximum=60.0, unit="s", advanced=True,
     ),
 
     # === Debug ===
@@ -662,13 +810,22 @@ def validate_cross_field(values: Dict[str, Any]) -> List[str]:
     band_code = values.get("radio_hardware_band")
     if isinstance(band_code, str) and band_code:
         from common.meshtastic.regions import (
-            HARDWARE_BANDS,
-            get_region,
             frequency_for_channel,
+            get_region,
             regions_within_band,
+            resolve_hardware_band,
         )
 
-        band = HARDWARE_BANDS.get(band_code)
+        band = resolve_hardware_band(
+            band_code,
+            values.get("radio_band_min_mhz"),
+            values.get("radio_band_max_mhz"),
+        )
+        if band is None and band_code.upper() == "CUSTOM":
+            problems.append(
+                "radio_hardware_band is CUSTOM but radio_band_min_mhz / "
+                "radio_band_max_mhz do not describe a valid range."
+            )
         if band is not None:
             channel = values.get("meshtastic_channel_name") or "LongFast"
 

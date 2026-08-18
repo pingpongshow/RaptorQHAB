@@ -52,9 +52,15 @@ from airborne.packets import PacketScheduler, ImageTransmission
 from airborne.fountain import FountainEncoder
 from airborne.meshtastic_beacon import BeaconTelemetry, ChannelConfig, MeshtasticBeacon
 from airborne.region_manager import RegionManager
+from airborne.transmit_scheduler import (
+    Activity,
+    TransmitScheduler,
+    schedules_from_config,
+)
+from airborne.zone_manager import Zone, ZoneManager
 from common.meshtastic import frequency_for_channel, get_region
 from common.meshtastic.crypto import format_psk_fingerprint, parse_psk
-from common.meshtastic.regions import HARDWARE_BANDS
+from common.meshtastic.regions import HARDWARE_BANDS, resolve_hardware_band
 from common.radio_lora import get_preset
 from common.radio_manager import RadioModeManager
 
@@ -151,6 +157,10 @@ class RaptorHabAirborne:
         self._beacon: Optional[MeshtasticBeacon] = None
         self._last_beacon_time: float = 0.0
         self._last_region_code: Optional[str] = None
+
+        # Zone-aware airtime scheduling (Phase 4).
+        self._zone_manager: Optional[ZoneManager] = None
+        self._tx_scheduler: Optional[TransmitScheduler] = None
         
         # Image queue for transmission
         self._image_queue: Queue[ImageInfo] = Queue(maxsize=5)
@@ -295,20 +305,72 @@ class RaptorHabAirborne:
         else:
             self._logger.info("Meshtastic disabled by configuration")
 
+        if self.config.zone_scheduling_enabled:
+            self._initialize_zone_scheduling()
+        else:
+            self._logger.info(
+                "Zone scheduling disabled; images run continuously"
+            )
+
         self._logger.info("All components initialized successfully")
+
+    def _initialize_zone_scheduling(self) -> None:
+        """Set up flight zone tracking and the airtime allocator."""
+        self._logger.info("Initializing zone scheduling...")
+
+        self._zone_manager = ZoneManager(
+            launch_latitude=self.config.zone_launch_latitude,
+            launch_longitude=self.config.zone_launch_longitude,
+            radius_m=self.config.zone_radius_m,
+            hysteresis_m=self.config.zone_hysteresis_m,
+            altitude_override_m=self.config.zone_altitude_override_m,
+            landed_altitude_m=self.config.zone_landed_altitude_m,
+            landed_vertical_rate_mps=self.config.zone_landed_vertical_rate_mps,
+            landed_arm_altitude_m=self.config.zone_landed_arm_altitude_m,
+            landed_dwell_sec=(
+                self.config.zone_landed_dwell_sec
+                if self.config.zone_landed_enabled
+                # An unreachable dwell disables landing detection without
+                # needing a second code path for it.
+                else float("inf")
+            ),
+        )
+
+        self._tx_scheduler = TransmitScheduler(
+            schedules=schedules_from_config(self.config),
+            slice_sec=self.config.zone_slice_sec,
+        )
+        self._tx_scheduler.set_zone(self._zone_manager.zone)
+
+        if self._zone_manager.launch_point_known:
+            self._logger.info(
+                f"Launch point configured: "
+                f"{self.config.zone_launch_latitude:.5f}, "
+                f"{self.config.zone_launch_longitude:.5f}, "
+                f"radius {self.config.zone_radius_m / 1000:.1f} km"
+            )
+        else:
+            self._logger.info(
+                f"Launch point will be captured from the first 3D fix; "
+                f"radius {self.config.zone_radius_m / 1000:.1f} km"
+            )
 
     def _initialize_meshtastic(self) -> None:
         """Set up the Meshtastic beacon and region tracking."""
         self._logger.info("Initializing Meshtastic...")
 
         preset = get_preset(self.config.meshtastic_modem_preset)
-        hardware_band = HARDWARE_BANDS.get(self.config.radio_hardware_band)
+        hardware_band = resolve_hardware_band(
+            self.config.radio_hardware_band,
+            self.config.radio_band_min_mhz,
+            self.config.radio_band_max_mhz,
+        )
         if hardware_band is None:
             self._logger.error(
-                f"Unknown radio_hardware_band {self.config.radio_hardware_band!r}; "
-                f"assuming 915M (902-928 MHz)"
+                f"Cannot resolve radio_hardware_band "
+                f"{self.config.radio_hardware_band!r}; assuming HF (850-930 MHz)"
             )
-            hardware_band = HARDWARE_BANDS["915M"]
+            hardware_band = HARDWARE_BANDS["HF"]
 
         self._region_manager = RegionManager(
             home_region_code=self.config.meshtastic_region,
@@ -510,30 +572,35 @@ class RaptorHabAirborne:
                 if self._watchdog:
                     self._watchdog.pet()
                 
-                # Check if it's time for a new capture
                 now = time.time()
-                if now - last_capture_time >= self.config.capture_interval_sec:
+
+                # Keep the flight zone current before deciding what to do.
+                self._update_zone()
+
+                # Capture on interval, unless the zone says not to. A landed
+                # payload should be spending its remaining battery on beacons.
+                if self._capture_allowed() and (
+                    now - last_capture_time >= self.config.capture_interval_sec
+                ):
                     self._trigger_capture()
                     last_capture_time = now
-                
+
                 # Status logging (every 10 seconds)
                 if now - last_status_time >= 10.0:
-                    self._logger.info(f"TX status: {self._packets_sent} packets sent, {self._images_captured} images")
+                    self._log_status()
                     last_status_time = now
-                
-                # === TX CYCLE ===
-                self._set_state(State.TX_ACTIVE)
-                self._run_tx_cycle()
 
-                # === MESHTASTIC BEACON ===
-                # Between cycles, never inside one: a mode switch must not
-                # interrupt an image packet.
-                self._run_beacon_if_due()
+                if self._tx_scheduler is not None:
+                    self._run_scheduled_slice()
+                else:
+                    # Zone scheduling disabled: the original fixed duty cycle.
+                    self._set_state(State.TX_ACTIVE)
+                    self._run_tx_cycle()
+                    self._run_beacon_if_due()
 
-                # === PAUSE CYCLE (if configured) ===
-                if self.config.tx_pause_sec > 0:
-                    self._set_state(State.TX_PAUSED)
-                    self._run_pause_cycle()
+                    if self.config.tx_pause_sec > 0:
+                        self._set_state(State.TX_PAUSED)
+                        self._run_pause_cycle()
 
                 # A complete cycle without an exception clears the consecutive
                 # error run.
@@ -563,10 +630,108 @@ class RaptorHabAirborne:
                 # watchdog thread or spin the CPU.
                 time.sleep(min(1.0 * self._consecutive_errors, 5.0))
     
-    def _run_tx_cycle(self) -> None:
-        """Execute one TX cycle (transmit telemetry and images)."""
+    def _update_zone(self) -> None:
+        """Refresh the flight zone and point the scheduler at its budget."""
+        if self._zone_manager is None:
+            return
+
+        with self._gps_lock:
+            gps = self._current_gps
+
+        if gps is not None:
+            self._zone_manager.update(
+                latitude=gps.latitude,
+                longitude=gps.longitude,
+                altitude_m=gps.altitude,
+                fix_type=gps.fix_type,
+            )
+        else:
+            self._zone_manager.update(fix_type=0)
+
+        if self._tx_scheduler is not None:
+            self._tx_scheduler.set_zone(self._zone_manager.zone)
+
+    def _capture_allowed(self) -> bool:
+        """Whether image capture should be running in the current zone."""
+        if self._tx_scheduler is None:
+            return True
+        return self._tx_scheduler.capture_enabled
+
+    def _run_scheduled_slice(self) -> None:
+        """
+        Execute one grant of airtime.
+
+        The scheduler says what to do and roughly for how long; this runs it
+        and reports back the real duration, because a slice always finishes
+        the packet it started and so routinely overruns.
+        """
+        scheduler = self._tx_scheduler
+        grant = scheduler.next_slice()
+        started = time.monotonic()
+
+        try:
+            if grant.activity is Activity.IMAGES:
+                self._set_state(State.TX_ACTIVE)
+                self._run_tx_cycle(duration_sec=grant.duration_sec)
+
+            elif grant.activity is Activity.MESHTASTIC:
+                self._set_state(State.TX_ACTIVE)
+                self._run_beacon_cycle()
+                scheduler.record_beacon()
+
+            else:
+                self._set_state(State.TX_PAUSED)
+                self._run_pause_cycle(duration_sec=grant.duration_sec)
+
+        finally:
+            scheduler.record(grant.activity, time.monotonic() - started)
+
+    def _log_status(self) -> None:
+        """Periodic one-line summary of what the payload is doing."""
+        parts = [
+            f"{self._packets_sent} packets",
+            f"{self._images_captured} images",
+        ]
+
+        if self._zone_manager is not None:
+            state = self._zone_manager.state
+            distance = (
+                f"{state.distance_from_launch_m / 1000:.1f}km"
+                if state.distance_from_launch_m is not None
+                else "?"
+            )
+            altitude = (
+                f"{state.altitude_agl_m:.0f}m"
+                if state.altitude_agl_m is not None
+                else "?"
+            )
+            parts.append(f"zone={state.zone.value} ({distance}, {altitude} AGL)")
+
+        if self._tx_scheduler is not None:
+            fractions = self._tx_scheduler.stats.fractions()
+            parts.append(
+                f"airtime img/mesh/idle="
+                f"{fractions['images']:.0f}/{fractions['meshtastic']:.0f}/"
+                f"{fractions['idle']:.0f}%"
+            )
+
+        if self._region_manager is not None:
+            parts.append(f"region={self._region_manager.state.code}")
+
+        self._logger.info("Status: " + ", ".join(parts))
+
+    def _run_tx_cycle(self, duration_sec: Optional[float] = None) -> None:
+        """
+        Transmit telemetry and image data for a bounded period.
+
+        Args:
+            duration_sec: How long to transmit. Defaults to the fixed
+                tx_period_sec; the zone scheduler passes its slice length.
+        """
         cycle_start = time.time()
-        tx_duration = self.config.tx_period_sec
+        tx_duration = (
+            self.config.tx_period_sec if duration_sec is None else duration_sec
+        )
         
         self._logger.debug(f"Starting TX cycle ({tx_duration}s)")
         
@@ -600,10 +765,18 @@ class RaptorHabAirborne:
         
         self._logger.debug(f"TX cycle complete: {packets_this_cycle} packets sent")
     
-    def _run_pause_cycle(self) -> None:
-        """Execute pause cycle (radio idle)."""
-        pause_duration = self.config.tx_pause_sec
-        
+    def _run_pause_cycle(self, duration_sec: Optional[float] = None) -> None:
+        """
+        Hold the radio idle.
+
+        In cruise and landed zones this is where most of the wall clock goes,
+        and it is the whole point: an idle radio is what leaves enough battery
+        for the descent and for beaconing once the payload is down.
+        """
+        pause_duration = (
+            self.config.tx_pause_sec if duration_sec is None else duration_sec
+        )
+
         if pause_duration <= 0:
             return
         
@@ -653,6 +826,17 @@ class RaptorHabAirborne:
             return
 
         self._last_beacon_time = now
+        self._run_beacon_cycle()
+
+    def _run_beacon_cycle(self) -> None:
+        """
+        Send one Meshtastic beacon cycle unconditionally.
+
+        Called either by the fixed-interval path or by the zone scheduler,
+        which owns the cadence itself.
+        """
+        if not (self._beacon and self._radio_manager):
+            return
 
         # Refresh the region from the current fix before transmitting, so a
         # border crossing retunes the radio before the beacon rather than

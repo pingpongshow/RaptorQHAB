@@ -413,7 +413,7 @@ def test_secrets_are_redacted_on_request():
 
 def test_defaults_are_consistent_with_the_default_board():
     config = Config()
-    assert config.radio_hardware_band == "915M"
+    assert config.radio_hardware_band == "HF"
     assert validate_cross_field(config.to_dict()) == []
 
 
@@ -426,9 +426,35 @@ def test_home_region_outside_the_hardware_band_is_rejected():
     assert "433" in reason
 
 
+def test_a_custom_band_can_be_declared():
+    """For a front end that is not one of the stock Waveshare variants."""
+    config = Config()
+    result = config.apply_updates(
+        {
+            "radio_hardware_band": "CUSTOM",
+            "radio_band_min_mhz": 900.0,
+            "radio_band_max_mhz": 935.0,
+        }
+    )
+    assert result["ok"], result["rejected"]
+
+
+def test_a_custom_band_that_excludes_the_home_region_is_rejected():
+    config = Config()
+    result = config.apply_updates(
+        {
+            "radio_hardware_band": "CUSTOM",
+            "radio_band_min_mhz": 920.0,
+            "radio_band_max_mhz": 928.0,
+            "meshtastic_region": "US",
+        }
+    )
+    assert not result["ok"], "US LongFast at 906.875 is below a 920 MHz floor"
+
+
 def test_the_rejection_message_lists_reachable_regions():
     config = Config()
-    reason = config.apply_updates({"meshtastic_region": "EU_868"})["rejected"][
+    reason = config.apply_updates({"meshtastic_region": "EU_433"})["rejected"][
         "_cross_field"
     ]
     assert "Reachable regions" in reason
@@ -439,32 +465,32 @@ def test_changing_the_board_variant_changes_which_regions_are_valid():
     config = Config()
     result = config.apply_updates(
         {
-            "radio_hardware_band": "868M",
-            "meshtastic_region": "EU_868",
-            "radio_frequency_mhz": 868.0,
+            "radio_hardware_band": "LF",
+            "meshtastic_region": "CN",
+            "radio_frequency_mhz": 480.0,
         }
     )
     assert result["ok"], result["rejected"]
-    assert config.meshtastic_region == "EU_868"
+    assert config.meshtastic_region == "CN"
 
 
 def test_image_frequency_outside_the_hardware_band_is_rejected():
     """The RAPTOR downlink is bound by the same hardware limit."""
     config = Config()
     result = config.apply_updates({"radio_frequency_mhz": 903.0})
-    assert result["ok"], "903 MHz is inside the 915M band"
+    assert result["ok"], "903 MHz is inside the HF band"
 
     result = config.apply_updates(
-        {"radio_hardware_band": "868M", "meshtastic_region": "EU_868"}
+        {"radio_hardware_band": "LF", "meshtastic_region": "CN"}
     )
-    assert not result["ok"], "915 MHz image link is outside an 868M board"
+    assert not result["ok"], "a 903 MHz image link is outside an LF board"
 
 
 def test_a_433_board_accepts_the_433_regions():
     config = Config()
     result = config.apply_updates(
         {
-            "radio_hardware_band": "433M",
+            "radio_hardware_band": "LF",
             "meshtastic_region": "EU_433",
             "radio_frequency_mhz": 434.0,
         }
@@ -475,8 +501,8 @@ def test_a_433_board_accepts_the_433_regions():
 def test_hardware_band_appears_in_the_schema_with_labels():
     by_name = {p["name"]: p for p in Config().schema()["parameters"]}
     entry = by_name["radio_hardware_band"]
-    assert set(entry["choices"]) == {"915M", "868M", "490M", "433M"}
-    assert any("902-928" in label for label in entry["choice_labels"])
+    assert set(entry["choices"]) == {"HF", "LF", "CUSTOM"}
+    assert any("850-930" in label for label in entry["choice_labels"])
 
 
 def test_string_enums_accept_their_string_choices():
