@@ -22,7 +22,11 @@ from .images_tab import ImagesTab
 from .missions_tab import MissionsTab
 from .settings_dialogs import SettingsDialog
 from .payload_tab import PayloadConfigTab, PayloadConsoleTab
+from .mesh_tab import MeshtasticTab, PositionSourcesTab
 from ..core.payload_link import PayloadLink
+from ..core.meshtastic_manager import MeshtasticManager
+from ..core.meshtastic_mqtt import MeshtasticMQTTClient
+from ..core.position_fusion import PositionFusion
 
 
 class MainWindow(QMainWindow):
@@ -87,6 +91,14 @@ class MainWindow(QMainWindow):
         self.payload_link = PayloadLink()
         self.payload_config_tab = PayloadConfigTab(self.payload_link)
         self.payload_console_tab = PayloadConsoleTab(self.payload_link)
+
+        # Second and third receive paths, feeding one fusion.
+        self.mesh_manager = MeshtasticManager()
+        self.mqtt_client = MeshtasticMQTTClient()
+        self.fusion = PositionFusion()
+        self._wire_fusion()
+        self.mesh_tab = MeshtasticTab(self.mesh_manager, self.mqtt_client, self.fusion)
+        self.sources_tab = PositionSourcesTab(self.fusion)
         
         # Add tabs
         self.tabs.addTab(self.tracking_tab, "📍 Live Tracking")
@@ -95,6 +107,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.missions_tab, "📁 Missions")
         self.tabs.addTab(self.payload_config_tab, "🎛️ Payload Config")
         self.tabs.addTab(self.payload_console_tab, "⌨️ Console")
+        self.tabs.addTab(self.mesh_tab, "🕸️ Meshtastic")
+        self.tabs.addTab(self.sources_tab, "🛰️ Position Sources")
         
         layout.addWidget(self.tabs)
         
@@ -102,6 +116,28 @@ class MainWindow(QMainWindow):
         self.tracking_tab.start_requested.connect(self._start_receiving)
         self.tracking_tab.stop_requested.connect(self._stop_receiving)
     
+    def _wire_fusion(self):
+        """Point the Meshtastic node and MQTT at the shared fusion."""
+        def mesh_position(node_id, position):
+            self.fusion.submit_meshtastic(
+                position["latitude"], position["longitude"], position["altitude"],
+                detail=position.get("name") or "Meshtastic node",
+                timestamp=position.get("timestamp"),
+                satellites=position.get("satellites"),
+                rssi=position.get("rssi"), snr=position.get("snr"))
+
+        def mqtt_position(position):
+            self.fusion.submit_meshtastic(
+                position["latitude"], position["longitude"], position["altitude"],
+                detail=position.get("detail") or "MQTT gateway",
+                timestamp=position.get("timestamp"),
+                satellites=position.get("satellites"),
+                rssi=position.get("rssi"), snr=position.get("snr"),
+                via_mqtt=True)
+
+        self.mesh_manager.on_position = mesh_position
+        self.mqtt_client.on_position = mqtt_position
+
     def _setup_menubar(self):
         """Setup the menu bar."""
         menubar = self.menuBar()
