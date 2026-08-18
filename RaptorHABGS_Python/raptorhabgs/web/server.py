@@ -22,6 +22,7 @@ from ..core.prediction import LandingPredictionManager
 from ..core.mission_manager import MissionManager
 from ..core.config import get_config, save_config, get_data_directory
 from ..core.telemetry import TelemetryPoint
+from ..core.payload_link import PayloadLink, discover_payload_ports
 
 # Reduce Flask/Werkzeug logging noise
 log = logging.getLogger('werkzeug')
@@ -62,6 +63,11 @@ class WebServer:
         self.prediction_manager = LandingPredictionManager()
         self.mission_manager = MissionManager()
         self.config = get_config()
+
+        # USB link to the balloon: configuration and terminal.
+        # Deliberately separate from the RF ground station -- the
+        # payload accepts settings over USB only, never over radio.
+        self.payload = PayloadLink()
         
         # Apply config
         self.mission_manager.auto_record_enabled = self.config.auto_record
@@ -349,6 +355,99 @@ class WebServer:
             self._emit_recording_status()
             return jsonify({'status': 'stopped', 'folder': folder})
     
+
+        # ---- payload USB link: configuration and console -------------------
+
+        @self.app.route('/api/payload/ports')
+        def payload_ports():
+            return jsonify({"ports": [
+                {"device": p.device, "description": p.description,
+                 "confident": p.confident} for p in discover_payload_ports()
+            ], "connected": self.payload.connected, "port": self.payload.port})
+
+        @self.app.route('/api/payload/connect', methods=['POST'])
+        def payload_connect():
+            data = request.get_json(silent=True) or {}
+            device = data.get("port")
+            if not device:
+                found = discover_payload_ports()
+                if not found:
+                    return jsonify({"ok": False, "error": "no payload port found"}), 404
+                device = found[0].device
+            try:
+                identity = self.payload.connect(device)
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+            self.payload.on_console = self._emit_console
+            return jsonify({"ok": True, "port": device, "identity": identity})
+
+        @self.app.route('/api/payload/disconnect', methods=['POST'])
+        def payload_disconnect():
+            self.payload.disconnect()
+            return jsonify({"ok": True})
+
+        @self.app.route('/api/payload/schema')
+        def payload_schema():
+            try:
+                return jsonify({"ok": True, "schema": self.payload.get_schema()})
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+
+        @self.app.route('/api/payload/config', methods=['GET', 'POST'])
+        def payload_config():
+            try:
+                if request.method == 'GET':
+                    return jsonify({"ok": True, "config": self.payload.get_config()})
+                values = (request.get_json(silent=True) or {}).get("values", {})
+                if not values:
+                    return jsonify({"ok": False, "error": "no values supplied"}), 400
+                return jsonify({"ok": True, "result": self.payload.set_config(values)})
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+
+        @self.app.route('/api/payload/status')
+        def payload_status():
+            try:
+                return jsonify({"ok": True, "status": self.payload.get_status()})
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+
+        @self.app.route('/api/payload/logs')
+        def payload_logs():
+            try:
+                lines = int(request.args.get("lines", 100))
+                return jsonify({"ok": True, "logs": self.payload.get_logs(lines)})
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+
+        @self.app.route('/api/payload/restart', methods=['POST'])
+        def payload_restart():
+            try:
+                return jsonify({"ok": True, "result": self.payload.restart_service()})
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+
+        @self.app.route('/api/payload/images')
+        def payload_images():
+            try:
+                limit = int(request.args.get("limit", 50))
+                return jsonify({"ok": True, "result": self.payload.list_images(limit)})
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+
+        @self.app.route('/api/payload/psk', methods=['POST'])
+        def payload_psk():
+            try:
+                bits = int((request.get_json(silent=True) or {}).get("bits", 256))
+                return jsonify({"ok": True, "result": self.payload.generate_psk(bits)})
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+
+    def _emit_console(self, data: bytes):
+        """Forward payload terminal output to every connected browser."""
+        self.socketio.emit('console_output',
+                           {"data": data.decode("utf-8", "replace")})
+
     def _setup_socketio_events(self):
         """Setup SocketIO event handlers."""
         
@@ -376,6 +475,32 @@ class WebServer:
             
             self._emit_recording_status()
         
+
+        @self.socketio.on('console_start')
+        def on_console_start(data=None):
+            data = data or {}
+            try:
+                self.payload.shell_start(int(data.get("rows", 24)),
+                                         int(data.get("cols", 100)))
+                emit('console_status', {"running": True})
+            except Exception as exc:
+                emit('console_status', {"running": False, "error": str(exc)})
+
+        @self.socketio.on('console_input')
+        def on_console_input(data):
+            try:
+                self.payload.console_write((data or {}).get("data", "").encode())
+            except Exception as exc:
+                emit('console_status', {"running": False, "error": str(exc)})
+
+        @self.socketio.on('console_stop')
+        def on_console_stop(data=None):
+            try:
+                self.payload.shell_stop()
+            except Exception:
+                pass
+            emit('console_status', {"running": False})
+
         @self.socketio.on('disconnect')
         def handle_disconnect():
             print(f"[WebServer] Client disconnected")

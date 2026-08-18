@@ -444,6 +444,8 @@
         <button class="main-tab" onclick="switchMainTab('prediction')">🎯 Landing Prediction</button>
         <button class="main-tab" onclick="switchMainTab('images')">🖼️ Images</button>
         <button class="main-tab" onclick="switchMainTab('missions')">📁 Missions</button>
+        <button class="main-tab" onclick="switchMainTab('payload')">🎛️ Payload Config</button>
+        <button class="main-tab" onclick="switchMainTab('console')">⌨️ Console</button>
     </nav>
     
     <!-- Tracking Tab -->
@@ -637,8 +639,58 @@
     </div>
     
     <!-- Settings Modal -->
-    <div class="modal-overlay" id="settingsModal">
-        <div class="modal">
+    <!-- Payload Config Tab: schema-driven, the payload describes its own parameters -->
+    <div class="tab-page" id="page-payload">
+        <div class="payload-layout" style="padding:16px;">
+            <div class="panel" style="margin-bottom:12px;">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <select id="payloadPort" style="min-width:280px;"></select>
+                    <button class="btn" onclick="payloadRefreshPorts()">Refresh</button>
+                    <button class="btn btn-primary" id="payloadConnectBtn" onclick="payloadToggleConnect()">Connect</button>
+                    <span id="payloadIdentity" class="muted">Not connected</span>
+                </div>
+                <div id="payloadStatus" class="muted" style="margin-top:8px;"></div>
+            </div>
+
+            <div class="panel" style="margin-bottom:12px;">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <input type="text" id="payloadFilter" placeholder="Filter parameters..."
+                           oninput="payloadRenderConfig()" style="min-width:220px;">
+                    <label><input type="checkbox" id="payloadShowAdvanced" onchange="payloadRenderConfig()"> Show advanced</label>
+                    <button class="btn btn-primary" onclick="payloadApply()">Apply changes</button>
+                    <button class="btn" onclick="payloadLoadConfig()">Reload</button>
+                    <button class="btn" onclick="payloadRestart()">Restart payload service</button>
+                    <span id="payloadDirty" class="muted"></span>
+                </div>
+            </div>
+
+            <div id="payloadConfig" class="panel">
+                <p class="muted">Connect to the payload over USB to load its configuration.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Console Tab: a real terminal on the payload -->
+    <div class="tab-page" id="page-console">
+        <div style="padding:16px;">
+            <div class="panel" style="margin-bottom:12px;">
+                <button class="btn btn-primary" onclick="consoleStart()">Start shell</button>
+                <button class="btn" onclick="consoleStop()">Stop</button>
+                <button class="btn" onclick="consoleClear()">Clear</button>
+                <span id="consoleStatus" class="muted"></span>
+            </div>
+            <pre id="consoleOut" style="background:#111;color:#ddd;padding:12px;height:60vh;
+                 overflow:auto;font-family:ui-monospace,Menlo,monospace;font-size:12px;
+                 white-space:pre-wrap;border-radius:6px;"></pre>
+            <input type="text" id="consoleIn" placeholder="Type a command and press Enter"
+                   style="width:100%;margin-top:8px;padding:8px;font-family:ui-monospace,Menlo,monospace;"
+                   onkeydown="consoleKey(event)">
+        </div>
+    </div>
+
+        <div class="modal-overlay" id="settingsModal">
+        
+<div class="modal">
             <div class="modal-header">
                 <h2>Settings</h2>
                 <button class="modal-close" onclick="closeSettings()">&times;</button>
@@ -810,6 +862,36 @@
             
             socket.on('connect', () => console.log('WebSocket connected'));
             socket.on('disconnect', () => console.log('WebSocket disconnected'));
+
+        // The payload's shell is a real PTY, so its output carries ANSI control
+        // sequences. Rendering them literally fills the pane with things like
+        // "\u001b[?2004l"; stripping them is what makes the output readable.
+        function stripAnsi(text) {
+            return text
+                .replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, '')   // CSI sequences
+                .replace(/\u001b\][^\u0007]*\u0007/g, '')  // OSC (window title)
+                .replace(/\r\n/g, '\n')
+                .replace(/\r/g, '');
+        }
+
+        socket.on('console_output', (msg) => {
+            const out = document.getElementById('consoleOut');
+            if (!out) return;
+            out.textContent += stripAnsi(msg.data);
+            // Keep the buffer bounded; a chatty payload should not grow the DOM
+            // without limit over a long flight.
+            if (out.textContent.length > 200000) {
+                out.textContent = out.textContent.slice(-150000);
+            }
+            out.scrollTop = out.scrollHeight;
+        });
+
+        socket.on('console_status', (msg) => {
+            const el = document.getElementById('consoleStatus');
+            if (!el) return;
+            el.textContent = msg.error ? ('error: ' + msg.error)
+                                       : (msg.running ? 'shell running' : 'shell stopped');
+        });
             
             socket.on('telemetry', (data) => {
                 latestTelemetry = data;
@@ -1263,12 +1345,229 @@
         }
         
         // ==================== Tab Navigation ====================
+
+        // ================= Payload USB link: config + console =================
+        // The payload sends its own parameter schema, so this form is built from
+        // whatever the balloon actually supports rather than a hardcoded list.
+        // The two cannot drift apart as the payload gains parameters.
+        let payloadSchema = null;
+        let payloadValues = {};
+        let payloadEdits = {};
+        let payloadConnected = false;
+
+        async function payloadRefreshPorts() {
+            const r = await fetch('/api/payload/ports').then(r => r.json());
+            const sel = document.getElementById('payloadPort');
+            sel.innerHTML = '';
+            r.ports.forEach(p => {
+                const o = document.createElement('option');
+                o.value = p.device;
+                o.textContent = p.device + ' — ' + p.description + (p.confident ? '' : ' (unidentified)');
+                sel.appendChild(o);
+            });
+            if (!r.ports.length) {
+                const o = document.createElement('option');
+                o.textContent = 'No payload found';
+                sel.appendChild(o);
+            }
+            payloadSetConnected(r.connected, r.port);
+        }
+
+        function payloadSetConnected(connected, port) {
+            payloadConnected = connected;
+            document.getElementById('payloadConnectBtn').textContent =
+                connected ? 'Disconnect' : 'Connect';
+            if (!connected) {
+                document.getElementById('payloadIdentity').textContent = 'Not connected';
+            }
+        }
+
+        async function payloadToggleConnect() {
+            if (payloadConnected) {
+                await fetch('/api/payload/disconnect', {method: 'POST'});
+                payloadSetConnected(false);
+                document.getElementById('payloadConfig').innerHTML =
+                    '<p class="muted">Disconnected.</p>';
+                return;
+            }
+            const port = document.getElementById('payloadPort').value;
+            const r = await fetch('/api/payload/connect', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({port})
+            }).then(r => r.json());
+            if (!r.ok) { alert('Connect failed: ' + r.error); return; }
+            const id = r.identity;
+            document.getElementById('payloadIdentity').textContent =
+                `${id.callsign} (payload ${id.payload_id}) on ${id.hostname}`;
+            payloadSetConnected(true, r.port);
+            await payloadLoadSchema();
+            await payloadLoadConfig();
+            payloadLoadStatus();
+        }
+
+        async function payloadLoadStatus() {
+            const r = await fetch('/api/payload/status').then(r => r.json());
+            if (!r.ok) return;
+            const st = r.status;
+            document.getElementById('payloadStatus').textContent =
+                `service ${st.service.active}/${st.service.sub} · uptime ${Math.round(st.system.uptime_sec/60)} min · ` +
+                `CPU ${st.system.cpu_temp_c.toFixed(1)}°C · ${st.storage.image_count} images · ` +
+                `${(st.storage.free_bytes/1e9).toFixed(1)} GB free`;
+        }
+
+        async function payloadLoadSchema() {
+            const r = await fetch('/api/payload/schema').then(r => r.json());
+            if (!r.ok) { alert('Schema failed: ' + r.error); return; }
+            payloadSchema = r.schema;
+        }
+
+        async function payloadLoadConfig() {
+            const r = await fetch('/api/payload/config').then(r => r.json());
+            if (!r.ok) { alert('Config failed: ' + r.error); return; }
+            payloadValues = r.config.values || {};
+            payloadEdits = {};
+            payloadRenderConfig();
+            payloadUpdateDirty();
+        }
+
+        function payloadFieldId(name) { return 'pf_' + name; }
+
+        function payloadRenderConfig() {
+            if (!payloadSchema) return;
+            const filter = (document.getElementById('payloadFilter').value || '').toLowerCase();
+            const advanced = document.getElementById('payloadShowAdvanced').checked;
+            const byCat = {};
+            payloadSchema.parameters.forEach(p => {
+                if (p.advanced && !advanced) return;
+                if (filter && !(p.name.toLowerCase().includes(filter) ||
+                                (p.description || '').toLowerCase().includes(filter))) return;
+                (byCat[p.category] = byCat[p.category] || []).push(p);
+            });
+
+            let html = '';
+            payloadSchema.categories.forEach(cat => {
+                const params = byCat[cat];
+                if (!params || !params.length) return;
+                html += `<h3 style="margin:16px 0 8px;">${cat}</h3>`;
+                html += '<table style="width:100%;border-collapse:collapse;">';
+                params.forEach(p => {
+                    const val = payloadEdits.hasOwnProperty(p.name)
+                        ? payloadEdits[p.name] : payloadValues[p.name];
+                    html += '<tr style="border-bottom:1px solid #2a2a2a;">';
+                    html += `<td style="padding:6px 8px;width:260px;vertical-align:top;">
+                               <div><code>${p.name}</code></div>
+                               <div class="muted" style="font-size:11px;">${p.description || ''}</div>
+                             </td>`;
+                    html += '<td style="padding:6px 8px;vertical-align:top;">' +
+                            payloadFieldHtml(p, val) +
+                            (p.unit ? ` <span class="muted">${p.unit}</span>` : '') +
+                            (p.apply === 'restart'
+                                ? ' <span class="muted" title="takes effect after a restart">⟳</span>' : '') +
+                            '</td>';
+                    html += '</tr>';
+                });
+                html += '</table>';
+            });
+            document.getElementById('payloadConfig').innerHTML =
+                html || '<p class="muted">No parameters match.</p>';
+        }
+
+        function payloadFieldHtml(p, val) {
+            const id = payloadFieldId(p.name);
+            const onchange = `onchange="payloadEdit('${p.name}', this)"`;
+            if (p.secret) {
+                return `<input type="password" id="${id}" placeholder="unchanged" ${onchange}>`;
+            }
+            if (p.kind === 'bool') {
+                return `<input type="checkbox" id="${id}" ${val ? 'checked' : ''} ${onchange}>`;
+            }
+            if (p.kind === 'enum') {
+                const opts = (p.choices || []).map(c =>
+                    `<option value="${c}" ${String(c) === String(val) ? 'selected' : ''}>${c}</option>`).join('');
+                return `<select id="${id}" ${onchange}>${opts}</select>`;
+            }
+            if (p.kind === 'resolution') {
+                const v = Array.isArray(val) ? val.join('x') : (val || '');
+                return `<input type="text" id="${id}" value="${v}" placeholder="1280x960" ${onchange}>`;
+            }
+            const min = (p.minimum !== undefined && p.minimum !== null) ? `min="${p.minimum}"` : '';
+            const max = (p.maximum !== undefined && p.maximum !== null) ? `max="${p.maximum}"` : '';
+            const step = p.kind === 'float' ? 'step="any"' : '';
+            const type = (p.kind === 'int' || p.kind === 'float') ? 'number' : 'text';
+            return `<input type="${type}" id="${id}" value="${val === undefined || val === null ? '' : val}" ${min} ${max} ${step} ${onchange}>`;
+        }
+
+        function payloadEdit(name, el) {
+            const p = payloadSchema.parameters.find(x => x.name === name);
+            let v;
+            if (p.kind === 'bool') v = el.checked;
+            else if (p.kind === 'int') v = parseInt(el.value, 10);
+            else if (p.kind === 'float') v = parseFloat(el.value);
+            else if (p.kind === 'resolution') {
+                const m = /^(\d+)\s*[xX]\s*(\d+)$/.exec(el.value.trim());
+                v = m ? [parseInt(m[1], 10), parseInt(m[2], 10)] : el.value;
+            } else v = el.value;
+
+            // A secret left blank means "leave it alone", not "set it to empty".
+            if (p.secret && el.value === '') { delete payloadEdits[name]; payloadUpdateDirty(); return; }
+            payloadEdits[name] = v;
+            payloadUpdateDirty();
+        }
+
+        function payloadUpdateDirty() {
+            const n = Object.keys(payloadEdits).length;
+            document.getElementById('payloadDirty').textContent =
+                n ? `${n} unsaved change${n === 1 ? '' : 's'}` : '';
+        }
+
+        async function payloadApply() {
+            const n = Object.keys(payloadEdits).length;
+            if (!n) { alert('No changes to apply.'); return; }
+            const r = await fetch('/api/payload/config', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({values: payloadEdits})
+            }).then(r => r.json());
+            if (!r.ok) { alert('Apply failed: ' + r.error); return; }
+            const res = r.result;
+            let msg = `Applied ${(res.applied || []).length} parameter(s).`;
+            const rejected = res.rejected || {};
+            if (Object.keys(rejected).length) {
+                msg += '\nRejected:\n' + Object.entries(rejected)
+                    .map(([k, v]) => `  ${k}: ${v}`).join('\n');
+            }
+            if ((res.restart_required || []).length) {
+                msg += '\nRestart required for: ' + res.restart_required.join(', ');
+            }
+            alert(msg);
+            await payloadLoadConfig();
+        }
+
+        async function payloadRestart() {
+            if (!confirm('Restart the payload service? The downlink stops briefly.')) return;
+            const r = await fetch('/api/payload/restart', {method: 'POST'}).then(r => r.json());
+            alert(r.ok ? 'Payload service restarted.' : 'Restart failed: ' + r.error);
+            setTimeout(payloadLoadStatus, 3000);
+        }
+
+        // ---- console ----
+        function consoleStart() {
+            socket.emit('console_start', {rows: 30, cols: 120});
+        }
+        function consoleStop() { socket.emit('console_stop', {}); }
+        function consoleClear() { document.getElementById('consoleOut').textContent = ''; }
+        function consoleKey(e) {
+            if (e.key !== 'Enter') return;
+            socket.emit('console_input', {data: e.target.value + '\n'});
+            e.target.value = '';
+        }
+
         function switchMainTab(tab) {
             document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
             
             event.target.classList.add('active');
             document.getElementById('page-' + tab).classList.add('active');
+            if (tab === 'payload') { payloadRefreshPorts(); }
             
             // Resize maps when tab becomes visible
             setTimeout(() => {
