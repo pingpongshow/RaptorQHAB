@@ -52,6 +52,7 @@ from airborne.packets import PacketScheduler, ImageTransmission
 from airborne.fountain import FountainEncoder
 from airborne.meshtastic_beacon import BeaconTelemetry, ChannelConfig, MeshtasticBeacon
 from airborne.region_manager import RegionManager
+from airborne.repeater import MeshtasticRepeater
 from airborne.transmit_scheduler import (
     Activity,
     TransmitScheduler,
@@ -161,6 +162,9 @@ class RaptorHabAirborne:
         # Zone-aware airtime scheduling (Phase 4).
         self._zone_manager: Optional[ZoneManager] = None
         self._tx_scheduler: Optional[TransmitScheduler] = None
+
+        # Selective repeating and uplink commands (Phase 5).
+        self._repeater: Optional[MeshtasticRepeater] = None
         
         # Image queue for transmission
         self._image_queue: Queue[ImageInfo] = Queue(maxsize=5)
@@ -447,6 +451,34 @@ class RaptorHabAirborne:
             nodeinfo_every=self.config.meshtastic_nodeinfo_every,
         )
 
+        if self.config.repeater_enabled:
+            self._repeater = MeshtasticRepeater(
+                node_id=self._beacon.node_id,
+                primary_channel=primary,
+                private_channel=private,
+                tag=self.config.repeater_tag,
+                hop_limit=self.config.meshtastic_hop_limit,
+                max_per_hour=self.config.repeater_max_per_hour,
+                min_spacing_sec=self.config.repeater_min_spacing_sec,
+                enabled=True,
+                commands_enabled=(
+                    self.config.uplink_commands_enabled and private is not None
+                ),
+                command_handlers=self._build_command_handlers(),
+            )
+            self._logger.info(
+                f"Repeater enabled: tag {self.config.repeater_tag!r}, "
+                f"max {self.config.repeater_max_per_hour}/hour, "
+                f"uplink commands "
+                f"{'on' if self._repeater.commands_enabled else 'off'}"
+            )
+            if self.config.uplink_commands_enabled and private is None:
+                self._logger.error(
+                    "Uplink commands are enabled but no private channel is "
+                    "configured; commands are refused. Anyone can transmit on "
+                    "the public channel, so it is never accepted for commands."
+                )
+
         if self.config.meshtastic_hop_limit > 0:
             self._logger.warning(
                 f"hop_limit is {self.config.meshtastic_hop_limit}, not 0. From "
@@ -455,6 +487,103 @@ class RaptorHabAirborne:
             )
 
         self._apply_region_to_radio(force=True)
+
+    def _build_command_handlers(self):
+        """
+        The uplink command allowlist.
+
+        Deliberately short, and deliberately excludes anything that could put
+        the balloon off the air. There is no command to stop transmitting, to
+        change frequency, or to reboot: a radio link is exactly the wrong
+        place to expose controls whose failure mode is silence.
+        """
+        def status(_args):
+            zone = self._zone_manager.zone.value if self._zone_manager else "?"
+            region = self._region_manager.state.code if self._region_manager else "?"
+            with self._gps_lock:
+                gps = self._current_gps
+            altitude = f"{gps.altitude:.0f}m" if gps else "?"
+            return (f"{self.config.callsign} zone={zone} region={region} "
+                    f"alt={altitude} pkts={self._packets_sent}")
+
+        def position(_args):
+            with self._gps_lock:
+                gps = self._current_gps
+            if not gps or gps.fix_type < 2:
+                return "no GPS fix"
+            return (f"{gps.latitude:.5f},{gps.longitude:.5f} "
+                    f"{gps.altitude:.0f}m sats={gps.satellites}")
+
+        def ping(_args):
+            return f"{self.config.callsign} pong"
+
+        def beacon(args):
+            """Change the broadcast message, so a recovery crew can be told."""
+            text = " ".join(args)[:120]
+            result = self.config.apply_updates({"meshtastic_beacon_text": text})
+            if not result["ok"]:
+                return "rejected"
+            if self._beacon:
+                self._beacon.beacon_text = text
+            return f"beacon text set ({len(text)} chars)"
+
+        def capture(_args):
+            if not self._capture_allowed():
+                return "capture disabled in this zone"
+            self._trigger_capture()
+            return f"capture triggered ({self._images_captured} total)"
+
+        return {
+            "status": status,
+            "pos": position,
+            "position": position,
+            "ping": ping,
+            "beacon": beacon,
+            "capture": capture,
+        }
+
+    def _run_listen_window(self, duration_sec: float) -> None:
+        """
+        Listen for LoRa, and act on anything addressed to us.
+
+        The radio cannot hear LoRa while transmitting images, so this window
+        is genuinely exclusive -- it is charged to the listen budget precisely
+        so that cost is visible rather than hidden.
+        """
+        if not (self._repeater and self._radio_manager):
+            return
+        if not (self._region_manager and self._region_manager.may_transmit):
+            return
+
+        try:
+            received = self._radio_manager.receive_lora_window(duration_sec)
+        except Exception as e:
+            self._logger.error(f"Listen window failed: {e}")
+            return
+        finally:
+            self._radio_manager.ensure_gfsk()
+
+        in_cruise = self._zone_manager is None or self._zone_manager.zone is Zone.CRUISE
+
+        for raw, rssi, snr in received:
+            packet = self._repeater.decode(raw, rssi=rssi, snr=snr)
+            self._repeater.note_heard(packet is not None)
+            if packet is None:
+                continue
+
+            reply = self._repeater.handle_command(packet)
+            if reply is not None:
+                self._radio_manager.transmit_lora(reply)
+                self._radio_manager.ensure_gfsk()
+                continue
+
+            allowed, reason = self._repeater.should_repeat(packet, in_cruise=in_cruise)
+            if not allowed:
+                self._repeater.stats.drop(reason)
+                continue
+
+            self._radio_manager.transmit_lora(self._repeater.build_repeat(packet))
+            self._radio_manager.ensure_gfsk()
 
     def _apply_region_to_radio(self, force: bool = False) -> None:
         """
@@ -694,6 +823,12 @@ class RaptorHabAirborne:
                 self._run_beacon_cycle()
                 scheduler.record_beacon()
 
+            elif grant.activity is Activity.LISTEN:
+                self._set_state(State.TX_PAUSED)
+                self._run_listen_window(
+                    min(grant.duration_sec, self.config.repeater_rx_window_sec)
+                )
+
             else:
                 self._set_state(State.TX_PAUSED)
                 self._run_pause_cycle(duration_sec=grant.duration_sec)
@@ -732,6 +867,10 @@ class RaptorHabAirborne:
 
         if self._region_manager is not None:
             parts.append(f"region={self._region_manager.state.code}")
+
+        if self._repeater is not None:
+            stats = self._repeater.stats
+            parts.append(f"mesh heard={stats.heard} repeated={stats.repeated}")
 
         self._logger.info("Status: " + ", ".join(parts))
 

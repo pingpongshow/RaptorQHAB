@@ -283,27 +283,49 @@ software.
 
 ---
 
-## Phase 5 — Balloon as a tagged repeater + Meshtastic uplink
+## Phase 5 — Tagged repeater + Meshtastic uplink ✅ COMPLETE
 
-*Branch `phase-5-repeater`. Depends on A6 being resolved — RX must be proven
-on hardware first.*
+*Branch `phase-5-repeater`. Unblocked by the RX validation on 2026-08-18.*
 
-1. LoRa RX dwell windows, scheduled only in CRUISE mode.
-2. **Tagged-repeat gate:** only rebroadcast a packet if it carries an explicit
-   marker. Proposed: addressed to the balloon's node id **or** a text payload
-   with a configurable prefix (default `!RPT `). Never blanket-repeat.
-3. Repeat guard rails, all configurable: dedupe cache of recently-seen
-   `packet_id`s, max repeats/hour, minimum spacing, and **`hop_limit = 0` on
-   the balloon's own broadcasts** (confirmed), so nothing the balloon
-   originates is rebroadcast onward by the thousands of nodes within its
-   ~400-mile footprint.
-4. Uplink command handling — messages addressed to the balloon on the private
-   channel can trigger a small, explicit allowlist of commands. Decide whether
-   to reuse `airborne/commands.py` (B4) or retire it.
-5. Repeater statistics in telemetry and in the USB config UI.
+1. ✅ LoRa receive windows, scheduled only in **cruise**. Near the pad
+   listening competes with imagery for no benefit; on the ground the battery
+   is better spent beaconing. The listen budget comes out of the idle share,
+   so it costs battery rather than pictures, and is charged to its own
+   accounting line so the cost is visible.
+2. ✅ **Tagged-repeat gate.** A packet is repeated only if it is addressed to
+   the balloon's node id, or its text begins with the configured tag
+   (`!RPT ` by default). Everything else is counted and dropped.
+3. ✅ Guard rails: a bounded, age-expiring dedupe cache of recently repeated
+   packet ids; a hard hourly ceiling; a minimum gap between rebroadcasts; and
+   **hop limit 0** on every rebroadcast.
+4. ✅ **Uplink commands** on the private channel only, from a short allowlist
+   (`status`, `pos`, `ping`, `beacon`, `capture`). Nothing on the public
+   channel can command the balloon, whatever it says — anyone can transmit
+   there. Configuration rejects `uplink_commands_enabled` without a private
+   channel and a real key.
+5. ✅ Repeater statistics in the periodic status line and in `get_status`,
+   including a breakdown of *why* packets were dropped.
 
-**Exit:** a tagged message from a handheld is repeated; an untagged one on the
-same channel is provably ignored.
+Deliberately excluded from the allowlist: anything that could put the balloon
+off the air. No stop, no frequency change, no reboot. A radio link is the
+wrong place to expose controls whose failure mode is silence.
+
+**Hardware validated 2026-08-18** against the Heltec acting as a ground node:
+
+| Sent | Result |
+|---|---|
+| Untagged broadcast | dropped, `not_tagged` |
+| `!RPT …` broadcast | **repeated**, hop limit 0, tag stripped |
+| Duplicate delivery of the same packet | dropped, `already_seen` |
+| A real third-party node's telemetry | dropped, `not_tagged` |
+| `!status` to the balloon on the **public** channel ×4 | **`commands_run: 0`** |
+| `!status` to the balloon on the **private** channel | replied |
+
+The bench run found one defect: a command addressed to the balloon was being
+*repeated*, putting somebody's command text on the air for the whole mesh —
+including commands refused for arriving on a public channel. A direct message
+that looks like a command is now treated as a command attempt rather than a
+relay request.
 
 ---
 

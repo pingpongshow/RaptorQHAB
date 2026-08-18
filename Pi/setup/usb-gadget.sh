@@ -15,6 +15,22 @@ set -euo pipefail
 
 GADGET_DIR="/sys/kernel/config/usb_gadget/raptorhab"
 
+# CDC-ECM adds a point-to-point network link over the same cable. Off by
+# default and deliberately so: an ethernet gadget creates an interface that
+# systemd-networkd-wait-online will block on, adding tens of seconds to every
+# boot when nothing is plugged in -- a bad trade on a battery-powered payload.
+#
+# It is invaluable on the bench though, and it is the only way in when the Pi
+# and the workstation land on Wi-Fi bands that cannot see each other. Enable
+# with RAPTORHAB_USB_ETHERNET=1, which the installer sets via a drop-in.
+USB_ETHERNET="${RAPTORHAB_USB_ETHERNET:-0}"
+
+# Locally-administered MAC addresses, stable so the host does not invent a new
+# interface on every reconnect.
+ECM_HOST_MAC="02:1a:11:00:00:01"
+ECM_SELF_MAC="02:1a:11:00:00:02"
+ECM_ADDRESS="10.55.0.1/24"
+
 # 0x1d6b/0x0104 is the Linux Foundation's multifunction composite gadget ID.
 # It is the correct choice for a device without its own USB-IF vendor ID:
 # honest about what it is, and stable enough for the host to match on.
@@ -57,6 +73,14 @@ start)
     mkdir -p functions/acm.usb0
     ln -s functions/acm.usb0 configs/c.1/
 
+    if [[ "$USB_ETHERNET" == "1" ]]; then
+        mkdir -p functions/ecm.usb0
+        echo "$ECM_HOST_MAC" > functions/ecm.usb0/host_addr
+        echo "$ECM_SELF_MAC" > functions/ecm.usb0/dev_addr
+        ln -s functions/ecm.usb0 configs/c.1/
+        echo "CDC-ECM enabled"
+    fi
+
     # Binding to the UDC is what actually presents the device to the host.
     UDC="$(ls /sys/class/udc | head -1)"
     if [[ -z "$UDC" ]]; then
@@ -64,6 +88,24 @@ start)
         exit 1
     fi
     echo "$UDC" > UDC
+
+    if [[ "$USB_ETHERNET" == "1" ]]; then
+        # Give the link a static address. DHCP would need a server aboard the
+        # payload, which is more moving parts than a two-host cable warrants.
+        for _ in $(seq 20); do
+            iface=$(ls /sys/class/net | grep -E '^usb[0-9]+$' | head -1 || true)
+            [[ -n "$iface" ]] && break
+            sleep 0.25
+        done
+        if [[ -n "${iface:-}" ]]; then
+            ip addr flush dev "$iface" 2>/dev/null || true
+            ip addr add "$ECM_ADDRESS" dev "$iface"
+            ip link set "$iface" up
+            echo "USB ethernet up on $iface at $ECM_ADDRESS"
+        else
+            echo "warning: CDC-ECM requested but no usb* interface appeared" >&2
+        fi
+    fi
 
     echo "USB gadget up on $UDC as /dev/ttyGS0"
     ;;
@@ -76,9 +118,11 @@ stop)
     echo "" > UDC 2>/dev/null || true
 
     rm -f configs/c.1/acm.usb0
+    rm -f configs/c.1/ecm.usb0
     rmdir configs/c.1/strings/0x409 2>/dev/null || true
     rmdir configs/c.1 2>/dev/null || true
     rmdir functions/acm.usb0 2>/dev/null || true
+    rmdir functions/ecm.usb0 2>/dev/null || true
     rmdir strings/0x409 2>/dev/null || true
     cd /
     rmdir "$GADGET_DIR" 2>/dev/null || true

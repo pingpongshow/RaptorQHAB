@@ -9,6 +9,7 @@
 #   sudo ./install.sh --usb-gadget     # ...and enable the USB serial console
 #   sudo ./install.sh --check          # verify an existing install, change nothing
 #   sudo ./install.sh --camera imx219  # name the camera when auto-detect fails
+#   sudo ./install.sh --usb-ethernet   # ...and a network link over the same cable
 #
 # See docs/INSTALL.md for the whole story, including what needs a reboot.
 
@@ -25,6 +26,7 @@ ENABLE_USB_GADGET=0
 CHECK_ONLY=0
 NEEDS_REBOOT=0
 CAMERA_OVERLAY=""
+ENABLE_USB_ETHERNET=0
 
 # --------------------------------------------------------------------------
 
@@ -47,6 +49,7 @@ while [[ $# -gt 0 ]]; do
         --usb-gadget) ENABLE_USB_GADGET=1 ;;
         --check)      CHECK_ONLY=1 ;;
         --camera)     CAMERA_OVERLAY="${2:?--camera needs a sensor name}"; shift ;;
+        --usb-ethernet) ENABLE_USB_ETHERNET=1; ENABLE_USB_GADGET=1 ;;
         --camera=*)   CAMERA_OVERLAY="${1#*=}" ;;
         -h|--help)    usage ;;
         *)            die "unknown option: $1 (try --help)" ;;
@@ -372,6 +375,17 @@ if [[ $ENABLE_USB_GADGET -eq 1 ]]; then
     fi
 
     install -m 0755 "$CODE_DIR/setup/usb-gadget.sh" /usr/local/sbin/raptorhab-usb-gadget
+
+    # A drop-in rather than editing the unit, so re-running the installer does
+    # not silently turn the network link on or off behind the operator.
+    if [[ $ENABLE_USB_ETHERNET -eq 1 ]]; then
+        install -d /etc/systemd/system/raptorhab-usb-gadget.service.d
+        printf '[Service]\nEnvironment=RAPTORHAB_USB_ETHERNET=1\n' \
+            > /etc/systemd/system/raptorhab-usb-gadget.service.d/ethernet.conf
+        ok "USB ethernet enabled (payload will be 10.55.0.1)"
+    else
+        rm -f /etc/systemd/system/raptorhab-usb-gadget.service.d/ethernet.conf
+    fi
     install -m 0644 "$CODE_DIR/setup/raptorhab-usb-gadget.service" \
         /etc/systemd/system/raptorhab-usb-gadget.service
     systemctl daemon-reload

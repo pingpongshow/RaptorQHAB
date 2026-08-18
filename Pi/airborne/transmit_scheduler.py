@@ -40,6 +40,7 @@ class Activity(str, Enum):
 
     IMAGES = "images"
     MESHTASTIC = "meshtastic"
+    LISTEN = "listen"
     IDLE = "idle"
 
 
@@ -51,21 +52,23 @@ class ZoneSchedule:
     mesh_percent: float
     beacon_interval_sec: float
     capture_enabled: bool = True
+    listen_percent: float = 0.0
 
     def __post_init__(self):
-        if self.image_percent < 0 or self.mesh_percent < 0:
+        if min(self.image_percent, self.mesh_percent, self.listen_percent) < 0:
             raise ValueError("percentages cannot be negative")
-        if self.image_percent + self.mesh_percent > 100.0:
+        total = self.image_percent + self.mesh_percent + self.listen_percent
+        if total > 100.0:
             raise ValueError(
-                f"image {self.image_percent}% + mesh {self.mesh_percent}% "
-                f"exceeds 100% of airtime"
+                f"image {self.image_percent}% + mesh {self.mesh_percent}% + "
+                f"listen {self.listen_percent}% exceeds 100% of airtime"
             )
         if self.beacon_interval_sec <= 0:
             raise ValueError("beacon interval must be positive")
 
     @property
     def idle_percent(self) -> float:
-        return 100.0 - self.image_percent - self.mesh_percent
+        return 100.0 - self.image_percent - self.mesh_percent - self.listen_percent
 
 
 DEFAULT_SCHEDULES: Dict[Zone, ZoneSchedule] = {
@@ -93,21 +96,23 @@ class SchedulerStats:
 
     image_sec: float = 0.0
     mesh_sec: float = 0.0
+    listen_sec: float = 0.0
     idle_sec: float = 0.0
     beacons_due: int = 0
     beacons_forced: int = 0
 
     @property
     def total_sec(self) -> float:
-        return self.image_sec + self.mesh_sec + self.idle_sec
+        return self.image_sec + self.mesh_sec + self.listen_sec + self.idle_sec
 
     def fractions(self) -> Dict[str, float]:
         total = self.total_sec
         if total <= 0:
-            return {"images": 0.0, "meshtastic": 0.0, "idle": 0.0}
+            return {"images": 0.0, "meshtastic": 0.0, "listen": 0.0, "idle": 0.0}
         return {
             "images": 100.0 * self.image_sec / total,
             "meshtastic": 100.0 * self.mesh_sec / total,
+            "listen": 100.0 * self.listen_sec / total,
             "idle": 100.0 * self.idle_sec / total,
         }
 
@@ -247,6 +252,7 @@ class TransmitScheduler:
 
         self._debt[Activity.IMAGES] += elapsed * schedule.image_percent / 100.0
         self._debt[Activity.MESHTASTIC] += elapsed * schedule.mesh_percent / 100.0
+        self._debt[Activity.LISTEN] += elapsed * schedule.listen_percent / 100.0
         self._debt[Activity.IDLE] += elapsed * schedule.idle_percent / 100.0
 
     def _most_indebted(self, schedule: ZoneSchedule) -> Activity:
@@ -259,6 +265,7 @@ class TransmitScheduler:
         budgets = {
             Activity.IMAGES: schedule.image_percent,
             Activity.MESHTASTIC: schedule.mesh_percent,
+            Activity.LISTEN: schedule.listen_percent,
             Activity.IDLE: schedule.idle_percent,
         }
         eligible = [a for a in Activity if budgets[a] > 0]
@@ -293,6 +300,8 @@ class TransmitScheduler:
             self.stats.image_sec += actual_sec
         elif activity is Activity.MESHTASTIC:
             self.stats.mesh_sec += actual_sec
+        elif activity is Activity.LISTEN:
+            self.stats.listen_sec += actual_sec
         else:
             self.stats.idle_sec += actual_sec
 
@@ -317,6 +326,8 @@ class TransmitScheduler:
             "zone": self._zone.value,
             "target_image_percent": schedule.image_percent,
             "target_mesh_percent": schedule.mesh_percent,
+            "target_listen_percent": schedule.listen_percent,
+            "actual_listen_percent": round(fractions["listen"], 1),
             "target_idle_percent": schedule.idle_percent,
             "actual_image_percent": round(fractions["images"], 1),
             "actual_mesh_percent": round(fractions["meshtastic"], 1),
@@ -338,13 +349,15 @@ def schedules_from_config(config) -> Dict[Zone, ZoneSchedule]:
     log line, rather than raising: a bad percentage in the config file must
     not stop the payload from flying.
     """
-    def build(zone: Zone, image_pct, mesh_pct, interval, capture=True) -> ZoneSchedule:
+    def build(zone: Zone, image_pct, mesh_pct, interval, capture=True,
+              listen=0.0) -> ZoneSchedule:
         try:
             return ZoneSchedule(
                 image_percent=float(image_pct),
                 mesh_percent=float(mesh_pct),
                 beacon_interval_sec=float(interval),
                 capture_enabled=capture,
+                listen_percent=float(listen),
             )
         except ValueError as e:
             logger.error(
@@ -364,6 +377,7 @@ def schedules_from_config(config) -> Dict[Zone, ZoneSchedule]:
         config.zone_cruise_image_percent,
         config.zone_cruise_mesh_percent,
         config.zone_cruise_beacon_interval_sec,
+        listen=(config.repeater_rx_percent if config.repeater_enabled else 0.0),
     )
     landed = build(
         Zone.LANDED,

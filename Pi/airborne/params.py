@@ -185,6 +185,7 @@ CATEGORY_ORDER: Tuple[str, ...] = (
     "Meshtastic",
     "Meshtastic Region",
     "Meshtastic Private",
+    "Meshtastic Repeater",
     "Storage",
     "Reliability",
     "Debug",
@@ -526,6 +527,53 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         "is not private at all. Never transmitted over the radio and never "
         "read back by the configuration interface.",
         apply=Apply.LIVE, secret=True,
+    ),
+
+    # === Meshtastic Repeater ===
+    _spec(
+        "repeater_enabled", Kind.BOOL, "Meshtastic Repeater",
+        "Rebroadcast messages explicitly tagged for the balloon while it is in "
+        "cruise. Never repeats traffic it merely overhears -- from altitude "
+        "that would flatten the battery and congest regional meshes.",
+        apply=Apply.LIVE,
+    ),
+    _spec(
+        "repeater_tag", Kind.STRING, "Meshtastic Repeater",
+        "Text prefix that marks a broadcast for repeating. A message addressed "
+        "directly to the balloon's node id is always eligible regardless.",
+        apply=Apply.LIVE,
+    ),
+    _spec(
+        "repeater_max_per_hour", Kind.INT, "Meshtastic Repeater",
+        "Hard ceiling on rebroadcasts per hour, whatever is asked of it.",
+        apply=Apply.LIVE, minimum=1, maximum=200,
+    ),
+    _spec(
+        "repeater_min_spacing_sec", Kind.INT, "Meshtastic Repeater",
+        "Minimum gap between rebroadcasts, so a burst of requests cannot "
+        "monopolise the channel below.",
+        apply=Apply.LIVE, minimum=0, maximum=3600, unit="s",
+    ),
+    _spec(
+        "repeater_rx_window_sec", Kind.FLOAT, "Meshtastic Repeater",
+        "How long the radio listens for LoRa each time the scheduler grants it "
+        "a receive slot. While listening the balloon is deaf to nothing else -- "
+        "the image downlink is paused for the duration.",
+        apply=Apply.LIVE, minimum=0.5, maximum=60.0, unit="s",
+    ),
+    _spec(
+        "repeater_rx_percent", Kind.FLOAT, "Meshtastic Repeater",
+        "Share of cruise airtime spent listening. Taken from the idle budget, "
+        "so it costs battery rather than imagery.",
+        apply=Apply.LIVE, minimum=0.0, maximum=50.0, unit="%",
+    ),
+    _spec(
+        "uplink_commands_enabled", Kind.BOOL, "Meshtastic Repeater",
+        "Allow a message addressed to the balloon on the PRIVATE channel to run "
+        "one of a short allowlist of commands. Requires a private channel with "
+        "a real key: nothing on the public channel can ever command the "
+        "balloon, whatever it says.",
+        apply=Apply.LIVE,
     ),
 
     # === Meshtastic Region ===
@@ -870,6 +918,23 @@ def validate_cross_field(values: Dict[str, Any]) -> List[str]:
                     f"radio_frequency_mhz {image_freq} MHz is outside the "
                     f"{band_code} board's {band}."
                 )
+
+    # Uplink commands run only on the private channel. Enabling them without
+    # one is not a partial configuration, it is a no-op the operator would
+    # reasonably assume was working.
+    if values.get("uplink_commands_enabled"):
+        if not values.get("meshtastic_private_enabled"):
+            problems.append(
+                "uplink_commands_enabled requires meshtastic_private_enabled: "
+                "commands are only accepted on the private channel, so nothing "
+                "on the public channel can command the balloon."
+            )
+        elif not (values.get("meshtastic_private_psk") or "").strip():
+            problems.append(
+                "uplink_commands_enabled requires a private channel key. "
+                "Without one the channel is unencrypted and anyone could issue "
+                "commands."
+            )
 
     fdev = values.get("radio_fdev_hz")
     bitrate = values.get("radio_bitrate_bps")

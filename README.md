@@ -170,7 +170,8 @@ Waveshare HF HAT.
 | Radio mode switch | 3.68 ms into LoRa, 4.02 ms back |
 | Recording encryption | 50 KB sealed in 31 ms; payload cannot decrypt it |
 | USB configuration | 89 parameters, ~500 ms round trip |
-| Tests | **559**, no hardware required |
+| Tagged repeating | Untagged and third-party traffic ignored; public-channel commands refused |
+| Tests | **593**, no hardware required |
 
 ---
 

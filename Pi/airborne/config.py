@@ -122,6 +122,15 @@ class Config:
     meshtastic_private_name: str = "RaptorHAB"
     meshtastic_private_psk: str = ""
 
+    # === Meshtastic Repeater ===
+    repeater_enabled: bool = False
+    repeater_tag: str = "!RPT "
+    repeater_max_per_hour: int = 20
+    repeater_min_spacing_sec: int = 30
+    repeater_rx_window_sec: float = 4.0
+    repeater_rx_percent: float = 5.0
+    uplink_commands_enabled: bool = False
+
     # === Meshtastic Region ===
     # Which SX1262 front end is fitted. The Waveshare Core1262-HF covers
     # 850-930 MHz and so cannot reach the 433 MHz Meshtastic regions or China
