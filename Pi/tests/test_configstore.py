@@ -180,3 +180,76 @@ def test_unreadable_file_falls_back_but_is_not_quarantined(store):
 
     # Once the permission problem clears, the original config is still there.
     assert store.load() == {"callsign": "RPHAB9"}
+
+
+# --- ownership across the two service accounts ----------------------------
+#
+# Regression: the USB console service runs as root (it offers a login shell)
+# while the flight software runs as an unprivileged account. A config written
+# by root at 0600 is unreadable by that account, so every setting changed from
+# the companion app was silently ignored and the payload flew on defaults.
+
+
+def test_save_preserves_the_existing_file_owner(store, monkeypatch):
+    """An overwrite must not change who owns the config."""
+    store.save({"callsign": "FIRST"})
+    original = os.stat(store.path)
+
+    store.save({"callsign": "SECOND"})
+    after = os.stat(store.path)
+
+    assert after.st_uid == original.st_uid
+    assert after.st_gid == original.st_gid
+    assert store.load()["callsign"] == "SECOND"
+
+
+def test_ownership_matching_is_a_no_op_for_an_unprivileged_writer(store, monkeypatch):
+    """Only root can chown; everyone else already writes correct ownership."""
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+
+    chown_calls = []
+    monkeypatch.setattr(os, "chown", lambda *a: chown_calls.append(a))
+
+    assert store.save({"callsign": "RPHAB9"})
+    assert chown_calls == []
+
+
+def test_root_writer_chowns_to_the_directory_owner(store, monkeypatch):
+    """
+    A fresh config written by root takes the state directory's owner, which
+    the installer sets to the service account.
+    """
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+
+    real_stat = os.stat
+    directory = os.path.dirname(store.path)
+
+    def fake_stat(path, *args, **kwargs):
+        result = real_stat(path, *args, **kwargs)
+        if path == directory:
+            # os.path.isfile and friends also stat, so return a real result
+            # with only the ownership fields overridden.
+            class Patched:
+                def __getattr__(self, name):
+                    return getattr(result, name)
+                st_uid = 1234
+                st_gid = 5678
+            return Patched()
+        return result
+
+    monkeypatch.setattr(os, "stat", fake_stat)
+
+    chown_calls = []
+    monkeypatch.setattr(os, "chown", lambda path, uid, gid: chown_calls.append((uid, gid)))
+
+    assert store.save({"callsign": "RPHAB9"})
+    assert chown_calls == [(1234, 5678)]
+
+
+def test_a_failed_chown_does_not_lose_the_config(store, monkeypatch):
+    """Better a config the service cannot read than no config at all."""
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(os, "chown", lambda *a: (_ for _ in ()).throw(PermissionError("nope")))
+
+    assert store.save({"callsign": "RPHAB9"})
+    assert store.load()["callsign"] == "RPHAB9"

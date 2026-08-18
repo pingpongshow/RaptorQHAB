@@ -135,13 +135,37 @@ apt-get update -qq
 
 # picamera2 and its libcamera stack come from apt, never pip -- the pip build
 # does not link against the system libcamera and will not see the sensor.
-apt-get install -y -qq \
-    python3 python3-venv python3-pip python3-dev \
-    python3-libcamera python3-picamera2 \
-    python3-numpy python3-pil \
-    git build-essential libatlas-base-dev \
-    >/dev/null
-ok "packages installed"
+REQUIRED_PACKAGES="python3 python3-venv python3-pip python3-dev git build-essential rsync"
+
+# Optional: nice to have, but their names drift between Debian releases and
+# none of them is load-bearing. libatlas-base-dev, for instance, was dropped
+# in Debian 13. Failing the whole install over a renamed BLAS package would be
+# absurd, so these are installed individually and skipped when unavailable.
+OPTIONAL_PACKAGES="python3-libcamera python3-picamera2 python3-numpy python3-pil libopenblas-dev"
+
+apt-get install -y -qq $REQUIRED_PACKAGES >/dev/null \
+    || die "could not install required packages: $REQUIRED_PACKAGES"
+ok "required packages installed"
+
+MISSING_OPTIONAL=""
+for pkg in $OPTIONAL_PACKAGES; do
+    if apt-get install -y -qq "$pkg" >/dev/null 2>&1; then
+        continue
+    fi
+    MISSING_OPTIONAL="$MISSING_OPTIONAL $pkg"
+done
+
+if [[ -n "$MISSING_OPTIONAL" ]]; then
+    warn "not available on this release:$MISSING_OPTIONAL"
+    case "$MISSING_OPTIONAL" in
+        *picamera2*|*libcamera*)
+            warn "the camera will not work without picamera2; the payload will "
+            warn "still fly and transmit telemetry, but capture no images"
+            ;;
+    esac
+else
+    ok "optional packages installed"
+fi
 
 # --------------------------------------------------------------------------
 # Service user
@@ -341,9 +365,15 @@ ok "raptorhab-airborne enabled"
 # Seed a config file so the first run does not start from bare defaults, and
 # so the operator has something to edit.
 if [[ ! -f "$STATE_DIR/config/airborne.json" ]]; then
-    sudo -u "$SERVICE_USER" "$VENV/bin/python" -m airborne.main --save-config \
-        >/dev/null 2>&1 || warn "could not write the initial config"
-    [[ -f "$STATE_DIR/config/airborne.json" ]] && ok "initial config written"
+    # Must run from $CODE_DIR: the installer's own working directory is the
+    # invoking user's home, which a system account cannot read, so `-m
+    # airborne.main` would fail to import from there.
+    if config_error=$(cd "$CODE_DIR" && sudo -u "$SERVICE_USER" \
+            "$VENV/bin/python" -m airborne.main --save-config 2>&1 >/dev/null); then
+        ok "initial config written"
+    else
+        warn "could not write the initial config: ${config_error##*$'\n'}"
+    fi
 else
     ok "existing config preserved"
 fi

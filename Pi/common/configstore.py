@@ -206,6 +206,7 @@ class ConfigStore:
 
             # 0600: config may hold channel pre-shared keys.
             os.chmod(tmp_path, 0o600)
+            self._match_ownership(tmp_path)
             os.replace(tmp_path, self.path)
             tmp_path = None
 
@@ -231,6 +232,46 @@ class ConfigStore:
                     pass
 
     # --- helpers -----------------------------------------------------------
+
+    def _match_ownership(self, tmp_path: str) -> None:
+        """
+        Give the new file the same owner as the config it replaces.
+
+        Two processes share this file: the flight software, running as an
+        unprivileged service account, and the USB console service, which runs
+        as root because it offers a login shell. A file written by root at
+        0600 is unreadable by the service account, so every setting changed
+        from the companion app would be silently ignored and the payload would
+        quietly fly on defaults.
+
+        The existing file's owner wins; failing that, the containing
+        directory's, which the installer creates owned by the service account.
+        Only root can chown, so this is a no-op for the unprivileged writer --
+        which is correct, since its own files already have the right owner.
+        """
+        if os.geteuid() != 0:
+            return
+
+        try:
+            if self.exists:
+                reference = os.stat(self.path)
+            else:
+                reference = os.stat(os.path.dirname(self.path) or ".")
+        except OSError as e:
+            logger.debug(f"Could not determine config ownership: {e}")
+            return
+
+        if reference.st_uid == 0 and reference.st_gid == 0:
+            return
+
+        try:
+            os.chown(tmp_path, reference.st_uid, reference.st_gid)
+        except OSError as e:
+            logger.warning(
+                f"Could not set config ownership to {reference.st_uid}:"
+                f"{reference.st_gid}: {e}. The payload service may not be able "
+                f"to read its own configuration."
+            )
 
     @staticmethod
     def _fsync_dir(directory: str) -> None:

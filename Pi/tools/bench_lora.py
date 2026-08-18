@@ -194,14 +194,18 @@ def command_rx(args, config: Config) -> int:
 
         detail = _describe(packet.payload)
         if detail:
-            decoded += 1
+            # _describe returns a message either way; only a real decode counts,
+            # or a channel we hold no key for reads as a success.
+            if not detail.startswith("("):
+                decoded += 1
             line += f"\n           {detail}"
         print(line)
 
         radio.start_lora_receive(timeout_ms=0)
 
     elapsed = time.time() - started
-    print(f"\n{received} packets in {elapsed:.0f}s, {decoded} decoded on this channel")
+    print(f"\n{received} packets in {elapsed:.0f}s, {decoded} decoded on this channel"
+          f"{'' if decoded else ' (headers parsed, payloads use other keys)'}")
 
     if received == 0:
         print(

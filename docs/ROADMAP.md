@@ -27,8 +27,8 @@ same images over LoRa would be ~90× slower.
 
 The SX1262 supports both, but **only one at a time**. Switching means
 `SetPacketType` + re-issuing modulation params, packet params, sync word, and
-`SetRfFrequency`. That is a handful of SPI transactions — call it **~5-15 ms**,
-to be measured on the bench in Phase 2 — so **time-division multiplexing between
+`SetRfFrequency`. **Measured on the real board: 3.68 ms into LoRa, 4.02 ms back,
+7.70 ms round trip** (estimated 5-15 ms), so **time-division multiplexing between
 "image mode" and "Meshtastic mode" is entirely feasible.** That mode switch is
 the central mechanism of this whole project, and the scheduler is built around it.
 
@@ -56,7 +56,7 @@ Two things follow that are worth stating plainly:
 | Hardware | Waveshare SX1262 (HF) LoRa HAT for Pi Zero + L76K GPS |
 | Hardware band | **850-930 MHz** (Core1262-HF). The 433 MHz regions and China are unreachable |
 | Regional frequency | **Auto-select Meshtastic band from GPS position** (see below) |
-| Phase status | 1, 2, 3, 4, 6, 7 complete. **5 blocked on the RX bench test** |
+| Phase status | 1, 2, 3, 4, 6, 7 complete and **hardware-validated**. 5 unblocked |
 
 ---
 
@@ -234,6 +234,44 @@ stationary for far longer than any dwell period, so it declared itself LANDED
 *before launch* — stopping image capture and dropping to slow beacons while
 still on the ground. Landing detection is now disarmed until the balloon has
 actually been above `zone_landed_arm_altitude_m` (default 2000 m AGL).
+
+---
+
+## Hardware validation — 2026-08-18
+
+Run against the real Heltec Vision Master T190 and a Pi Zero 2 W with the
+Waveshare Core1262-HF HAT.
+
+| What | Result |
+|---|---|
+| Modem firmware build + flash | Built and verified on the T190 |
+| Modem config handshake | `CFG_OK`, SX1262 up in FSK at 915.0/96k/50k/467k |
+| **GFSK downlink** Pi → Heltec | **20/20 transmitted, 20 forwarded, telemetry decoded** |
+| SX1262 on the Pi over SPI | Initialises; GFSK↔LoRa switch **7.70 ms** round trip |
+| **LoRa receive on the Pi** | **Confirmed** — bench transmitter *and* a live mesh node at 2 hops |
+| **Meshtastic transmit** Pi → Heltec | **19/19 decrypted and decoded** — position, telemetry, environment, nodeinfo, text |
+| USB gadget | Mac enumerates "RaptorHab Payload" (1d6b:0104), classified correctly |
+| USB config API | hello / get_schema (89 params) / get_config / set_config / get_status, ~500 ms |
+| Secret redaction | Keys never returned; fingerprints only |
+| Hardware-band guard | EU_433 correctly refused on the HF board |
+| Payload with no camera | Runs stably, 0 restarts, ~130 packets/s, capture errors non-fatal |
+| Installer end to end | Clean install on Debian 13 (trixie) |
+
+Three bugs this found, all fixed:
+
+1. **The payload could not read its own configuration.** The USB console runs
+   as root; `ConfigStore.save()` wrote 0600 root-owned files, so the
+   unprivileged flight service silently fell back to defaults. Every setting
+   changed from the app was being ignored. Ownership is now inherited from the
+   existing file, or from the state directory.
+2. **Every log line was duplicated** — the console handler was attached to
+   both the named logger and root, and the named logger propagated.
+3. **The installer failed on Debian 13** (`libatlas-base-dev` was dropped) and
+   seeded the initial config from a directory the service account cannot read.
+
+Still outstanding: **the camera is not detected** (`detected=0`, no CSI
+activity), which looks like a ribbon-cable seating problem rather than
+software.
 
 ---
 

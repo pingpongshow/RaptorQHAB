@@ -47,8 +47,15 @@ def setup_logging(
     )
     console_handler.setFormatter(console_format)
     logger.addHandler(console_handler)
-    
-    # Also configure root logger to ensure all modules get output
+
+    # Do not also propagate to the root logger. The same handler is attached
+    # there so that modules outside this logger's tree (airborne.camera,
+    # common.radio) still produce output -- but without this, every message
+    # from this logger reaches that handler twice and the journal shows every
+    # line doubled.
+    logger.propagate = False
+
+    # Root logger, for modules that are not children of `name`.
     root_logger = logging.getLogger()
     if not root_logger.handlers:
         root_logger.addHandler(console_handler)
