@@ -50,7 +50,7 @@ struct ModemConfig: Codable {
     var frequencyMHz: Double = 915.0      // RF frequency in MHz
     var bitrateKbps: Double = 96.0        // Bit rate in kbps
     var deviationKHz: Double = 50.0       // Frequency deviation in kHz
-    var bandwidthKHz: Double = 467.0      // RX bandwidth in kHz
+    var bandwidthKHz: Double = 234.3      // RX bandwidth in kHz
     var preambleBits: Int = 32            // Preamble length in bits
     
     // Generate configuration command for modem
@@ -61,7 +61,7 @@ struct ModemConfig: Codable {
     
     // Parse confirmation response from modem
     static func parseConfirmation(_ response: String) -> ModemConfig? {
-        // Expected: CFG_OK:915.0,96.0,50.0,467.0,32
+        // Expected: CFG_OK:915.0,96.0,50.0,234.3,32
         guard response.hasPrefix("CFG_OK:") else { return nil }
         let params = response.dropFirst(7)  // Remove "CFG_OK:"
         let parts = params.split(separator: ",")

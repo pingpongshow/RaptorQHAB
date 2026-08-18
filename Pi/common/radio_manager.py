@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
+from common.dutycycle import DutyCycleTracker
 from common.meshtastic.regions import Region, clamp_power_to_region
 from common.radio_lora import LoRaConfig, RadioMode
 
@@ -93,6 +94,10 @@ class RadioModeManager:
             "to_gfsk": ModeSwitchStats(),
         }
 
+        # Airtime budget for the Meshtastic band. Regions that impose no limit
+        # leave this at 100%, where it costs nothing.
+        self._duty = DutyCycleTracker(100.0)
+
     @property
     def mode(self) -> RadioMode:
         with self._lock:
@@ -127,6 +132,9 @@ class RadioModeManager:
         if region is not None:
             power = clamp_power_to_region(requested_power_dbm, region)
             region_code = region.code
+            # Power and airtime are both regional limits; applying one without
+            # the other is still a violation.
+            self._duty.set_limit(region.duty_cycle_percent)
 
         settings = LoRaSettings(
             config=config,
@@ -236,12 +244,32 @@ class RadioModeManager:
         Transmit a Meshtastic packet, switching to LoRa first if needed.
 
         Returns False without transmitting when no LoRa settings are set --
-        the "unknown region, stay off the air" case.
+        the "unknown region, stay off the air" case -- or when the region's
+        duty cycle has no room left for this packet.
         """
         with self._lock:
             if not self.ensure_lora():
                 return False
-            return self._radio.transmit_lora(packet, timeout_ms=timeout_ms)
+
+            settings = self._lora_settings
+            airtime_sec = settings.config.time_on_air_ms(len(packet)) / 1000.0
+
+            if not self._duty.reserve(airtime_sec):
+                return False
+
+            started = time.monotonic()
+            sent = self._radio.transmit_lora(packet, timeout_ms=timeout_ms)
+
+            if sent:
+                self._duty.settle(airtime_sec, time.monotonic() - started)
+            else:
+                self._duty.release(airtime_sec)
+            return sent
+
+    @property
+    def duty_cycle(self) -> DutyCycleTracker:
+        """The airtime budget, for status reporting and for the scheduler."""
+        return self._duty
 
     def receive_lora_window(
         self, duration_sec: float, poll_interval_sec: float = 0.05
@@ -302,4 +330,5 @@ class RadioModeManager:
                 "lora_frequency_mhz": settings.frequency_mhz if settings else None,
                 "lora_power_dbm": settings.tx_power_dbm if settings else None,
                 "gfsk_power_dbm": self._gfsk_tx_power_dbm,
+                "duty_cycle": self._duty.get_status(),
             }

@@ -1523,7 +1523,7 @@ struct RadioConfigView: View {
     @State private var modemFrequency: Double = 915.0
     @State private var modemBitrate: Double = 96.0
     @State private var modemDeviation: Double = 50.0
-    @State private var modemBandwidth: Double = 467.0
+    @State private var modemBandwidth: Double = 234.3
     @State private var modemPreamble: Int = 32
     
     @State private var selectedTab = 0
@@ -1604,7 +1604,7 @@ struct RadioConfigView: View {
                             modemFrequency = 915.0
                             modemBitrate = 96.0
                             modemDeviation = 50.0
-                            modemBandwidth = 467.0
+                            modemBandwidth = 234.3
                             modemPreamble = 32
                         }
                         

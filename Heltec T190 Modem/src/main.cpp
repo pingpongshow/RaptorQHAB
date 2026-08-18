@@ -22,6 +22,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <RadioLib.h>
+#include <Preferences.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 
@@ -67,7 +68,7 @@
 #define DEFAULT_FREQUENCY       915.0
 #define DEFAULT_BITRATE         96.0
 #define DEFAULT_DEVIATION       50.0
-#define DEFAULT_RX_BANDWIDTH    467.0
+#define DEFAULT_RX_BANDWIDTH    234.3
 #define DEFAULT_PREAMBLE_LEN    32
 #define RF_DATA_SHAPING         0.5
 
@@ -122,6 +123,14 @@ float rfBitrate = DEFAULT_BITRATE;
 float rfDeviation = DEFAULT_DEVIATION;
 float rfRxBandwidth = DEFAULT_RX_BANDWIDTH;
 uint16_t rfPreambleLen = DEFAULT_PREAMBLE_LEN;
+
+// Non-volatile storage for the RF configuration. Without this the modem comes
+// up deaf after every power cycle: the radio is not initialised until someone
+// sends CFG:, so unplugging the modem silently costs you the downlink until
+// the app happens to reconnect and reconfigure it.
+Preferences prefs;
+#define CFG_NAMESPACE   "raptorhab"
+#define CFG_VERSION     1
 
 bool configured = false;
 
@@ -198,6 +207,9 @@ void handlePacket();
 void forwardPacket(uint8_t* data, int len, float rssi, float snr);
 void sendStats();
 bool waitForConfiguration();
+bool loadConfiguration();
+void saveConfiguration();
+void handleUsbCommands();
 bool initializeRadio();
 void initDisplay();
 void drawStaticUI();
@@ -548,6 +560,62 @@ void showConfiguredScreen() {
 // Configuration Waiting
 // ============================================================================
 
+void saveConfiguration() {
+    prefs.begin(CFG_NAMESPACE, false);
+    prefs.putUChar("ver", CFG_VERSION);
+    prefs.putFloat("freq", rfFrequency);
+    prefs.putFloat("br", rfBitrate);
+    prefs.putFloat("dev", rfDeviation);
+    prefs.putFloat("bw", rfRxBandwidth);
+    prefs.putUShort("pre", rfPreambleLen);
+    prefs.end();
+    Serial.println("[CONFIG] Saved to flash");
+}
+
+bool loadConfiguration() {
+    prefs.begin(CFG_NAMESPACE, true);
+    uint8_t ver = prefs.getUChar("ver", 0);
+    if (ver != CFG_VERSION) {
+        prefs.end();
+        return false;
+    }
+    rfFrequency    = prefs.getFloat("freq", DEFAULT_FREQUENCY);
+    rfBitrate      = prefs.getFloat("br",   DEFAULT_BITRATE);
+    rfDeviation    = prefs.getFloat("dev",  DEFAULT_DEVIATION);
+    rfRxBandwidth  = prefs.getFloat("bw",   DEFAULT_RX_BANDWIDTH);
+    rfPreambleLen  = prefs.getUShort("pre", DEFAULT_PREAMBLE_LEN);
+    prefs.end();
+
+    Serial.printf("[CONFIG] Restored from flash: Freq=%.1f BR=%.1f Dev=%.1f BW=%.1f Pre=%d\n",
+                  rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, rfPreambleLen);
+    return true;
+}
+
+// CFG: used to be accepted only during the boot window, so a modem that had
+// already started listening would silently ignore reconfiguration. Accepting
+// it at any time means the app can retune a running modem.
+void handleUsbCommands() {
+    static String usbBuffer = "";
+    while (Serial.available()) {
+        char c = Serial.read();
+        if (c != '\n' && c != '\r') { usbBuffer += c; continue; }
+        if (usbBuffer.length() == 0) continue;
+
+        if (usbBuffer.startsWith("CFG:")) {
+            if (parseConfigCommand(usbBuffer)) {
+                saveConfiguration();
+                Serial.printf("CFG_OK:%.1f,%.1f,%.1f,%.1f,%d\n",
+                              rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, rfPreambleLen);
+                Serial.println("[RADIO] Reconfiguring for new settings...");
+                initializeRadio();
+            } else {
+                Serial.println("CFG_ERR:Invalid parameters");
+            }
+        }
+        usbBuffer = "";
+    }
+}
+
 bool waitForConfiguration() {
     showWaitingScreen();
 
@@ -569,6 +637,7 @@ bool waitForConfiguration() {
                     Serial.printf("[USB] Received: %s\n", usbBuffer.c_str());
                     if (usbBuffer.startsWith("CFG:")) {
                         if (parseConfigCommand(usbBuffer)) {
+                            saveConfiguration();
                             Serial.printf("CFG_OK:%.1f,%.1f,%.1f,%.1f,%d\n",
                                          rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, rfPreambleLen);
                             return true;
@@ -720,8 +789,16 @@ void setup() {
     initDisplay();
     Serial.println("[TFT] Display initialized");
 
-    // Wait for configuration from USB
-    waitForConfiguration();
+    // A stored configuration means the modem can come straight up listening.
+    // Only a modem that has never been configured blocks waiting for the app.
+    if (loadConfiguration()) {
+        Serial.println("[CONFIG] Using stored configuration; send CFG: at any time to change it");
+    } else {
+        // Only a configuration the host actually sent is persisted -- saving
+        // the fallback defaults here would mean a modem that timed out once
+        // never waits for the app again, and never learns the right settings.
+        waitForConfiguration();
+    }
     configured = true;
 
     // Initialize radio
@@ -763,6 +840,9 @@ void loop() {
         handlePacket();
         lastPacketTime = millis();
     }
+
+    // Accept reconfiguration at any time
+    handleUsbCommands();
 
     // Send stats every 10 seconds
     sendStats();
