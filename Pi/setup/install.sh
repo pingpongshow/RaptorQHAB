@@ -8,6 +8,7 @@
 #   sudo ./install.sh                  # install or upgrade
 #   sudo ./install.sh --usb-gadget     # ...and enable the USB serial console
 #   sudo ./install.sh --check          # verify an existing install, change nothing
+#   sudo ./install.sh --camera imx219  # name the camera when auto-detect fails
 #
 # See docs/INSTALL.md for the whole story, including what needs a reboot.
 
@@ -23,6 +24,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENABLE_USB_GADGET=0
 CHECK_ONLY=0
 NEEDS_REBOOT=0
+CAMERA_OVERLAY=""
 
 # --------------------------------------------------------------------------
 
@@ -40,13 +42,16 @@ usage() {
     exit 0
 }
 
-for arg in "$@"; do
-    case "$arg" in
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --usb-gadget) ENABLE_USB_GADGET=1 ;;
         --check)      CHECK_ONLY=1 ;;
+        --camera)     CAMERA_OVERLAY="${2:?--camera needs a sensor name}"; shift ;;
+        --camera=*)   CAMERA_OVERLAY="${1#*=}" ;;
         -h|--help)    usage ;;
-        *)            die "unknown option: $arg (try --help)" ;;
+        *)            die "unknown option: $1 (try --help)" ;;
     esac
+    shift
 done
 
 [[ $EUID -eq 0 ]] || die "run with sudo"
@@ -110,6 +115,18 @@ if [[ $CHECK_ONLY -eq 1 ]]; then
     "$VENV/bin/python" -c 'from picamera2 import Picamera2' 2>/dev/null \
         && ok "picamera2" || warn "picamera2 not importable (camera disabled)"
 
+    CAMERA_TOOL=$(command -v rpicam-hello || command -v libcamera-hello \
+        || ls /usr/bin/rpicam-hello 2>/dev/null || true)
+    if [[ -n "$CAMERA_TOOL" ]]; then
+        camera_list=$("$CAMERA_TOOL" --list-cameras 2>&1 || true)
+        if [[ "$camera_list" == *"Available cameras"* ]]; then
+            sensor=$(printf '%s' "$camera_list" | grep -m1 -oE '(imx|ov)[0-9]+' || true)
+            ok "camera: ${sensor:-detected}"
+        else
+            warn "no camera detected; re-run with --camera <sensor> if one is fitted"
+        fi
+    fi
+
     [[ -e /dev/spidev0.0 ]] && ok "/dev/spidev0.0" || warn "SPI device missing"
     [[ -e /dev/serial0 ]]   && ok "/dev/serial0"   || warn "GPS serial missing"
 
@@ -119,8 +136,9 @@ if [[ $CHECK_ONLY -eq 1 ]]; then
         && ok "service running" || warn "service not running"
 
     say "Resolved configuration"
-    sudo -u "$SERVICE_USER" "$VENV/bin/python" -m airborne.main --print-config \
-        2>/dev/null | head -25 || warn "could not read config"
+    (cd "$CODE_DIR" && sudo -u "$SERVICE_USER" "$VENV/bin/python" \
+        -m airborne.main --print-config 2>/dev/null | head -25) \
+        || warn "could not read config"
     exit 0
 fi
 
@@ -296,6 +314,31 @@ ensure_boot_line "enable_uart=1"       "UART enabled"
 ensure_boot_line "dtoverlay=disable-bt" "Bluetooth detached from the PL011 UART"
 
 ensure_boot_line "camera_auto_detect=1" "camera auto-detect"
+
+# Auto-detection probes the sensor over the firmware's I2C bus at boot, and a
+# fair number of modules -- third-party IMX219 boards especially, and anything
+# behind an adapter cable -- simply do not answer that probe even though they
+# work perfectly once a driver is bound. The symptom is a camera that is
+# physically fine and completely invisible: `detected=0`, no CSI activity, and
+# picamera2 reporting an empty list.
+#
+# So if auto-detect found nothing, name the sensor explicitly. --camera picks
+# the module; the default matches the Camera Module v2.
+if [[ -n "$CAMERA_OVERLAY" ]]; then
+    ensure_boot_line "dtoverlay=$CAMERA_OVERLAY" "explicit $CAMERA_OVERLAY camera overlay"
+else
+    CAMERA_TOOL=$(command -v rpicam-hello || command -v libcamera-hello \
+        || ls /usr/bin/rpicam-hello 2>/dev/null || true)
+    camera_list=""
+    [[ -n "$CAMERA_TOOL" ]] && camera_list=$("$CAMERA_TOOL" --list-cameras 2>&1 || true)
+fi
+
+if [[ -z "$CAMERA_OVERLAY" && -n "${CAMERA_TOOL:-}" \
+        && "${camera_list:-}" != *"Available cameras"* ]]; then
+    warn "no camera auto-detected"
+    warn "if one is fitted, re-run with --camera imx219 (v2), ov5647 (v1),"
+    warn "imx708 (v3) or imx477 (HQ) to name it explicitly"
+fi
 
 if [[ $ENABLE_USB_GADGET -eq 1 ]]; then
     ensure_boot_line "dtoverlay=dwc2" "USB OTG peripheral mode"

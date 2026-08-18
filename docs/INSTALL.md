@@ -214,6 +214,28 @@ privilege is never reachable over the radio.
 
 ---
 
+## What a finder can read off the card
+
+The SD card is **not encrypted**, and on a balloon it fundamentally cannot be
+in a way that helps: the payload has to boot on the pad with nobody there to
+type a passphrase, so any key it can use travels with it. File permissions
+mean nothing to whoever holds the card.
+
+The workable approach is to carry fewer secrets. Audit what is aboard:
+
+```bash
+sudo /opt/raptorhab/tools/preflight_secrets.py
+```
+
+```bash
+sudo /opt/raptorhab/tools/preflight_secrets.py --sanitize --keep-wifi
+```
+
+It reports Wi-Fi credentials, SSH key material, the Meshtastic private channel
+key, leftover flight logs, and any passwordless-sudo rules, and removes what
+can be removed. The channel key cannot be — the payload needs it to transmit —
+so treat it as compromised after any flight you do not recover yourself.
+
 ## Reference
 
 ### Files
@@ -316,9 +338,23 @@ the serial console is probably still claiming the port: check `cmdline.txt`
 has no `console=serial0`. A cold GPS needs several minutes and a clear view of
 the sky.
 
-**No camera.** `libcamera-hello --list-cameras`. If the venv cannot see it,
-it was built without `--system-site-packages`; delete `/opt/raptorhab/.venv`
-and re-run the installer.
+**No camera.** First `rpicam-hello --list-cameras`. If that lists nothing but
+a camera is physically fitted, auto-detection has failed to probe it — which
+happens with a fair number of modules, third-party IMX219 boards especially,
+and anything behind an adapter cable. The camera is fine; it just needs
+naming:
+
+```bash
+sudo /opt/raptorhab/setup/install.sh --camera imx219 && sudo reboot
+```
+
+Use `imx219` for Camera Module v2, `ov5647` for v1, `imx708` for v3, `imx477`
+for the HQ camera. Confirm afterwards with `sudo ./setup/install.sh --check`,
+which reports the sensor by name.
+
+If `rpicam-hello` sees the camera but the payload does not, the venv was built
+without `--system-site-packages`; delete `/opt/raptorhab/.venv` and re-run the
+installer.
 
 **Nothing on `/dev/cu.usbmodem*`.** Confirm you are on the data port, not
 `PWR IN`. On the Pi, `ls /sys/class/udc` should be non-empty — if it is empty,
