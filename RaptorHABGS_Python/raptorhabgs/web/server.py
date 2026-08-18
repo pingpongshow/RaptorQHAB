@@ -23,6 +23,11 @@ from ..core.mission_manager import MissionManager
 from ..core.config import get_config, save_config, get_data_directory
 from ..core.telemetry import TelemetryPoint
 from ..core.payload_link import PayloadLink, discover_payload_ports
+from ..core.meshtastic_manager import (
+    MeshtasticManager, ChannelConfig, discover_meshtastic_ports)
+from ..core.meshtastic_mqtt import MeshtasticMQTTClient
+from ..core.position_fusion import PositionFusion, PositionSource
+from ..core.meshtastic import channel_hash as meshtastic_channel_hash
 
 # Reduce Flask/Werkzeug logging noise
 log = logging.getLogger('werkzeug')
@@ -68,6 +73,16 @@ class WebServer:
         # Deliberately separate from the RF ground station -- the
         # payload accepts settings over USB only, never over radio.
         self.payload = PayloadLink()
+
+        # Second receive path: a stock Meshtastic node on USB, plus the public
+        # MQTT network. Both feed the same fusion, which decides what the map
+        # actually draws.
+        self.mesh = MeshtasticManager()
+        self.mqtt = MeshtasticMQTTClient()
+        self.fusion = PositionFusion()
+        self.packet_log = []
+        self.max_packet_log = 500
+        self._wire_position_sources()
         
         # Apply config
         self.mission_manager.auto_record_enabled = self.config.auto_record
@@ -356,6 +371,153 @@ class WebServer:
             return jsonify({'status': 'stopped', 'folder': folder})
     
 
+
+        # ---- Meshtastic node, MQTT, fusion, packet log ---------------------
+
+        @self.app.route('/api/mesh/ports')
+        def mesh_ports():
+            return jsonify({"ports": discover_meshtastic_ports(),
+                            "connected": self.mesh.connected,
+                            "port": self.mesh.port})
+
+        @self.app.route('/api/mesh/connect', methods=['POST'])
+        def mesh_connect():
+            data = request.get_json(silent=True) or {}
+            device = data.get("port")
+            if not device:
+                found = discover_meshtastic_ports()
+                if not found:
+                    return jsonify({"ok": False, "error": "no Meshtastic node found"}), 404
+                device = found[0]["device"]
+            try:
+                self.mesh.connect(device)
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+            return jsonify({"ok": True, "status": self.mesh.status()})
+
+        @self.app.route('/api/mesh/disconnect', methods=['POST'])
+        def mesh_disconnect():
+            self.mesh.disconnect()
+            return jsonify({"ok": True})
+
+        @self.app.route('/api/mesh/status')
+        def mesh_status():
+            return jsonify({
+                "mesh": self.mesh.status(),
+                "mqtt": self.mqtt.status(),
+                "nodes": [
+                    {"id": n.node_id, "name": n.display_name,
+                     "short": n.short_name, "last_heard": n.last_heard,
+                     "snr": n.snr, "rssi": n.rssi,
+                     "battery": n.battery_percent,
+                     "latitude": n.latitude, "longitude": n.longitude,
+                     "is_balloon": n.node_id == self.mesh.balloon_node_id}
+                    for n in sorted(self.mesh.nodes.values(),
+                                    key=lambda x: x.last_heard, reverse=True)
+                ],
+                "messages": [
+                    {"timestamp": m.timestamp, "sender_name": m.sender_name,
+                     "text": m.text, "outgoing": m.outgoing,
+                     "rssi": m.rssi, "snr": m.snr}
+                    for m in self.mesh.messages[-100:]
+                ],
+            })
+
+        @self.app.route('/api/mesh/channels', methods=['GET', 'POST'])
+        def mesh_channels():
+            if request.method == 'GET':
+                return jsonify({"channels": [
+                    {"name": c.name, "hash": c.hash} for c in self.mesh.channels]})
+            data = request.get_json(silent=True) or {}
+            import base64
+            channels = []
+            for entry in data.get("channels", []):
+                try:
+                    key = base64.b64decode(entry.get("key", ""))
+                except Exception:
+                    return jsonify({"ok": False,
+                                    "error": f"channel {entry.get('name')}: key is not base64"}), 400
+                name = entry.get("name") or "LongFast"
+                channels.append(ChannelConfig(
+                    name=name, key=key, hash=meshtastic_channel_hash(name, key)))
+            self.mesh.channels = channels
+            return jsonify({"ok": True, "channels": [
+                {"name": c.name, "hash": c.hash} for c in channels]})
+
+        @self.app.route('/api/mesh/balloon', methods=['POST'])
+        def mesh_balloon():
+            data = request.get_json(silent=True) or {}
+            node = data.get("node_id")
+            if isinstance(node, str):
+                node = int(node.lstrip("!"), 16)
+            self.mesh.balloon_node_id = node
+            self.mqtt.balloon_node_id = node
+            return jsonify({"ok": True, "balloon_node_id": node})
+
+        @self.app.route('/api/mesh/send', methods=['POST'])
+        def mesh_send():
+            data = request.get_json(silent=True) or {}
+            text = (data.get("text") or "").strip()
+            if not text:
+                return jsonify({"ok": False, "error": "no text"}), 400
+            if not self.mesh.channels:
+                return jsonify({"ok": False, "error": "no channels configured"}), 400
+
+            name = data.get("channel")
+            channel = next((c for c in self.mesh.channels if c.name == name),
+                           self.mesh.channels[0])
+            try:
+                if data.get("as_command"):
+                    message = self.mesh.send_command_to_balloon(text, channel)
+                elif data.get("to_balloon"):
+                    if self.mesh.balloon_node_id is None:
+                        return jsonify({"ok": False,
+                                        "error": "the balloon's node id is not known yet"}), 400
+                    message = self.mesh.send_text(
+                        text, channel, destination=self.mesh.balloon_node_id)
+                else:
+                    message = self.mesh.send_text(text, channel)
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 400
+            return jsonify({"ok": True, "sent": message.text})
+
+        @self.app.route('/api/mqtt/connect', methods=['POST'])
+        def mqtt_connect():
+            try:
+                self.mqtt.connect()
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+            return jsonify({"ok": True, "status": self.mqtt.status()})
+
+        @self.app.route('/api/mqtt/disconnect', methods=['POST'])
+        def mqtt_disconnect():
+            self.mqtt.disconnect()
+            return jsonify({"ok": True})
+
+        @self.app.route('/api/position/sources')
+        def position_sources():
+            return jsonify(self.fusion.status())
+
+        @self.app.route('/api/position/track')
+        def position_track():
+            return jsonify({"track": self.fusion.track()})
+
+        @self.app.route('/api/position/extrapolation', methods=['POST'])
+        def position_extrapolation():
+            data = request.get_json(silent=True) or {}
+            self.fusion.extrapolation_enabled = bool(data.get("enabled", True))
+            return jsonify({"ok": True,
+                            "enabled": self.fusion.extrapolation_enabled})
+
+        @self.app.route('/api/packets')
+        def packets():
+            return jsonify({"packets": self.packet_log[-200:]})
+
+        @self.app.route('/api/packets/clear', methods=['POST'])
+        def packets_clear():
+            self.packet_log.clear()
+            return jsonify({"ok": True})
+
         # ---- payload USB link: configuration and console -------------------
 
         @self.app.route('/api/payload/ports')
@@ -442,6 +604,46 @@ class WebServer:
                 return jsonify({"ok": True, "result": self.payload.generate_psk(bits)})
             except Exception as exc:
                 return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+    def _wire_position_sources(self):
+        """Point every receive path at the one fusion."""
+        def mesh_position(node_id, position):
+            self.fusion.submit_meshtastic(
+                position["latitude"], position["longitude"], position["altitude"],
+                detail=position.get("name") or "Meshtastic node",
+                timestamp=position.get("timestamp"),
+                satellites=position.get("satellites"),
+                rssi=position.get("rssi"), snr=position.get("snr"))
+            self.socketio.emit('position_update', self.fusion.status())
+
+        def mesh_message(message):
+            self.socketio.emit('mesh_message', {
+                "timestamp": message.timestamp, "sender": message.sender,
+                "sender_name": message.sender_name, "text": message.text,
+                "outgoing": message.outgoing, "rssi": message.rssi,
+                "snr": message.snr,
+            })
+
+        def mqtt_position(position):
+            self.fusion.submit_meshtastic(
+                position["latitude"], position["longitude"], position["altitude"],
+                detail=position.get("detail") or "MQTT gateway",
+                timestamp=position.get("timestamp"),
+                satellites=position.get("satellites"),
+                rssi=position.get("rssi"), snr=position.get("snr"),
+                via_mqtt=True)
+            self.socketio.emit('position_update', self.fusion.status())
+
+        self.mesh.on_position = mesh_position
+        self.mesh.on_message = mesh_message
+        self.mqtt.on_position = mqtt_position
+
+    def _record_packet(self, entry):
+        self.packet_log.append(entry)
+        if len(self.packet_log) > self.max_packet_log:
+            del self.packet_log[:len(self.packet_log) - self.max_packet_log]
+        self.socketio.emit('packet', entry)
 
     def _emit_console(self, data: bytes):
         """Forward payload terminal output to every connected browser."""

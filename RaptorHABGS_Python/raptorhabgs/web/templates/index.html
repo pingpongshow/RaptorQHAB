@@ -446,6 +446,10 @@
         <button class="main-tab" onclick="switchMainTab('missions')">📁 Missions</button>
         <button class="main-tab" onclick="switchMainTab('payload')">🎛️ Payload Config</button>
         <button class="main-tab" onclick="switchMainTab('console')">⌨️ Console</button>
+        <button class="main-tab" onclick="switchMainTab('mesh')">🕸️ Meshtastic</button>
+        <button class="main-tab" onclick="switchMainTab('sources')">🛰️ Position Sources</button>
+        <button class="main-tab" onclick="switchMainTab('graphs')">📈 Graphs</button>
+        <button class="main-tab" onclick="switchMainTab('packets')">📦 Packets</button>
     </nav>
     
     <!-- Tracking Tab -->
@@ -688,7 +692,107 @@
         </div>
     </div>
 
-        <div class="modal-overlay" id="settingsModal">
+
+    <!-- Meshtastic: a stock node as a second receiver -->
+    <div class="tab-page" id="page-mesh">
+        <div style="padding:16px;">
+            <div class="panel" style="margin-bottom:12px;">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <select id="meshPort" style="min-width:280px;"></select>
+                    <button class="btn" onclick="meshRefreshPorts()">Refresh</button>
+                    <button class="btn btn-primary" id="meshConnectBtn" onclick="meshToggleConnect()">Connect node</button>
+                    <button class="btn" id="mqttBtn" onclick="mqttToggle()">Connect MQTT</button>
+                    <span id="meshStatus" class="muted">Not connected</span>
+                </div>
+                <div class="muted" style="margin-top:8px;font-size:12px;">
+                    Any radio running stock Meshtastic firmware works — the balloon
+                    transmits standard LongFast packets on the standard sync word.
+                </div>
+            </div>
+
+            <div class="panel" style="margin-bottom:12px;">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <input type="text" id="meshBalloonId" placeholder="Balloon node id (e.g. !efcab5ac)" style="min-width:220px;">
+                    <button class="btn" onclick="meshSetBalloon()">Set balloon node</button>
+                    <span id="meshBalloonLabel" class="muted"></span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+                    <input type="text" id="chanName" placeholder="Channel name" value="LongFast" style="width:150px;">
+                    <input type="text" id="chanKey" placeholder="Channel key (base64)" style="min-width:260px;">
+                    <button class="btn" onclick="meshAddChannel()">Add channel</button>
+                    <span id="chanList" class="muted"></span>
+                </div>
+            </div>
+
+            <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                <div class="panel" style="flex:1;min-width:320px;">
+                    <h3>Nodes heard</h3>
+                    <div id="meshNodes" class="muted">No nodes yet.</div>
+                </div>
+                <div class="panel" style="flex:1.4;min-width:360px;">
+                    <h3>Messages</h3>
+                    <div id="meshMessages" style="max-height:40vh;overflow:auto;"></div>
+                    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+                        <input type="text" id="meshDraft" placeholder="Message, or !command" style="flex:1;min-width:200px;">
+                        <select id="meshChannelPick"></select>
+                        <label title="Address it to the balloon only"><input type="checkbox" id="meshToBalloon"> to balloon</label>
+                        <label title="Uplink command: private channel, addressed to the balloon, must start with !"><input type="checkbox" id="meshAsCommand"> as command</label>
+                        <button class="btn btn-primary" onclick="meshSend()">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Position sources: which one the map is drawing, and how old it is -->
+    <div class="tab-page" id="page-sources">
+        <div style="padding:16px;">
+            <div class="panel" style="margin-bottom:12px;">
+                <label><input type="checkbox" id="extrapolationToggle" checked onchange="toggleExtrapolation()">
+                    Extrapolate when every source has gone quiet (always labelled as dead reckoning)</label>
+            </div>
+            <div class="panel" style="margin-bottom:12px;">
+                <h3>Currently drawing</h3>
+                <div id="bestSource" class="muted">No position yet.</div>
+            </div>
+            <div class="panel">
+                <h3>All sources</h3>
+                <div id="allSources" class="muted">Nothing heard yet.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Flight graphs -->
+    <div class="tab-page" id="page-graphs">
+        <div style="padding:16px;">
+            <div class="panel" style="margin-bottom:12px;">
+                <button class="btn" onclick="drawGraphs()">Refresh</button>
+                <span class="muted" id="graphInfo"></span>
+            </div>
+            <div class="panel"><h3>Altitude</h3><canvas id="gAlt" height="150"></canvas></div>
+            <div class="panel"><h3>Vertical speed</h3><canvas id="gVs" height="150"></canvas></div>
+            <div class="panel"><h3>Signal (RSSI / SNR)</h3><canvas id="gSig" height="150"></canvas></div>
+            <div class="panel"><h3>Temperature</h3><canvas id="gTemp" height="150"></canvas></div>
+        </div>
+    </div>
+
+    <!-- Raw packet log -->
+    <div class="tab-page" id="page-packets">
+        <div style="padding:16px;">
+            <div class="panel" style="margin-bottom:12px;">
+                <button class="btn" onclick="loadPackets()">Refresh</button>
+                <button class="btn" onclick="clearPackets()">Clear</button>
+                <label><input type="checkbox" id="packetAutoscroll" checked> Follow</label>
+                <span class="muted" id="packetCount"></span>
+            </div>
+            <div class="panel">
+                <div id="packetLog" style="max-height:70vh;overflow:auto;font-family:ui-monospace,Menlo,monospace;font-size:12px;"></div>
+            </div>
+        </div>
+    </div>
+
+
+            <div class="modal-overlay" id="settingsModal">
         
 <div class="modal">
             <div class="modal-header">
@@ -873,6 +977,24 @@
                 .replace(/\r\n/g, '\n')
                 .replace(/\r/g, '');
         }
+
+        socket.on('position_update', (msg) => {
+            if (document.getElementById('bestSource')) renderSources(msg);
+        });
+
+        socket.on('mesh_message', () => {
+            if (document.getElementById('page-mesh').classList.contains('active')) {
+                meshRefreshStatus();
+            }
+        });
+
+        socket.on('packet', (p) => {
+            const log = document.getElementById('packetLog');
+            if (!log) return;
+            log.insertAdjacentHTML('beforeend', renderPacket(p));
+            while (log.children.length > 500) log.removeChild(log.firstChild);
+            if (document.getElementById('packetAutoscroll').checked) log.scrollTop = log.scrollHeight;
+        });
 
         socket.on('console_output', (msg) => {
             const out = document.getElementById('consoleOut');
@@ -1561,6 +1683,227 @@
             e.target.value = '';
         }
 
+
+        // ================= Meshtastic, fusion, graphs, packets =================
+        let meshChannels = [];
+
+        async function meshRefreshPorts() {
+            const r = await fetch('/api/mesh/ports').then(r => r.json());
+            const sel = document.getElementById('meshPort');
+            sel.innerHTML = '';
+            r.ports.forEach(p => {
+                const o = document.createElement('option');
+                o.value = p.device;
+                o.textContent = p.device + ' — ' + p.description;
+                sel.appendChild(o);
+            });
+            if (!r.ports.length) {
+                const o = document.createElement('option');
+                o.textContent = 'No Meshtastic node found';
+                sel.appendChild(o);
+            }
+            document.getElementById('meshConnectBtn').textContent =
+                r.connected ? 'Disconnect node' : 'Connect node';
+        }
+
+        async function meshToggleConnect() {
+            const btn = document.getElementById('meshConnectBtn');
+            if (btn.textContent.startsWith('Disconnect')) {
+                await fetch('/api/mesh/disconnect', {method: 'POST'});
+                btn.textContent = 'Connect node';
+                return;
+            }
+            const port = document.getElementById('meshPort').value;
+            const r = await fetch('/api/mesh/connect', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({port})
+            }).then(r => r.json());
+            if (!r.ok) { alert('Connect failed: ' + r.error); return; }
+            btn.textContent = 'Disconnect node';
+            meshRefreshStatus();
+        }
+
+        async function mqttToggle() {
+            const btn = document.getElementById('mqttBtn');
+            const connecting = btn.textContent.startsWith('Connect');
+            const r = await fetch(connecting ? '/api/mqtt/connect' : '/api/mqtt/disconnect',
+                                  {method: 'POST'}).then(r => r.json());
+            if (!r.ok) { alert('MQTT: ' + r.error); return; }
+            btn.textContent = connecting ? 'Disconnect MQTT' : 'Connect MQTT';
+        }
+
+        async function meshSetBalloon() {
+            const value = document.getElementById('meshBalloonId').value.trim();
+            if (!value) return;
+            const r = await fetch('/api/mesh/balloon', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({node_id: value})
+            }).then(r => r.json());
+            document.getElementById('meshBalloonLabel').textContent =
+                r.ok ? ('balloon = ' + value) : ('error: ' + r.error);
+        }
+
+        async function meshAddChannel() {
+            const name = document.getElementById('chanName').value.trim();
+            const key = document.getElementById('chanKey').value.trim();
+            if (!name || !key) { alert('Both a name and a base64 key are required.'); return; }
+            meshChannels.push({name, key});
+            const r = await fetch('/api/mesh/channels', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({channels: meshChannels})
+            }).then(r => r.json());
+            if (!r.ok) { meshChannels.pop(); alert(r.error); return; }
+            document.getElementById('chanList').textContent =
+                r.channels.map(c => `${c.name} (0x${c.hash.toString(16).toUpperCase()})`).join(', ');
+            const pick = document.getElementById('meshChannelPick');
+            pick.innerHTML = '';
+            r.channels.forEach(c => {
+                const o = document.createElement('option');
+                o.value = c.name; o.textContent = c.name; pick.appendChild(o);
+            });
+            document.getElementById('chanKey').value = '';
+        }
+
+        async function meshSend() {
+            const text = document.getElementById('meshDraft').value.trim();
+            if (!text) return;
+            const r = await fetch('/api/mesh/send', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    text,
+                    channel: document.getElementById('meshChannelPick').value,
+                    to_balloon: document.getElementById('meshToBalloon').checked,
+                    as_command: document.getElementById('meshAsCommand').checked,
+                })
+            }).then(r => r.json());
+            if (!r.ok) { alert('Send failed: ' + r.error); return; }
+            document.getElementById('meshDraft').value = '';
+            meshRefreshStatus();
+        }
+
+        async function meshRefreshStatus() {
+            const r = await fetch('/api/mesh/status').then(r => r.json());
+            const m = r.mesh, q = r.mqtt;
+            document.getElementById('meshStatus').textContent =
+                `node ${m.connected ? 'connected on ' + m.port : 'disconnected'} · ` +
+                `${m.packets_received} packets · ${m.decrypt_failures} undecodable · ` +
+                `MQTT ${q.state} (${q.positions_forwarded} positions)`;
+
+            document.getElementById('meshNodes').innerHTML = r.nodes.length
+                ? r.nodes.map(n => `<div style="padding:4px 0;border-bottom:1px solid #2a2a2a;">
+                      <b>${n.is_balloon ? '🎈 ' : ''}${n.name}</b>
+                      <span class="muted">${n.snr !== null ? ' SNR ' + n.snr : ''}${n.rssi !== null ? ' RSSI ' + n.rssi : ''}
+                      ${n.battery !== null && n.battery !== undefined ? ' · batt ' + n.battery + '%' : ''}</span>
+                   </div>`).join('')
+                : '<span class="muted">No nodes yet.</span>';
+
+            document.getElementById('meshMessages').innerHTML = r.messages.length
+                ? r.messages.slice().reverse().map(msg => `<div style="padding:3px 0;">
+                      <span class="muted">${new Date(msg.timestamp*1000).toLocaleTimeString()}</span>
+                      <b>${msg.outgoing ? '→' : '←'} ${msg.sender_name}:</b> ${msg.text}
+                   </div>`).join('')
+                : '<span class="muted">No messages.</span>';
+        }
+
+        // ---- position sources ----
+        async function loadSources() {
+            const r = await fetch('/api/position/sources').then(r => r.json());
+            renderSources(r);
+        }
+
+        function renderSources(r) {
+            const best = r.best;
+            document.getElementById('bestSource').innerHTML = best
+                ? `<b>${best.source_label}</b> — ${best.latitude.toFixed(5)}, ${best.longitude.toFixed(5)}
+                   at ${Math.round(best.altitude)} m · ${best.age}${best.stale ? ' · <span style="color:#e88">stale</span>' : ''}
+                   ${best.detail ? '<div class="muted">' + best.detail + '</div>' : ''}`
+                : '<span class="muted">No position yet.</span>';
+
+            const rows = Object.values(r.sources || {});
+            document.getElementById('allSources').innerHTML = rows.length
+                ? rows.map(f => `<div style="padding:4px 0;border-bottom:1px solid #2a2a2a;">
+                      <b>${f.source_label}</b> — ${f.latitude.toFixed(5)}, ${f.longitude.toFixed(5)},
+                      ${Math.round(f.altitude)} m · ${f.age}${f.stale ? ' · stale' : ''}
+                   </div>`).join('')
+                : '<span class="muted">Nothing heard yet.</span>';
+        }
+
+        async function toggleExtrapolation() {
+            await fetch('/api/position/extrapolation', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({enabled: document.getElementById('extrapolationToggle').checked})
+            });
+            loadSources();
+        }
+
+        // ---- flight graphs (plain canvas; no charting dependency) ----
+        function plot(canvasId, series, colour, label) {
+            const c = document.getElementById(canvasId);
+            if (!c) return;
+            const ctx = c.getContext('2d');
+            c.width = c.parentElement.clientWidth - 20;
+            ctx.clearRect(0, 0, c.width, c.height);
+            const values = series.filter(v => v !== null && !isNaN(v));
+            if (values.length < 2) {
+                ctx.fillStyle = '#888'; ctx.font = '12px sans-serif';
+                ctx.fillText('Not enough data yet', 8, 20);
+                return;
+            }
+            const min = Math.min(...values), max = Math.max(...values);
+            const range = (max - min) || 1;
+            const pad = 24;
+            ctx.strokeStyle = '#333';
+            ctx.beginPath(); ctx.moveTo(pad, c.height - pad); ctx.lineTo(c.width, c.height - pad); ctx.stroke();
+            ctx.strokeStyle = colour; ctx.lineWidth = 1.5; ctx.beginPath();
+            values.forEach((v, i) => {
+                const x = pad + (i / (values.length - 1)) * (c.width - pad - 4);
+                const y = (c.height - pad) - ((v - min) / range) * (c.height - pad - 8);
+                i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+            });
+            ctx.stroke();
+            ctx.fillStyle = '#aaa'; ctx.font = '11px sans-serif';
+            ctx.fillText(`${label}  min ${min.toFixed(1)}  max ${max.toFixed(1)}`, pad, 12);
+        }
+
+        async function drawGraphs() {
+            const r = await fetch('/api/telemetry/history').then(r => r.json());
+            const points = r.history || r.points || r || [];
+            document.getElementById('graphInfo').textContent = `${points.length} telemetry points`;
+            plot('gAlt', points.map(p => p.altitude), '#4da3ff', 'Altitude (m)');
+            const vs = points.map((p, i) => {
+                if (!i) return 0;
+                const dt = (p.timestamp - points[i-1].timestamp) || 1;
+                return (p.altitude - points[i-1].altitude) / dt;
+            });
+            plot('gVs', vs, '#7fd67f', 'Vertical speed (m/s)');
+            plot('gSig', points.map(p => p.rssi), '#ffb454', 'RSSI (dBm)');
+            plot('gTemp', points.map(p => p.cpu_temp ?? p.cpuTemp), '#ff7f7f', 'CPU temp (°C)');
+        }
+
+        // ---- packet log ----
+        function renderPacket(p) {
+            return `<div style="padding:2px 0;border-bottom:1px solid #222;">
+                <span class="muted">${new Date((p.timestamp||0)*1000).toLocaleTimeString()}</span>
+                <b>${p.type || '?'}</b> seq ${p.sequence ?? '-'}
+                <span class="muted">${p.rssi !== undefined ? p.rssi + ' dBm' : ''} ${p.length ? p.length + ' B' : ''}</span>
+                ${p.detail ? '<span> — ' + p.detail + '</span>' : ''}
+            </div>`;
+        }
+
+        async function loadPackets() {
+            const r = await fetch('/api/packets').then(r => r.json());
+            const log = document.getElementById('packetLog');
+            log.innerHTML = r.packets.map(renderPacket).join('') ||
+                '<span class="muted">No packets logged yet.</span>';
+            document.getElementById('packetCount').textContent = `${r.packets.length} shown`;
+            if (document.getElementById('packetAutoscroll').checked) log.scrollTop = log.scrollHeight;
+        }
+
+        async function clearPackets() {
+            await fetch('/api/packets/clear', {method: 'POST'});
+            loadPackets();
+        }
+
         function switchMainTab(tab) {
             document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
@@ -1568,6 +1911,10 @@
             event.target.classList.add('active');
             document.getElementById('page-' + tab).classList.add('active');
             if (tab === 'payload') { payloadRefreshPorts(); }
+            if (tab === 'mesh')    { meshRefreshPorts(); meshRefreshStatus(); }
+            if (tab === 'sources') { loadSources(); }
+            if (tab === 'graphs')  { drawGraphs(); }
+            if (tab === 'packets') { loadPackets(); }
             
             // Resize maps when tab becomes visible
             setTimeout(() => {
