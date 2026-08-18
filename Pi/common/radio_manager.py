@@ -197,7 +197,20 @@ class RadioModeManager:
                 return True
 
             start = time.monotonic()
-            self._apply_lora_settings(self._lora_settings)
+            # If configuring the chip fails part-way, the chip is in an
+            # unknown state but our bookkeeping would still say GFSK -- and
+            # ensure_gfsk() returns early when it believes it is already in
+            # GFSK. That combination transmits FSK-framed bytes at whatever
+            # the chip is actually set to, silently, which is precisely the
+            # failure that cost the image downlink once already. Mark the mode
+            # unknown so the next switch reconfigures unconditionally.
+            try:
+                self._apply_lora_settings(self._lora_settings)
+            except Exception:
+                self._mode = RadioMode.UNCONFIGURED
+                self._applied_lora = None
+                logger.exception("LoRa configuration failed; radio mode is now unknown")
+                raise
             self._mode = RadioMode.LORA
             elapsed_ms = (time.monotonic() - start) * 1000.0
             self._stats["to_lora"].record(elapsed_ms)
@@ -212,8 +225,13 @@ class RadioModeManager:
                 return True
 
             start = time.monotonic()
-            self._radio.restore_gfsk()
-            self._radio.set_tx_power(self._gfsk_tx_power_dbm)
+            try:
+                self._radio.restore_gfsk()
+                self._radio.set_tx_power(self._gfsk_tx_power_dbm)
+            except Exception:
+                self._mode = RadioMode.UNCONFIGURED
+                logger.exception("GFSK restore failed; radio mode is now unknown")
+                raise
             self._mode = RadioMode.GFSK
             self._applied_lora = None
             elapsed_ms = (time.monotonic() - start) * 1000.0

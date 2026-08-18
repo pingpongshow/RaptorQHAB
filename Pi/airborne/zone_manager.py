@@ -312,6 +312,29 @@ class ZoneManager:
         if not self._landing_armed:
             return False
 
+        # Once LANDED, stay landed -- and this has to be decided before the
+        # checks below, not after them. A payload on the ground is exactly the
+        # thing that stops looking stationary (wind moves it in a tree, the
+        # recovery crew picks it up) and exactly the thing that loses its GPS
+        # fix (it is lying under canopy with no sky view). Both of those used
+        # to fall through the early returns and drop the zone back to CRUISE,
+        # which lengthens the beacon interval from one minute to five at the
+        # precise moment somebody is trying to walk in on it.
+        #
+        # The only way out is unambiguous flight: back above the altitude that
+        # armed landing detection in the first place. Nothing on the ground
+        # produces that.
+        if self._state.zone is Zone.LANDED:
+            if altitude_agl_m is not None and altitude_agl_m >= self.landed_arm_altitude_m:
+                logger.warning(
+                    f"Leaving LANDED: {altitude_agl_m:.0f} m AGL is above the "
+                    f"{self.landed_arm_altitude_m:.0f} m arming altitude, so the "
+                    f"payload is genuinely flying again"
+                )
+                self._landed_candidate_since = None
+                return False
+            return True
+
         if altitude_agl_m is None or vertical_rate_mps is None:
             self._landed_candidate_since = None
             return False
@@ -326,12 +349,6 @@ class ZoneManager:
                 logger.debug("Landing candidate cleared: moving again")
             self._landed_candidate_since = None
             return False
-
-        # Once LANDED, stay landed. A payload in a tree can register a little
-        # vertical motion in the wind, and flapping back to CRUISE would cost
-        # exactly the beacons the recovery crew needs.
-        if self._state.zone is Zone.LANDED:
-            return True
 
         if self._landed_candidate_since is None:
             self._landed_candidate_since = now

@@ -92,16 +92,37 @@ def get_cpu_temperature() -> float:
         return 0.0
 
 
+_battery_warned = False
+
+BATTERY_UNKNOWN = 0
+
+
 def get_battery_voltage() -> int:
     """
-    Get battery voltage (placeholder - implement based on your ADC setup)
-    
-    Returns:
-        Voltage in millivolts
+    Battery voltage in millivolts, or BATTERY_UNKNOWN if there is no monitor.
+
+    There is no ADC wired to this payload yet. This used to return a fixed
+    4200 mV, which is worse than returning nothing: the value flows into
+    telemetry and into the Meshtastic device-metrics beacon, where it becomes
+    a battery reading of 100% that never moves. Anyone watching the flight --
+    including strangers on the mesh helping to recover it -- would see a
+    healthy battery right up until the payload went silent, and the one signal
+    that says "this is about to die" would have been a fabrication.
+
+    Reporting zero is honest: the consumers already treat a falsy reading as
+    "no battery telemetry" and omit the derived percentage.
+
+    To add real monitoring, read your ADC here (an MCP3008 or INA219 on the
+    spare I2C/SPI pins) and return millivolts at the cell.
     """
-    # This is a placeholder - implement based on your ADC circuit
-    # For example, using MCP3008 ADC or INA219 power monitor
-    return 4200  # Placeholder: 4.2V
+    global _battery_warned
+    if not _battery_warned:
+        _battery_warned = True
+        logging.warning(
+            "No battery monitor configured; telemetry will report battery "
+            "voltage as unknown rather than inventing a value"
+        )
+    return BATTERY_UNKNOWN
 
 
 def reboot_system(delay_sec: int = 5):
