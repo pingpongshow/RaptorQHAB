@@ -481,3 +481,44 @@ def test_end_to_end_malformed_json_gets_an_error_not_a_hang(linked_service):
 
     # The service must still answer the next well-formed request.
     assert exchange(fd, {"id": 5, "method": "hello"})["ok"]
+
+
+def test_list_images_includes_encrypted_captures(handler):
+    """
+    Regression: the listing globbed only *.webp, so switching on recording
+    encryption made every image invisible to the companion app.
+    """
+    from pathlib import Path
+
+    directory = Path(handler.config.image_storage_path)
+    (directory / "img_001.webp").write_bytes(b"\x00" * 100)
+    (directory / "img_002.webp.rhs").write_bytes(b"RHSB" + b"\x00" * 200)
+
+    images = call(handler, "list_images")["result"]["images"]
+    names = {i["name"] for i in images}
+
+    assert "img_002.webp.rhs" in names, "sealed images must be listed"
+    assert {i["encrypted"] for i in images} == {True, False}
+
+
+def test_storage_status_counts_encrypted_captures(handler):
+    from pathlib import Path
+
+    directory = Path(handler.config.image_storage_path)
+    (directory / "a.webp").write_bytes(b"\x00" * 10)
+    (directory / "b.webp.rhs").write_bytes(b"\x00" * 10)
+
+    # _storage_status directly: get_status also reads /proc/uptime, which does
+    # not exist on a developer Mac.
+    assert handler._storage_status()["image_count"] == 2
+
+
+def test_fetch_image_works_for_a_sealed_capture(handler):
+    import base64
+    from pathlib import Path
+
+    payload = b"RHSB" + b"\x01" * 300
+    (Path(handler.config.image_storage_path) / "img.webp.rhs").write_bytes(payload)
+
+    result = call(handler, "fetch_image", name="img.webp.rhs")["result"]
+    assert base64.b64decode(result["data_base64"]) == payload

@@ -55,7 +55,7 @@ sealed to an X25519 public key as they are written. The payload holds only the
 public half and physically cannot decrypt its own recordings, so recovering
 the balloon yields ciphertext. **31 ms** to seal a 50 KB image on a Pi Zero.
 
-**Configure everything over one USB cable.** All **89** payload parameters,
+**Configure everything over one USB cable.** All **98** payload parameters,
 plus a real terminal, over the Pi's USB port. The macOS app builds its
 configuration form from a schema the payload sends, so the two never drift
 apart. Configuration is USB-only by design — the payload will not accept
@@ -169,7 +169,7 @@ Waveshare HF HAT.
 | LoRa receive | Bench transmitter **and** a live mesh node at 2 hops, −59 dBm |
 | Radio mode switch | 3.68 ms into LoRa, 4.02 ms back |
 | Recording encryption | 50 KB sealed in 31 ms; payload cannot decrypt it |
-| USB configuration | 89 parameters, ~500 ms round trip |
+| USB configuration | 98 parameters, ~500 ms round trip |
 | Tagged repeating | Untagged and third-party traffic ignored; public-channel commands refused |
 | Tests | **593**, no hardware required |
 

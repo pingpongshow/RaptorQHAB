@@ -309,15 +309,20 @@ class ControlHandler:
         if not directory.is_dir():
             return {"images": []}
 
+        # Sealed captures carry a .rhs suffix, so matching only *.webp made
+        # every image invisible to the app the moment recording encryption
+        # was switched on.
+        candidates = list(directory.glob("*.webp")) + list(directory.glob("*.webp.rhs"))
+
         entries = []
-        for path in sorted(
-            directory.glob("*.webp"), key=lambda p: p.stat().st_mtime, reverse=True
-        )[:limit]:
+        for path in sorted(candidates, key=lambda p: p.stat().st_mtime,
+                           reverse=True)[:limit]:
             stat = path.stat()
             entries.append({
                 "name": path.name,
                 "size_bytes": stat.st_size,
                 "modified": int(stat.st_mtime),
+                "encrypted": path.name.endswith(".rhs"),
             })
         return {"images": entries}
 
@@ -441,7 +446,10 @@ class ControlHandler:
 
         usage = get_disk_usage(self.config.image_storage_path)
         directory = Path(self.config.image_storage_path)
-        count = len(list(directory.glob("*.webp"))) if directory.is_dir() else 0
+        count = 0
+        if directory.is_dir():
+            count = len(list(directory.glob("*.webp"))) + \
+                    len(list(directory.glob("*.webp.rhs")))
 
         return {
             "free_bytes": usage.get("free", 0),

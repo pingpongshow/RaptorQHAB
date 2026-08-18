@@ -618,7 +618,11 @@ class Camera:
         """
         import glob
         
-        files = glob.glob(os.path.join(self.storage_path, "*.webp"))
+        # Sealed captures end in .rhs. Matching only *.webp meant the
+        # retention sweep skipped every encrypted image, so storage would fill
+        # over a long flight and capture would start failing.
+        files = (glob.glob(os.path.join(self.storage_path, "*.webp"))
+                 + glob.glob(os.path.join(self.storage_path, "*.webp.rhs")))
         
         if len(files) <= max_images:
             return 0
