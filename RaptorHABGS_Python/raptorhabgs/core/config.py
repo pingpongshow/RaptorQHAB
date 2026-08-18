@@ -34,7 +34,15 @@ class ModemConfig:
     frequency_mhz: float = 915.0
     bitrate_kbps: float = 96.0     # FSK bit rate in kbps
     deviation_khz: float = 50.0    # FSK frequency deviation
-    bandwidth_khz: float = 467.0   # RX bandwidth in kHz
+    # RX bandwidth from Carson's rule for 96 kbps / 50 kHz deviation:
+    # 2 * (50k + 48k) = 196 kHz, so the next available step is 234.3 kHz.
+    # 467 kHz was sized for an older 200 kbps / 125 kHz profile and admitted
+    # 2.4x more noise than the signal occupies. This must match the payload.
+    bandwidth_khz: float = 234.3   # RX bandwidth in kHz
+    # This is the modem's *receive* preamble, which sizes its preamble
+    # detector. It stays short on purpose: the payload transmits 128 bits so
+    # the detector has margin to settle. Raising this to match the payload
+    # would remove that margin and the modem would detect nothing.
     preamble_bits: int = 32        # Preamble length in bits
     
     @property
@@ -159,7 +167,7 @@ class AppConfig:
                     frequency_mhz=modem_data.get("frequency_mhz", 915.0),
                     bitrate_kbps=modem_data.get("bitrate_kbps", 96.0),
                     deviation_khz=modem_data.get("deviation_khz", 50.0),
-                    bandwidth_khz=modem_data.get("bandwidth_khz", 467.0),
+                    bandwidth_khz=modem_data.get("bandwidth_khz", 234.3),
                     preamble_bits=modem_data.get("preamble_bits", 
                                                   modem_data.get("preamble_length", 32)),
                 )

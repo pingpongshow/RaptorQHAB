@@ -187,38 +187,52 @@ class ImageMetaPayload:
     total_size: int = 0
     symbol_size: int = 0
     num_source_symbols: int = 0
+    checksum: int = 0
     width: int = 0
     height: int = 0
-    checksum: int = 0
-    
+    timestamp: int = 0
+
+    # The payload packs this as ">HIHHIHHI". The field order is checksum,
+    # width, height, timestamp -- not width, height, checksum. Reading it the
+    # other way round still decodes the image, because the symbols are fine,
+    # but it reports the two halves of the CRC-32 as the image dimensions and
+    # compares the checksum against something that was never a checksum. That
+    # makes the integrity check silently useless: a corrupted image passes.
+    STRUCT = ">HIHHIHHI"
+
     @classmethod
     def deserialize(cls, data: bytes) -> Optional["ImageMetaPayload"]:
         """
         Deserialize image metadata.
-        
-        Format (22 bytes, big-endian):
-        - image_id: uint16 (2)
-        - total_size: uint32 (4)
-        - symbol_size: uint16 (2)
-        - num_source_symbols: uint16 (2)
-        - width: uint16 (2)
-        - height: uint16 (2)
-        - checksum: uint32 (4)
-        - reserved: 4 bytes
+
+        Format (22 bytes, big-endian) -- must match
+        Pi/common/protocol.py:ImageMetaPayload.serialize():
+        - image_id: uint16 (2)          offset 0
+        - total_size: uint32 (4)        offset 2
+        - symbol_size: uint16 (2)       offset 6
+        - num_source_symbols: uint16 (2) offset 8
+        - checksum: uint32 (4)          offset 10
+        - width: uint16 (2)             offset 14
+        - height: uint16 (2)            offset 16
+        - timestamp: uint32 (4)         offset 18
         """
         if len(data) < IMAGE_META_PAYLOAD_SIZE:
             print(f"[Protocol] ImageMeta too short: {len(data)} < {IMAGE_META_PAYLOAD_SIZE}")
             return None
-        
+
         try:
+            (image_id, total_size, symbol_size, num_source_symbols,
+             checksum, width, height, timestamp) = struct.unpack_from(
+                cls.STRUCT, data, 0)
             payload = cls()
-            payload.image_id = struct.unpack_from(">H", data, 0)[0]
-            payload.total_size = struct.unpack_from(">I", data, 2)[0]
-            payload.symbol_size = struct.unpack_from(">H", data, 6)[0]
-            payload.num_source_symbols = struct.unpack_from(">H", data, 8)[0]
-            payload.width = struct.unpack_from(">H", data, 10)[0]
-            payload.height = struct.unpack_from(">H", data, 12)[0]
-            payload.checksum = struct.unpack_from(">I", data, 14)[0]
+            payload.image_id = image_id
+            payload.total_size = total_size
+            payload.symbol_size = symbol_size
+            payload.num_source_symbols = num_source_symbols
+            payload.checksum = checksum
+            payload.width = width
+            payload.height = height
+            payload.timestamp = timestamp
             return payload
         except Exception as e:
             print(f"[Protocol] Image meta parse error: {e}")

@@ -3,6 +3,7 @@ Web-compatible managers for RaptorHabGS.
 These versions use standard Python threading and callbacks instead of PyQt6 signals.
 """
 
+import zlib
 import serial
 import serial.tools.list_ports
 import threading
@@ -762,6 +763,18 @@ class WebGroundStationManager:
                 if result is not None:
                     # Successfully decoded!
                     print(f"[WebGS] Successfully decoded image {image_id}! Size={len(result)} bytes")
+                    # The payload sends a CRC-32 of the original image. Now
+                    # that it is parsed from the right offset it is worth
+                    # checking: a mismatch means the image is corrupt even
+                    # though RaptorQ believed it had enough symbols. Report it
+                    # and keep the image anyway -- a suspect picture from the
+                    # stratosphere still beats no picture.
+                    if meta.checksum:
+                        actual = zlib.crc32(bytes(result)) & 0xFFFFFFFF
+                        if actual != meta.checksum:
+                            print(f"[WebGS] WARNING: image {image_id} checksum "
+                                  f"mismatch: expected 0x{meta.checksum:08x}, "
+                                  f"got 0x{actual:08x}")
                     self._save_decoded_image(image_id, result, meta)
                     return
             
