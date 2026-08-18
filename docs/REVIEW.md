@@ -203,3 +203,68 @@ so any call raised `TypeError`. Dead today because the uplink path is unwired
   device including Bluetooth ports. With three device classes now on the bus
   (Heltec modem, Pi gadget, Meshtastic node) the app needs real
   VID/PID-based identification, not substring matching.
+
+---
+
+## Radio defects found on hardware (post-Phase-7 bench testing)
+
+These three were only reachable with a real payload and a real modem. Together
+they meant the ground station received nothing whatsoever, while the payload's
+own logs reported tens of thousands of packets transmitted successfully. Every
+one of them is silent by construction: nothing fails, nothing throws, and the
+airtime accounting looks healthy.
+
+- **R1 — A Meshtastic beacon moved the image downlink off the ground station's
+  frequency.** `set_frequency()` assigned to `config.frequency_mhz`. That field
+  is the GFSK home frequency, but `configure_lora()` calls `set_frequency()` to
+  tune to a Meshtastic channel, so after one beacon "home" *was* the Meshtastic
+  channel. `restore_gfsk()` faithfully re-tuned to 906.875 MHz and every
+  subsequent image went out on the mesh frequency, unheard.
+
+  Severity: total loss of imagery for the remainder of a flight, beginning at
+  the first beacon — roughly one minute after launch. Measured 15,414 packets
+  transmitted, 0 received.
+
+  Fixed by tracking the current tuning separately from the configured home
+  frequency. `current_frequency_mhz` is now a read-only view of where the radio
+  actually is; `config.frequency_mhz` is never written by the driver.
+
+- **R2 — The transmit preamble exactly equalled the receiver's preamble
+  detector.** Both were 32 bits. A detector needs whole preamble bits *after*
+  its AGC has settled, so it never completed a detection: measured 0 packets out
+  of 20, with no sync errors and no CRC errors, because nothing was ever
+  detected to fail. At 128 bits the same link detects 100%. The extra 96 bits
+  cost about 1 ms per packet.
+
+  This one predates the Meshtastic work — v1 shipped the same 32/32 pairing and
+  happened to work, which is exactly what a zero-margin setting looks like until
+  it doesn't.
+
+- **R3 — RX bandwidth was sized for a modulation the payload no longer uses.**
+  467 kHz is right for 200 kbps / 125 kHz deviation. At the current 96 kbps /
+  50 kHz, Carson's rule gives 196 kHz, so the receiver was admitting 2.4x more
+  noise than the signal occupies. Now 234.3 kHz, and the payload, the modem
+  firmware and the macOS app all had to be changed together — they must agree
+  or the link is deaf.
+
+### Not a defect: the all-zeros test artifact
+
+Bench packets built from `bytes(n)` failed in proportion to their length, which
+looked convincingly like clock drift. It was not. With whitening disabled, a
+payload of constant bits gives the receiver no transitions to recover its clock
+from, and the failure rate compounds with packet length. Real payloads are
+RaptorQ-encoded WebP, which is effectively random: 8/8 delivery at 210 bytes,
+the actual image packet size. Recorded here because the false trail cost real
+time, and because it argues for enabling whitening if a future payload type ever
+carries long runs of constant bytes.
+
+### Ground station modem
+
+- **R4 — The modem was deaf after every power cycle.** It did not initialise its
+  radio until a host sent `CFG:`, and it accepted `CFG:` only during a 120-second
+  boot window. Unplugging the modem, or restarting the app, left it silently
+  receiving nothing; reconfiguring a running modem did nothing at all. It now
+  persists its RF settings in flash, comes up listening on them, and accepts
+  `CFG:` at any time. Fallback defaults are deliberately never persisted, so a
+  modem that has never been configured still waits for the app rather than
+  committing to a guess.

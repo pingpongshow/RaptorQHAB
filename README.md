@@ -78,7 +78,7 @@ drawing and how old it is.
 | Radio | Waveshare Core1262-HF (SX1262), 850–930 MHz |
 | Camera | IMX219 / OV5647 / IMX708 / IMX477 |
 | GPS | L76K on the PL011 UART |
-| Downlink | GFSK, 96 kbps, 50 kHz deviation, 915 MHz, RaptorQ |
+| Downlink | GFSK, 96 kbps, 50 kHz deviation, 234 kHz RX, 915 MHz, RaptorQ |
 | Mesh | LoRa, Meshtastic-compatible, 17 regions reachable |
 | Power | Runs unattended; restarts itself on any fault |
 
@@ -90,6 +90,7 @@ drawing and how old it is.
 | Display | 1.9" TFT — live RSSI, SNR, packet counts, radio settings |
 | Link | USB serial to the Mac at 921600 baud |
 | Config | RF parameters set from the macOS app, no reflashing |
+| Persistence | Settings stored in flash; comes up listening after a power cycle |
 
 ### macOS companion
 
@@ -164,7 +165,8 @@ Waveshare HF HAT.
 
 | | |
 |---|---|
-| GFSK downlink | 20/20 packets, telemetry decoded correctly |
+| Image downlink | Complete 1280x960 image reassembled from 242 RaptorQ symbols, 0 checksum failures |
+| GFSK downlink | 210-byte packets, 8/8 at every length tested |
 | Meshtastic transmit | 19/19 packets decrypted by an independent radio |
 | LoRa receive | Bench transmitter **and** a live mesh node at 2 hops, −59 dBm |
 | Radio mode switch | 3.68 ms into LoRa, 4.02 ms back |
