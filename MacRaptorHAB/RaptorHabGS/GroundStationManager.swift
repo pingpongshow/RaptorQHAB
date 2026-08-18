@@ -572,6 +572,13 @@ class GroundStationManager: ObservableObject {
         // Always update latest telemetry for real-time display
         latestTelemetry = point
 
+        // Feed the position fusion, which reconciles this against Meshtastic
+        // beacons and third-party reports. RAPTOR is the highest-priority
+        // source, so this normally wins outright.
+        if point.latitude != 0 || point.longitude != 0 {
+            Task { @MainActor in PositionFusion.shared.submitRaptor(point) }
+        }
+
         // Throttle: only save/record telemetry at most once per 10 seconds
         let now = Date()
         let timeSinceLastSave = lastSavedTelemetryTime.map { now.timeIntervalSince($0) }

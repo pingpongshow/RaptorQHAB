@@ -63,6 +63,24 @@ struct ContentView: View {
                         Label("Packets", systemImage: "doc.text")
                     }
                     .tag(6)
+
+                MeshtasticView()
+                    .tabItem {
+                        Label("Meshtastic", systemImage: "point.3.connected.trianglepath.dotted")
+                    }
+                    .tag(7)
+
+                PayloadConfigView()
+                    .tabItem {
+                        Label("Config", systemImage: "slider.horizontal.3")
+                    }
+                    .tag(8)
+
+                PayloadConsoleView()
+                    .tabItem {
+                        Label("Console", systemImage: "terminal")
+                    }
+                    .tag(9)
             }
         }
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 300)
@@ -254,6 +272,11 @@ struct SidebarView: View {
             
             // SondeHub Section
             SondeHubSidebarSection()
+
+            // Position Source Section
+            Section {
+                PositionSourcePanel()
+            }
         }
         .listStyle(.sidebar)
         .frame(minWidth: 250)
@@ -709,6 +732,13 @@ struct MapDisplayView: View {
                         .padding(.bottom, 20)
                 }
             }
+        }
+        .overlay(alignment: .topLeading) {
+            // Which source the displayed position came from, and how old it
+            // is. A fused position is only trustworthy if you can see what
+            // produced it.
+            PositionSourceBadge()
+                .padding(10)
         }
         .overlay(alignment: .topTrailing) {
             VStack(alignment: .trailing, spacing: 8) {
