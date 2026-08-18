@@ -313,8 +313,10 @@ final class MeshtasticMQTTClient: ObservableObject {
         guard coordinate.isValid else { return }
 
         let altitude = (body["altitude"] as? NSNumber)?.doubleValue ?? 0
-        let timestamp = (json["timestamp"] as? NSNumber)
-            .map { Date(timeIntervalSince1970: $0.doubleValue) } ?? Date()
+        // A public broker carries whatever clock the originating node had.
+        let timestamp = PositionFix.reconcileTimestamp(
+            (json["timestamp"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
+        )
 
         positionsForwarded += 1
 

@@ -398,7 +398,7 @@ final class MeshtasticManager: NSObject, ObservableObject {
                 latitude: position.latitude, longitude: position.longitude
             ),
             altitude: Double(position.altitude),
-            timestamp: position.timestamp ?? Date(),
+            timestamp: PositionFix.reconcileTimestamp(position.timestamp),
             satellites: position.satellites,
             rssi: rssi,
             snr: snr,

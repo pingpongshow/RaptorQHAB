@@ -96,6 +96,36 @@ struct PositionFix: Identifiable {
     var detail: String?
 
     var age: TimeInterval { Date().timeIntervalSince(timestamp) }
+
+    /// Reconcile a sender-supplied time with when we actually received it.
+    ///
+    /// Freshness drives which source the map draws, so a bad clock on a remote
+    /// node silently changes what the operator sees. Two failure modes matter,
+    /// and both are common on a real mesh:
+    ///
+    /// - A node with no time sync reports epoch 0. Taken literally that is a
+    ///   fix over fifty years old, so it is discarded as stale the instant it
+    ///   arrives -- losing a perfectly good position from exactly the kind of
+    ///   bare node most likely to be the only one hearing the balloon.
+    /// - A node with a clock running fast reports the future. That gives a
+    ///   negative age, so the fix never becomes stale and sits on the map
+    ///   claiming to be current long after it stopped being true.
+    ///
+    /// Reception time is the honest fallback: it is what we can actually
+    /// vouch for. A supplied time is only trusted when it is plausible.
+    static func reconcileTimestamp(_ supplied: Date?, received: Date = Date()) -> Date {
+        guard let supplied else { return received }
+
+        // Anything before this is an unset or nonsense clock, not a real fix.
+        let plausibleEpoch = Date(timeIntervalSince1970: 1_577_836_800)  // 2020-01-01
+        if supplied < plausibleEpoch { return received }
+
+        // Allow a little skew; beyond that the sender's clock is wrong, and
+        // trusting it would make the fix immortal.
+        if supplied > received.addingTimeInterval(60) { return received }
+
+        return supplied
+    }
     var isStale: Bool { age > source.staleAfter }
 
     var ageDescription: String {
