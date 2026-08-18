@@ -11,15 +11,15 @@ import pytest
 
 from airborne.region_manager import RegionManager, RegionSource
 
-# The default hardware band is the Waveshare 915M board (902-928 MHz), which
-# can reach US, JP, ANZ, KR, TW, TH, MY_919, SG_923, PH_915 and BR_902. Region
-# transition tests therefore move between regions this board can actually use;
-# Berlin is kept as the "region the hardware cannot reach" case.
+# The default front end is the Waveshare Core1262-HF (850-930 MHz), which
+# reaches every Meshtastic region except the 433 MHz ones and China. Kyiv sits
+# on UA_868 (868.375 MHz, reachable); Beijing is on CN (478.875 MHz) and is the
+# "hardware cannot reach this" case for an HF board.
 DENVER = (39.74, -104.99)      # US        906.875 MHz  reachable
 TOKYO = (35.68, 139.69)        # JP        925.675 MHz  reachable
 SYDNEY = (-33.87, 151.21)      # ANZ       919.875 MHz  reachable
-SAO_PAULO = (-23.55, -46.63)   # BR_902    903.875 MHz  reachable
-BERLIN = (52.52, 13.40)        # EU_868    869.525 MHz  NOT reachable on 915M
+BERLIN = (52.52, 13.40)        # EU_868    869.525 MHz  reachable on HF
+BEIJING = (39.90, 116.41)      # CN        478.875 MHz  NOT reachable on HF
 MID_PACIFIC = (0.0, -140.0)    # nowhere
 FIX_3D = 2
 FIX_2D = 1
@@ -276,28 +276,27 @@ def test_status_is_json_friendly(manager):
 # --- hardware band limits -------------------------------------------------
 #
 # The SX1262 die covers 150-960 MHz, but the board's matching network, filters
-# and PA are tuned for one band. A 915M board driven at 433 MHz radiates almost
+# and PA are tuned for one range. An HF board driven at 433 MHz radiates almost
 # nothing into a badly matched load and risks damaging the amplifier, so a
 # region the hardware cannot reach must be as unavailable as unmapped ocean.
 
 
-def test_default_board_cannot_reach_the_433_and_868_regions():
+def test_hf_board_reaches_the_sub_ghz_regions_but_not_433_or_china():
     from common.meshtastic.regions import HARDWARE_BANDS, regions_within_band
 
-    reachable = {r.code for r in regions_within_band(HARDWARE_BANDS["915M"])}
-    assert "US" in reachable
-    assert "JP" in reachable
-    assert "ANZ" in reachable
-    for unreachable in ("EU_433", "UA_433", "MY_433", "PH_433", "EU_868", "CN"):
+    reachable = {r.code for r in regions_within_band(HARDWARE_BANDS["HF"])}
+    for expected in ("US", "EU_868", "JP", "ANZ", "IN", "RU", "BR_902"):
+        assert expected in reachable
+    for unreachable in ("EU_433", "UA_433", "MY_433", "PH_433", "CN"):
         assert unreachable not in reachable
 
 
 def test_flying_over_an_unreachable_region_suspends_transmission(manager):
-    """Europe on a 915M board: the balloon must go quiet, not transmit at 869."""
+    """China on an HF board: go quiet rather than transmit at 478 MHz."""
     settle(manager, DENVER)
     assert manager.may_transmit
 
-    manager.update(*BERLIN, fix_type=FIX_3D, now=3000.0)
+    manager.update(*BEIJING, fix_type=FIX_3D, now=3000.0)
 
     assert not manager.may_transmit
     assert manager.state.source is RegionSource.UNSUPPORTED
@@ -307,13 +306,13 @@ def test_flying_over_an_unreachable_region_suspends_transmission(manager):
 def test_unreachable_region_takes_effect_without_a_dwell_period(manager):
     """No grace period for transmitting out of band."""
     settle(manager, DENVER)
-    manager.update(*BERLIN, fix_type=FIX_3D, now=3000.0)
+    manager.update(*BEIJING, fix_type=FIX_3D, now=3000.0)
     assert not manager.may_transmit
 
 
 def test_leaving_an_unreachable_region_restores_transmission(manager):
     settle(manager, DENVER)
-    manager.update(*BERLIN, fix_type=FIX_3D, now=3000.0)
+    manager.update(*BEIJING, fix_type=FIX_3D, now=3000.0)
     assert not manager.may_transmit
 
     manager.update(*TOKYO, fix_type=FIX_3D, now=3100.0)
@@ -321,20 +320,35 @@ def test_leaving_an_unreachable_region_restores_transmission(manager):
     assert manager.region.code == "JP"
 
 
-def test_an_868_board_reaches_europe_and_not_america():
+def test_an_lf_board_reaches_china_and_not_america():
     from common.meshtastic.regions import HARDWARE_BANDS
 
     manager = RegionManager(
-        home_region_code="EU_868",
+        home_region_code="CN",
         dwell_sec=0.0,
         edge_margin_km=0,
-        hardware_band=HARDWARE_BANDS["868M"],
+        hardware_band=HARDWARE_BANDS["LF"],
     )
     assert manager.may_transmit
-    assert manager.active_frequency_mhz == pytest.approx(869.525, abs=0.0005)
+    assert manager.active_frequency_mhz == pytest.approx(478.875, abs=0.0005)
 
     manager.update(*DENVER, fix_type=FIX_3D, now=1000.0)
-    assert not manager.may_transmit, "a 868M board cannot transmit at 906 MHz"
+    assert not manager.may_transmit, "an LF board cannot transmit at 906 MHz"
+
+
+def test_an_hf_board_reaches_both_america_and_europe():
+    """The practical benefit of the HF front end: no mid-Atlantic blackout."""
+    manager = RegionManager(dwell_sec=0.0, edge_margin_km=0)
+
+    manager.update(*DENVER, fix_type=FIX_3D, now=1000.0)
+    assert manager.may_transmit
+    assert manager.active_frequency_mhz == pytest.approx(906.875, abs=0.0005)
+
+    manager.update(*BERLIN, fix_type=FIX_3D, now=2000.0)
+    manager.update(*BERLIN, fix_type=FIX_3D, now=2001.0)
+    assert manager.may_transmit
+    assert manager.region.code == "EU_868"
+    assert manager.active_frequency_mhz == pytest.approx(869.525, abs=0.0005)
 
 
 def test_an_unreachable_home_region_refuses_to_transmit_from_the_start():
@@ -350,6 +364,7 @@ def test_an_unreachable_home_region_refuses_to_transmit_from_the_start():
 def test_supported_regions_are_reported_for_the_ui(manager):
     codes = manager.supported_region_codes
     assert "US" in codes
+    assert "EU_868" in codes
     assert "EU_433" not in codes
     assert codes == sorted(codes)
 
@@ -365,5 +380,6 @@ def test_active_frequency_matches_the_adopted_region(manager):
 
 def test_status_reports_the_hardware_band(manager):
     status = manager.get_status()
-    assert "902" in status["hardware_band"]
+    assert "850" in status["hardware_band"]
     assert "EU_433" not in status["supported_regions"]
+    assert "EU_868" in status["supported_regions"]

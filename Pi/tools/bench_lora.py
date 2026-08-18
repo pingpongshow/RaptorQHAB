@@ -53,7 +53,7 @@ from common.meshtastic import (
     parse_user,
 )
 from common.meshtastic.crypto import expand_psk, parse_psk
-from common.meshtastic.regions import HARDWARE_BANDS
+from common.meshtastic.regions import HARDWARE_BANDS, resolve_hardware_band
 from common.meshtastic.messages import parse_text_message
 from common.radio import SX1262
 from common.radio_lora import get_preset
@@ -105,7 +105,11 @@ def resolve_frequency(args, config: Config) -> tuple:
         print(f"ERROR: unknown region {args.region!r}")
         sys.exit(2)
 
-    band = HARDWARE_BANDS.get(args.band or config.radio_hardware_band)
+    band = resolve_hardware_band(
+        args.band or config.radio_hardware_band,
+        config.radio_band_min_mhz,
+        config.radio_band_max_mhz,
+    )
     if band is None:
         print(f"ERROR: unknown hardware band {args.band!r}; "
               f"choose from {', '.join(sorted(HARDWARE_BANDS))}")
@@ -369,7 +373,7 @@ def main() -> int:
     parser.add_argument("command", choices=["rx", "tx", "switch"])
     parser.add_argument("--region", default="US", help="Meshtastic region code")
     parser.add_argument("--band", default=None,
-                        help="Radio board variant (915M/868M/490M/433M). "
+                        help="Radio front end (HF/LF). "
                              "Defaults to radio_hardware_band from the config.")
     parser.add_argument("--preset", default="LONG_FAST", help="Modem preset")
     parser.add_argument("--channel", default="LongFast", help="Channel name")

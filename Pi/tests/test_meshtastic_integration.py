@@ -98,20 +98,26 @@ def test_home_region_sets_the_matching_frequency(tmp_path):
     assert settings.tx_power_dbm == 13, "must clamp to the Japan ceiling"
 
 
-def test_868_board_reaches_europe(tmp_path):
-    """The same logic on the 868M board variant."""
-    controller, _radio = make_controller(
-        tmp_path, radio_hardware_band="868M", meshtastic_region="EU_868",
-        radio_frequency_mhz=868.0,
-    )
+def test_hf_board_reaches_europe(tmp_path):
+    """The HF front end covers 850-930 MHz, so EU 868 is in range."""
+    controller, _radio = make_controller(tmp_path, meshtastic_region="EU_868")
     settings = controller._radio_manager.lora_settings
     assert settings.frequency_mhz == pytest.approx(869.525, abs=0.0005)
     assert settings.tx_power_dbm == 14, "must clamp to the EU 868 ceiling"
 
 
+def test_lf_board_reaches_china(tmp_path):
+    controller, _radio = make_controller(
+        tmp_path, radio_hardware_band="LF", meshtastic_region="CN",
+        radio_frequency_mhz=480.0,
+    )
+    settings = controller._radio_manager.lora_settings
+    assert settings.frequency_mhz == pytest.approx(478.875, abs=0.0005)
+
+
 def test_home_region_outside_the_hardware_band_refuses_to_transmit(tmp_path):
     """
-    A 915M board configured for a 433 MHz region must not key the PA out of
+    An HF board configured for a 433 MHz region must not key the PA out of
     band; it should refuse and say so.
     """
     controller, radio = make_controller(tmp_path, meshtastic_region="EU_433")
@@ -195,16 +201,16 @@ def test_crossing_into_a_new_region_retunes_the_radio(tmp_path):
 
 def test_crossing_into_an_unreachable_region_suspends_transmission(tmp_path):
     """
-    Europe on a 915M board. The balloon must go quiet on Meshtastic rather
-    than transmit at 869 MHz through a 900 MHz matching network -- and the
+    China on an HF board. The balloon must go quiet on Meshtastic rather than
+    transmit at 478 MHz through an 850-930 MHz matching network -- and the
     image downlink must keep running.
     """
     controller, radio = make_controller(tmp_path, meshtastic_region="US")
 
     with controller._gps_lock:
-        controller._current_gps = FakeGPS(52.52, 13.40)  # Berlin
+        controller._current_gps = FakeGPS(39.90, 116.41)  # Beijing
 
-    controller._region_manager.update(52.52, 13.40, fix_type=2, now=1000.0)
+    controller._region_manager.update(39.90, 116.41, fix_type=2, now=1000.0)
     controller._apply_region_to_radio()
 
     assert controller._radio_manager.lora_settings is None

@@ -150,16 +150,48 @@ class HardwareBand:
         return f"{label} ({self.description})" if self.description else label
 
 
-# Common Waveshare SX1262 HAT variants. The 915M board is the one this payload
-# flies; it cannot do the 433 MHz regions at all.
+# Waveshare Core1262 / SX1262 HAT variants. The product is sold as two
+# front-end builds, not as per-country boards: HF covers the whole 850-930 MHz
+# sub-GHz range, LF covers 410-510 MHz. This payload flies the HF board, which
+# reaches every Meshtastic region except the 433 MHz ones and China.
 HARDWARE_BANDS = {
-    "915M": HardwareBand(902.0, 928.0, "Waveshare SX1262 915M"),
-    "868M": HardwareBand(863.0, 870.0, "Waveshare SX1262 868M"),
-    "490M": HardwareBand(470.0, 510.0, "Waveshare SX1262 490M"),
-    "433M": HardwareBand(410.0, 493.0, "Waveshare SX1262 433M"),
+    "HF": HardwareBand(850.0, 930.0, "Waveshare Core1262-HF"),
+    "LF": HardwareBand(410.0, 510.0, "Waveshare Core1262-LF"),
 }
 
-DEFAULT_HARDWARE_BAND = HARDWARE_BANDS["915M"]
+DEFAULT_HARDWARE_BAND = HARDWARE_BANDS["HF"]
+
+
+def resolve_hardware_band(
+    code: str,
+    custom_min_mhz: Optional[float] = None,
+    custom_max_mhz: Optional[float] = None,
+) -> Optional[HardwareBand]:
+    """
+    Look up a hardware band, or build a custom one.
+
+    Args:
+        code: "HF", "LF", or "CUSTOM".
+        custom_min_mhz, custom_max_mhz: Required when code is "CUSTOM", for a
+            board whose front end is not one of the stock variants.
+
+    Returns:
+        The band, or None if the code is unrecognised or a custom range is
+        invalid.
+    """
+    code = (code or "").upper()
+
+    if code == "CUSTOM":
+        if custom_min_mhz is None or custom_max_mhz is None:
+            return None
+        try:
+            return HardwareBand(
+                float(custom_min_mhz), float(custom_max_mhz), "custom front end"
+            )
+        except ValueError:
+            return None
+
+    return HARDWARE_BANDS.get(code)
 
 
 def regions_within_band(

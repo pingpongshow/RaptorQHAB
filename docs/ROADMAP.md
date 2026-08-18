@@ -53,8 +53,8 @@ Two things follow that are worth stating plainly:
 | Q1 GPS-loss fallback | **Hold last known mode** |
 | Q3 External dependencies | **Prefer none** — hand-roll protobuf and AES on both sides |
 | Q6 Image link frequency | Changeable, but **must match the ground modem** — never auto-tuned |
-| Hardware | Waveshare SX1262 LoRa HAT for Pi Zero + L76K GPS, **915M variant** |
-| Hardware band | 902-928 MHz. The 433 MHz regions are physically unreachable |
+| Hardware | Waveshare SX1262 (HF) LoRa HAT for Pi Zero + L76K GPS |
+| Hardware band | **850-930 MHz** (Core1262-HF). The 433 MHz regions and China are unreachable |
 | Regional frequency | **Auto-select Meshtastic band from GPS position** (see below) |
 
 ---
@@ -199,57 +199,54 @@ Phase 4 scheduler can interleave images with beacons.
 
 ---
 
-## Phase 4 — Zone-aware scheduler
+## Phase 4 — Zone-aware scheduler ✅ COMPLETE
 
 *Branch `phase-4-scheduler`.*
 
-New config block:
+1. ✅ `airborne/zone_manager.py` — four zones with sticky transitions:
+   **LAUNCH** (inside the radius), **CRUISE** (outside it, or above the
+   altitude override), **LANDED** (low and stationary), **UNKNOWN** (no fix
+   yet, treated as LAUNCH since the balloon is almost certainly still on the
+   pad). Hysteresis on the radius, an altitude override, and a least-squares
+   vertical-rate fit that survives GPS altitude noise.
+2. ✅ Launch point auto-captured from the first 3D fix when unset, including
+   the launch elevation, so altitudes are reported above ground level.
+3. ✅ `airborne/transmit_scheduler.py` — a debt-model airtime allocator.
+   Entitlement accrues in proportion to each activity's share of wall-clock
+   time and the most-indebted activity goes next, so the long-run ratios hold
+   even though slices routinely overrun (a slice always finishes the packet it
+   started). The Meshtastic beacon interval is a **hard floor**: an overdue
+   beacon beats any image backlog.
+4. ✅ **LANDED mode** (your call): images stop entirely, capture is disabled,
+   and everything goes to a slow recovery beacon.
+5. ✅ Zone changes are logged with distance, altitude AGL, and vertical rate,
+   and surfaced in the periodic status line.
 
-```
-launch_zone_lat / launch_zone_lon      # 0,0 = auto-capture first 3D fix
-launch_zone_radius_m          = 8000
-zone_hysteresis_m             = 800    # exit at R, re-enter at R - 800
-zone_altitude_override_m      = 3000   # above this AGL, force CRUISE
-inzone_image_percent          = 98
-inzone_mesh_interval_sec      = 600
-cruise_image_percent          = 5
-cruise_mesh_interval_sec      = 300
-cruise_lora_rx_percent        = 5
-mesh_beacon_text              = "..."
-```
+Default budgets, all configurable:
 
-Plus a **LANDED** mode (confirmed): triggered by low altitude with no vertical
-movement for a sustained period, it goes Meshtastic-only at a slow beacon rate
-and stops image capture entirely to conserve battery. When terrain blocks the
-GFSK link from a payload on the ground, a low-rate LoRa beacon is very often
-what actually finds it.
+| Zone | Images | Meshtastic | Idle | Beacon |
+|---|---|---|---|---|
+| LAUNCH | 98% | 1% | 1% | 600 s |
+| CRUISE | 5% | 5% | 90% | 300 s |
+| LANDED | 0% | 5% | 95% | 60 s |
 
-```
-landed_altitude_m             = 1000   # AGL relative to launch elevation
-landed_vertical_rate_mps      = 0.5    # below this counts as stationary
-landed_dwell_sec              = 120    # sustained before declaring LANDED
-landed_mesh_interval_sec      = 60
-```
+Percentages are of **airtime, not packets** — a GFSK image packet is a couple
+of milliseconds and a LongFast beacon is several hundred, so "5% of packets"
+and "5% of airtime" are wildly different things, and airtime is what costs
+battery and occupies the channel.
 
-1. `ZoneManager` — great-circle distance from launch point, with **hysteresis**
-   so a balloon drifting along the boundary doesn't thrash modes, plus the
-   altitude override and the LANDED transition.
-2. **No-GPS-fix behavior must be explicit** (see open question Q1). Proposed
-   default: hold the last known zone; if no fix has *ever* been acquired,
-   assume IN-ZONE (safe: keeps the bandwidth on images near the launch site
-   where recovery matters, and stays off the mesh).
-3. `TransmitScheduler` — a time-slice allocator over `RadioModeManager` that
-   honors the percentages, guarantees the Meshtastic beacon interval as a hard
-   floor regardless of image backlog, and never interrupts a GFSK packet
-   mid-transmission.
-4. Auto-capture the launch point from the first 3D fix if lat/lon are unset, and
-   log it prominently.
-5. Every zone transition logged and reflected in downlink telemetry, so you can
-   see from the ground which mode the balloon believes it's in.
+**Exit criteria — met.** `tests/test_flight_simulation.py` drives a synthetic
+track through the real controller: pad → ascent → drift → descent → landing.
+Zones appear in order, airtime lands within tolerance of the budget in each
+zone, images stop after landing, no stretch of the flight goes without a
+beacon, and a US-to-Europe drift retunes to 869.525 MHz clamped to 14 dBm.
+473 tests, no hardware.
 
-**Exit:** simulated GPS track (no hardware) drives the scheduler through
-in-zone → cruise → back, and the emitted mode ratios match config within
-tolerance.
+**Bug caught by these tests:** a payload sitting on the launch pad is low and
+stationary for far longer than any dwell period, so it declared itself LANDED
+*before launch* — stopping image capture and dropping to slow beacons while
+still on the ground. Landing detection is now disarmed until the balloon has
+actually been above `zone_landed_arm_altitude_m` (default 2000 m AGL).
 
 ---
 
@@ -395,24 +392,25 @@ rather than a bug:**
 
 **Hardware band limit.** The SX1262 die spans 150-960 MHz, but a board is not
 a die: the matching network, filters and PA on the fitted HAT are tuned for one
-band. The 915M board this payload flies covers **902-928 MHz**, which means the
-433 MHz Meshtastic regions are not merely a bad idea, they are unreachable —
-transmitting there radiates almost nothing into a badly matched load and risks
-damaging the amplifier.
+range. The **Waveshare Core1262-HF** covers **850-930 MHz**; the LF variant
+covers 410-510 MHz. Driving an HF board at 433 MHz radiates almost nothing into
+a badly matched load and risks damaging the amplifier.
 
 So the hardware band is a first-class constraint, not a footnote:
 
-- `radio_hardware_band` declares the fitted variant (915M / 868M / 490M / 433M).
+- `radio_hardware_band` declares the fitted front end (HF / LF / CUSTOM, with
+  `radio_band_min_mhz` and `radio_band_max_mhz` for a non-stock board).
 - Regions whose derived channel frequency falls outside it are **unavailable**,
-  and flying over one suspends Meshtastic exactly like unmapped territory.
+  and flying over one suspends Meshtastic exactly like unmapped territory —
+  with no dwell period, because out-of-band transmission gets no grace.
 - Configuration is validated up front: a home region or an image-link frequency
   outside the board's band is rejected with the list of reachable regions.
 - The bench tool refuses out-of-band frequencies as a hard stop.
 
-On the 915M board the reachable regions are **US, JP, ANZ, KR, TW, TH, MY_919,
-SG_923, PH_915, BR_902**. Everything else — all of Europe, China, India, Russia
-— is out of band and silences Meshtastic while leaving the image downlink
-untouched.
+On the HF board **17 of the 22 regions are reachable**: US, EU_868, JP, ANZ,
+KR, TW, RU, IN, NZ_865, TH, UA_868, MY_919, SG_923, PH_868, PH_915, BR_902,
+NP_865. The four 433 MHz regions and China (478 MHz) are not, and flying over
+one silences Meshtastic while leaving the image downlink untouched.
 
 Region determination uses a coarse bounding-box table rather than a country
 polygon database — appropriate both for the payload's compute budget and for
