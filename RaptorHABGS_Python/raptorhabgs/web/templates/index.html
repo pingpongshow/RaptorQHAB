@@ -803,6 +803,9 @@
                 <button class="modal-tab active" onclick="switchSettingsTab('modem')">Radio Modem</button>
                 <button class="modal-tab" onclick="switchSettingsTab('sondehub')">SondeHub</button>
                 <button class="modal-tab" onclick="switchSettingsTab('mission')">Missions</button>
+                <button class="modal-tab" onclick="switchSettingsTab('gps')">GPS</button>
+                <button class="modal-tab" onclick="switchSettingsTab('maps')">Offline Maps</button>
+                <button class="modal-tab" onclick="switchSettingsTab('alerts')">Alerts</button>
             </div>
             <div class="modal-body">
                 <div class="tab-content active" id="settings-modem">
@@ -863,6 +866,72 @@
                     <p style="font-size: 12px; color: var(--text-secondary); margin-top: 10px;">
                         When enabled, recording will automatically start when the first valid telemetry is received above 50m altitude.
                     </p>
+                </div>
+
+                <div class="tab-content" id="settings-gps">
+                    <p class="muted">A GPS on the ground station gives bearing and
+                       distance to the balloon, which is what you actually steer by.</p>
+                    <label>Serial port</label>
+                    <select id="gpsPortSelect" style="width:100%;"></select>
+                    <label>Baud rate</label>
+                    <select id="gpsBaud" style="width:100%;">
+                        <option>4800</option><option selected>9600</option>
+                        <option>19200</option><option>38400</option>
+                        <option>57600</option><option>115200</option>
+                    </select>
+                    <div style="margin-top:10px;">
+                        <button class="btn" onclick="gpsRefreshPorts()">Refresh ports</button>
+                        <button class="btn btn-primary" onclick="gpsConnectFromSettings()">Connect</button>
+                        <button class="btn" onclick="gpsDisconnect()">Disconnect</button>
+                    </div>
+                    <div id="gpsSettingsStatus" class="muted" style="margin-top:8px;"></div>
+                </div>
+
+                <div class="tab-content" id="settings-maps">
+                    <p class="muted">Recovery happens where there is no signal.
+                       Download the flight area before launch. Tiles come from
+                       OpenStreetMap's donated servers — keep requests modest.</p>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                        <div><label>Centre latitude</label>
+                             <input type="number" step="0.00001" id="mapLat" value="40.0" style="width:100%;"></div>
+                        <div><label>Centre longitude</label>
+                             <input type="number" step="0.00001" id="mapLon" value="-105.0" style="width:100%;"></div>
+                        <div><label>Radius (km)</label>
+                             <input type="number" id="mapRadius" value="40" style="width:100%;"></div>
+                        <div><label>Zoom range</label>
+                             <div style="display:flex;gap:6px;">
+                               <input type="number" id="mapMinZoom" value="8" style="width:50%;">
+                               <input type="number" id="mapMaxZoom" value="13" style="width:50%;">
+                             </div></div>
+                    </div>
+                    <div style="margin-top:10px;">
+                        <button class="btn" onclick="mapsEstimate()">Estimate</button>
+                        <button class="btn btn-primary" onclick="mapsDownload(false)">Download</button>
+                        <button class="btn" onclick="mapsCancel()">Cancel</button>
+                        <button class="btn" onclick="mapsClear()">Clear cache</button>
+                        <button class="btn" onclick="mapsUseCached()">Use cached tiles on map</button>
+                    </div>
+                    <div id="mapsStatus" class="muted" style="margin-top:8px;white-space:pre-line;"></div>
+                </div>
+
+                <div class="tab-content" id="settings-alerts">
+                    <p class="muted">During a flight you are driving or holding an
+                       antenna, not watching the screen. Alerts that fire constantly
+                       get ignored, so only the ones that change what you do are on
+                       by default.</p>
+                    <label><input type="checkbox" id="alertsEnabled" onchange="alertsSave()"> Alerts enabled</label><br>
+                    <label><input type="checkbox" id="alertsSpeak" onchange="alertsSave()"> Speak the message too</label><br>
+                    <label>Volume</label>
+                    <input type="range" id="alertsVolume" min="0" max="100" value="70"
+                           oninput="alertsSave()" style="width:100%;">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+                        <div><label>Signal lost after (s)</label>
+                             <input type="number" id="alertsSignalLost" value="60" onchange="alertsSave()" style="width:100%;"></div>
+                        <div><label>Low battery below (mV)</label>
+                             <input type="number" id="alertsLowBattery" value="3500" onchange="alertsSave()" style="width:100%;"></div>
+                    </div>
+                    <div id="alertsList" style="margin-top:10px;"></div>
+                    <div id="alertsPlayer" class="muted" style="margin-top:8px;"></div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -1904,6 +1973,157 @@
             loadPackets();
         }
 
+
+        // ================= offline maps, alerts, GPS settings =================
+        let offlineTileLayer = null;
+
+        async function mapsRefresh() {
+            const r = await fetch('/api/maps/status').then(r => r.json());
+            const c = r.cache, d = r.download;
+            const byZoom = Object.entries(c.by_zoom || {})
+                .map(([z, n]) => `z${z}: ${n}`).join(', ');
+            document.getElementById('mapsStatus').textContent =
+                `Cached: ${c.tiles} tiles, ${c.megabytes} MB` +
+                (byZoom ? `\n${byZoom}` : '') +
+                (d.running
+                    ? `\nDownloading ${d.completed}/${d.total} (${d.percent}%), ${d.failed} failed — ${d.message}`
+                    : (d.message ? `\nLast run: ${d.message}` : ''));
+            if (d.running) setTimeout(mapsRefresh, 1000);
+        }
+
+        function mapsBody() {
+            return {
+                latitude: parseFloat(document.getElementById('mapLat').value),
+                longitude: parseFloat(document.getElementById('mapLon').value),
+                radius_km: parseFloat(document.getElementById('mapRadius').value),
+                min_zoom: parseInt(document.getElementById('mapMinZoom').value, 10),
+                max_zoom: parseInt(document.getElementById('mapMaxZoom').value, 10),
+            };
+        }
+
+        async function mapsEstimate() {
+            const r = await fetch('/api/maps/estimate', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(mapsBody())
+            }).then(r => r.json());
+            if (!r.ok) { alert(r.error); return; }
+            const e = r.estimate;
+            alert(`${e.tiles} tiles cover this region, ${e.missing} not yet cached.\n` +
+                  `Roughly ${e.estimated_megabytes} MB and ${e.estimated_minutes} minutes ` +
+                  `at the paced request rate.` +
+                  (e.large ? '\n\nThis is a large request of a donated tile service ' +
+                             'and will need confirming.' : ''));
+        }
+
+        async function mapsDownload(acknowledged) {
+            const body = mapsBody();
+            body.acknowledge_large = acknowledged;
+            const r = await fetch('/api/maps/download', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            }).then(r => r.json());
+            if (!r.ok) {
+                if (!acknowledged && /large/i.test(r.error) && confirm(r.error + '\n\nDownload anyway?')) {
+                    return mapsDownload(true);
+                }
+                alert(r.error); return;
+            }
+            mapsRefresh();
+        }
+
+        async function mapsCancel() { await fetch('/api/maps/cancel', {method:'POST'}); mapsRefresh(); }
+        async function mapsClear() {
+            if (!confirm('Delete every cached tile?')) return;
+            await fetch('/api/maps/clear', {method:'POST'}); mapsRefresh();
+        }
+
+        function mapsUseCached() {
+            // Point the map at our own tile endpoint so it works with no
+            // internet: the cache is the only source in the field.
+            if (typeof map === 'undefined' || !map) { alert('Map is not ready yet.'); return; }
+            if (offlineTileLayer) { map.removeLayer(offlineTileLayer); offlineTileLayer = null; }
+            offlineTileLayer = L.tileLayer('/api/maps/tile/{z}/{x}/{y}.png', {
+                maxZoom: 18, attribution: '© OpenStreetMap (cached locally)'
+            });
+            offlineTileLayer.addTo(map);
+            alert('The map is now drawing from the local tile cache.');
+        }
+
+        // ---- alerts ----
+        async function alertsLoad() {
+            const r = await fetch('/api/alerts/status').then(r => r.json());
+            document.getElementById('alertsEnabled').checked = r.enabled;
+            document.getElementById('alertsSpeak').checked = r.speak;
+            document.getElementById('alertsVolume').value = Math.round(r.volume * 100);
+            document.getElementById('alertsPlayer').textContent = 'Sound output: ' + r.player;
+            document.getElementById('alertsList').innerHTML =
+                Object.entries(r.alerts).map(([name, a]) => `
+                    <div style="display:flex;align-items:center;gap:8px;padding:2px 0;">
+                        <label style="flex:1;">
+                            <input type="checkbox" data-alert="${name}" ${a.enabled ? 'checked' : ''}
+                                   onchange="alertsSave()"> ${a.label}
+                        </label>
+                        <button class="btn" onclick="alertsTest('${name}')">Test</button>
+                    </div>`).join('');
+        }
+
+        async function alertsSave() {
+            const per = {};
+            document.querySelectorAll('#alertsList input[data-alert]').forEach(el => {
+                per[el.dataset.alert] = el.checked;
+            });
+            await fetch('/api/alerts/config', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    enabled: document.getElementById('alertsEnabled').checked,
+                    speak: document.getElementById('alertsSpeak').checked,
+                    volume: parseInt(document.getElementById('alertsVolume').value, 10) / 100,
+                    signal_lost_after_sec: parseFloat(document.getElementById('alertsSignalLost').value),
+                    low_battery_mv: parseInt(document.getElementById('alertsLowBattery').value, 10),
+                    per_alert: per,
+                })
+            });
+        }
+
+        async function alertsTest(name) {
+            await fetch('/api/alerts/test', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({alert: name})
+            });
+        }
+
+        // ---- GPS settings ----
+        async function gpsRefreshPorts() {
+            const r = await fetch('/api/ports').then(r => r.json());
+            const sel = document.getElementById('gpsPortSelect');
+            sel.innerHTML = '';
+            // The endpoint returns a bare array of device paths; tolerate the
+            // object form too so this keeps working if it gains detail later.
+            const ports = Array.isArray(r) ? r : (r.ports || []);
+            ports.forEach(p => {
+                const o = document.createElement('option');
+                o.value = p.device || p; o.textContent = (p.device || p) + (p.description ? ' — ' + p.description : '');
+                sel.appendChild(o);
+            });
+        }
+
+        async function gpsConnectFromSettings() {
+            const r = await fetch('/api/gps/connect', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    port: document.getElementById('gpsPortSelect').value,
+                    baud: parseInt(document.getElementById('gpsBaud').value, 10)
+                })
+            }).then(r => r.json());
+            document.getElementById('gpsSettingsStatus').textContent =
+                r.success || r.ok ? 'Connected' : ('Failed: ' + (r.error || 'unknown'));
+        }
+
+        async function gpsDisconnect() {
+            await fetch('/api/gps/disconnect', {method: 'POST'});
+            document.getElementById('gpsSettingsStatus').textContent = 'Disconnected';
+        }
+
         function switchMainTab(tab) {
             document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
@@ -1932,6 +2152,9 @@
             document.querySelectorAll('.modal-body .tab-content').forEach(c => c.classList.remove('active'));
             event.target.classList.add('active');
             document.getElementById('settings-' + tab).classList.add('active');
+            if (tab === 'maps')   { mapsRefresh(); }
+            if (tab === 'alerts') { alertsLoad(); }
+            if (tab === 'gps')    { gpsRefreshPorts(); }
         }
         
         async function loadConfig() {

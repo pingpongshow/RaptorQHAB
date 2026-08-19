@@ -28,6 +28,8 @@ from ..core.meshtastic_manager import (
 from ..core.meshtastic_mqtt import MeshtasticMQTTClient
 from ..core.position_fusion import PositionFusion, PositionSource
 from ..core.meshtastic import channel_hash as meshtastic_channel_hash
+from ..core.offline_maps import OfflineMapManager
+from ..core.audio_alerts import AudioAlertManager, AlertType
 
 # Reduce Flask/Werkzeug logging noise
 log = logging.getLogger('werkzeug')
@@ -83,6 +85,11 @@ class WebServer:
         self.packet_log = []
         self.max_packet_log = 500
         self._wire_position_sources()
+
+        # Offline tiles and audible alerts. Both matter most in the field,
+        # where nobody is looking at this browser tab.
+        self.offline_maps = OfflineMapManager(get_data_directory() / "tiles.mbtiles")
+        self.audio_alerts = AudioAlertManager()
         
         # Apply config
         self.mission_manager.auto_record_enabled = self.config.auto_record
@@ -371,6 +378,94 @@ class WebServer:
             return jsonify({'status': 'stopped', 'folder': folder})
     
 
+
+
+        # ---- offline maps and audio alerts ---------------------------------
+
+        @self.app.route('/api/maps/status')
+        def maps_status():
+            return jsonify(self.offline_maps.status())
+
+        @self.app.route('/api/maps/estimate', methods=['POST'])
+        def maps_estimate():
+            d = request.get_json(silent=True) or {}
+            try:
+                return jsonify({"ok": True, "estimate": self.offline_maps.estimate(
+                    float(d.get("latitude", 0)), float(d.get("longitude", 0)),
+                    float(d.get("radius_km", 25)), int(d.get("min_zoom", 8)),
+                    int(d.get("max_zoom", 13)))})
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 400
+
+        @self.app.route('/api/maps/download', methods=['POST'])
+        def maps_download():
+            d = request.get_json(silent=True) or {}
+            try:
+                estimate = self.offline_maps.download_region(
+                    float(d.get("latitude", 0)), float(d.get("longitude", 0)),
+                    float(d.get("radius_km", 25)), int(d.get("min_zoom", 8)),
+                    int(d.get("max_zoom", 13)),
+                    acknowledge_large=bool(d.get("acknowledge_large")))
+            except (ValueError, RuntimeError) as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 400
+            return jsonify({"ok": True, "estimate": estimate})
+
+        @self.app.route('/api/maps/cancel', methods=['POST'])
+        def maps_cancel():
+            self.offline_maps.cancel()
+            return jsonify({"ok": True})
+
+        @self.app.route('/api/maps/clear', methods=['POST'])
+        def maps_clear():
+            self.offline_maps.cache.clear()
+            return jsonify({"ok": True})
+
+        @self.app.route('/api/maps/tile/<int:z>/<int:x>/<int:y>.png')
+        def maps_tile(z, x, y):
+            """
+            Serve a tile, cache first.
+
+            Pointing the map at this rather than straight at OpenStreetMap is
+            what makes the browser work with no internet at all: in the field
+            the cache is the only source, and a miss simply draws nothing.
+            """
+            data = self.offline_maps.get_tile(z, x, y)
+            if data is None:
+                return Response(status=404)
+            return Response(data, mimetype="image/png",
+                            headers={"Cache-Control": "max-age=86400"})
+
+        @self.app.route('/api/alerts/status')
+        def alerts_status():
+            return jsonify(self.audio_alerts.status())
+
+        @self.app.route('/api/alerts/config', methods=['POST'])
+        def alerts_config():
+            d = request.get_json(silent=True) or {}
+            config = self.audio_alerts.config
+            if "enabled" in d:
+                config.enabled = bool(d["enabled"])
+            if "volume" in d:
+                config.volume = max(0.0, min(1.0, float(d["volume"])))
+            if "speak" in d:
+                config.speak = bool(d["speak"])
+            if "signal_lost_after_sec" in d:
+                config.signal_lost_after_sec = float(d["signal_lost_after_sec"])
+            if "low_battery_mv" in d:
+                config.low_battery_mv = int(d["low_battery_mv"])
+            for name, enabled in (d.get("per_alert") or {}).items():
+                config.per_alert[name] = bool(enabled)
+            return jsonify({"ok": True, "status": self.audio_alerts.status()})
+
+        @self.app.route('/api/alerts/test', methods=['POST'])
+        def alerts_test():
+            name = (request.get_json(silent=True) or {}).get("alert", "BURST")
+            try:
+                alert = AlertType[name]
+            except KeyError:
+                return jsonify({"ok": False, "error": f"unknown alert {name}"}), 400
+            self.audio_alerts.player.play(alert, self.audio_alerts.config.volume)
+            return jsonify({"ok": True})
 
         # ---- Meshtastic node, MQTT, fusion, packet log ---------------------
 

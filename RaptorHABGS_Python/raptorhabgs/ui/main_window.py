@@ -23,10 +23,15 @@ from .missions_tab import MissionsTab
 from .settings_dialogs import SettingsDialog
 from .payload_tab import PayloadConfigTab, PayloadConsoleTab
 from .mesh_tab import MeshtasticTab, PositionSourcesTab
+from .graphs_tab import GraphsTab, PacketsTab
+from .extra_settings import OfflineMapsPanel, AudioAlertsPanel
 from ..core.payload_link import PayloadLink
 from ..core.meshtastic_manager import MeshtasticManager
 from ..core.meshtastic_mqtt import MeshtasticMQTTClient
 from ..core.position_fusion import PositionFusion
+from ..core.offline_maps import OfflineMapManager
+from ..core.audio_alerts import AudioAlertManager
+from ..core.config import get_data_directory
 
 
 class MainWindow(QMainWindow):
@@ -99,6 +104,19 @@ class MainWindow(QMainWindow):
         self._wire_fusion()
         self.mesh_tab = MeshtasticTab(self.mesh_manager, self.mqtt_client, self.fusion)
         self.sources_tab = PositionSourcesTab(self.fusion)
+
+        # Offline tiles and audible alerts: both matter most in the field,
+        # where nobody is looking at this window.
+        self.offline_maps = OfflineMapManager(
+            get_data_directory() / "tiles.mbtiles")
+        self.audio_alerts = AudioAlertManager()
+
+        self.graphs_tab = GraphsTab(
+            lambda: getattr(self.ground_station, "telemetry_history", []))
+        self.packets_tab = PacketsTab()
+        self.maps_panel = OfflineMapsPanel(self.offline_maps)
+        self.alerts_panel = AudioAlertsPanel(self.audio_alerts)
+        self._wire_alerts()
         
         # Add tabs
         self.tabs.addTab(self.tracking_tab, "📍 Live Tracking")
@@ -109,6 +127,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.payload_console_tab, "⌨️ Console")
         self.tabs.addTab(self.mesh_tab, "🕸️ Meshtastic")
         self.tabs.addTab(self.sources_tab, "🛰️ Position Sources")
+        self.tabs.addTab(self.graphs_tab, "📈 Graphs")
+        self.tabs.addTab(self.packets_tab, "📦 Packets")
+        self.tabs.addTab(self.maps_panel, "🗺️ Offline Maps")
+        self.tabs.addTab(self.alerts_panel, "🔔 Alerts")
         
         layout.addWidget(self.tabs)
         
@@ -116,6 +138,39 @@ class MainWindow(QMainWindow):
         self.tracking_tab.start_requested.connect(self._start_receiving)
         self.tracking_tab.stop_requested.connect(self._stop_receiving)
     
+    def _wire_alerts(self):
+        """
+        Feed telemetry to the alert manager and the packet log.
+
+        Signal loss is only detectable by watching the clock, so it is polled
+        rather than driven by arriving data -- an alert that needs a packet to
+        fire would never announce that packets stopped.
+        """
+        station = self.ground_station
+
+        def on_telemetry(point):
+            altitude = getattr(point, "altitude", None)
+            battery = getattr(point, "batteryMV", None) or getattr(point, "battery_mv", None)
+            self.audio_alerts.on_telemetry(altitude_m=altitude, battery_mv=battery)
+            self.packets_tab.add_packet({
+                "timestamp": getattr(point, "timestamp", None),
+                "type": "TELEMETRY",
+                "sequence": getattr(point, "sequence", None),
+                "rssi": getattr(point, "rssi", None),
+                "snr": getattr(point, "snr", None),
+                "detail": (f"{altitude:.0f} m" if altitude is not None else ""),
+            })
+
+        if hasattr(station, "telemetry_received"):
+            try:
+                station.telemetry_received.connect(on_telemetry)
+            except Exception:
+                pass
+
+        self._alert_timer = QTimer(self)
+        self._alert_timer.timeout.connect(self.audio_alerts.check_signal)
+        self._alert_timer.start(5000)
+
     def _wire_fusion(self):
         """Point the Meshtastic node and MQTT at the shared fusion."""
         def mesh_position(node_id, position):
