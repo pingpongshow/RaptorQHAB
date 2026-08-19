@@ -132,6 +132,24 @@ class WebSerialManager:
         if self.on_disconnected:
             self.on_disconnected()
     
+    def write(self, data: bytes) -> bool:
+        """
+        Send raw bytes to the modem.
+
+        The Meshtastic link needs this to transmit, and it did not exist -- the
+        link was constructed with `writer=self.write` regardless, so the web
+        server raised AttributeError before it finished starting. Nothing in
+        the suite instantiated WebServer, so it went unnoticed.
+        """
+        if not self.is_connected or not self.serial:
+            return False
+        try:
+            self.serial.write(data)
+            return True
+        except Exception as exc:
+            print(f"[WebSerialManager] write failed: {exc}")
+            return False
+
     def configure_modem(self, config: ModemConfig) -> bool:
         """Send configuration to the modem."""
         if not self.is_connected or not self.serial:

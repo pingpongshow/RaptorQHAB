@@ -147,7 +147,9 @@ class MeshtasticMQTTClient:
     # -- receive -----------------------------------------------------------
 
     def _read_loop(self) -> None:
-        last_ping = time.time()
+        # Monotonic: a backward wall-clock step would suppress keepalives until
+        # the clock caught up, and the broker would drop the connection.
+        last_ping = time.monotonic()
         while self._running and self._socket:
             try:
                 chunk = self._socket.recv(8192)
@@ -168,8 +170,8 @@ class MeshtasticMQTTClient:
                     break
                 self._handle_packet(*packet)
 
-            if time.time() - last_ping > 30:
-                last_ping = time.time()
+            if time.monotonic() - last_ping > 30:
+                last_ping = time.monotonic()
                 try:
                     self._send_ping()
                 except Exception:

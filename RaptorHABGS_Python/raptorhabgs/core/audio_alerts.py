@@ -249,7 +249,11 @@ class AudioAlertManager:
                      battery_mv: Optional[int] = None,
                      vertical_rate_mps: Optional[float] = None) -> None:
         """Feed each telemetry point; alerts fall out of the changes."""
-        now = time.time()
+        # Monotonic, and paired with check_signal(): this measures silence, not
+        # a point in history. On a Pi ground station -- no RTC -- a wall-clock
+        # step would either fire a spurious "signal lost" or suppress a real
+        # one.
+        now = time.monotonic()
         if self._signal_lost:
             self._signal_lost = False
             self.play(AlertType.SIGNAL_RESTORED, "Signal restored")
@@ -299,7 +303,7 @@ class AudioAlertManager:
         """Call periodically; silence is only detectable by watching the clock."""
         if self._last_telemetry is None or self._signal_lost:
             return
-        if time.time() - self._last_telemetry > self.config.signal_lost_after_sec:
+        if time.monotonic() - self._last_telemetry > self.config.signal_lost_after_sec:
             self._signal_lost = True
             self.play(AlertType.SIGNAL_LOST,
                       f"Signal lost for {int(self.config.signal_lost_after_sec)} seconds")

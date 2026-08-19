@@ -821,3 +821,86 @@ only the firmware prints settles it, silence moves on. It is asynchronous
 because that listening is real waiting and it is called from a button, and it
 reports *why* it failed — "no serial ports found" and "opened three, none of
 them a modem" send you to different places.
+
+---
+
+## Python ground station review (2026-08)
+
+14,807 lines. Five defects fixed, several suspicions checked and dismissed.
+
+### P1. The web server could not start at all
+
+`WebSerialManager` was constructed with
+`ModemMeshtasticLink(writer=self.write)` — and had no `write` method. Every
+attempt to start the web UI raised `AttributeError` before construction
+finished. Introduced by my own Meshtastic work the previous day, and invisible
+because nothing in the suite ever instantiated `WebServer`.
+
+`tests/test_python_gs_web.py` now constructs it, exercises `write()`, and
+serves a page, so this cannot repeat quietly.
+
+### P2. The web UI listened on every interface, unauthenticated
+
+`--host` defaulted to `0.0.0.0` and `WebServer.__init__` matched it. There is
+no authentication anywhere, in front of thirty state-changing endpoints:
+stopping the receiver, rewriting the radio configuration, deleting recorded
+flights.
+
+Now defaults to `127.0.0.1`. Binding wider still works — a phone on the same
+network is a genuinely good second screen at a launch site — but it has to be
+asked for, and prints what it is exposing when it happens.
+
+### P3. Card import would write anywhere
+
+`/api/card/import` took its output directory from the request body, with an
+`overwrite` flag, and wrote decrypted flight data there. Combined with P2 that
+is an arbitrary file write for anyone on the network. Confined to the
+`recovered` folder; absolute paths are neutralised into it and traversal is
+refused.
+
+### P4. Local elapsed time measured on the wall clock
+
+The same class of defect that hit the payload, and it matters here for the same
+reason — the ground station is meant to run on a Pi, which has no RTC.
+
+| | Effect of a clock step |
+|---|---|
+| `payload_link` request timeout | Backward step parks the caller on a condition variable far past the timeout |
+| `meshtastic_mqtt` keepalive | Backward step suppresses pings; the broker drops the connection |
+| `audio_alerts` silence detection | Forward step fires a spurious "signal lost"; backward step suppresses a real one |
+
+All three are now monotonic.
+
+`position_fusion` deliberately keeps the wall clock and was left alone: its
+timestamps arrive from remote Meshtastic nodes and MQTT gateways as epoch
+times, so they have to be comparable to one. `reconcile_timestamp` already
+guards the skew that matters there.
+
+### P5. Surveying a card blocked the Qt event loop
+
+`card_tab.read_card()` called `survey_card()` inline, which walks the images
+and logs directories and stats every file — 710 of them on the card in this
+project, over USB. The import beside it already ran in a `QThread`; the survey
+did not. Now it does.
+
+Exactly the same defect as the macOS app's `CardImportManager.read()`, found
+independently in both.
+
+### Checked and found fine
+
+- **Qt threading.** Core never touches widgets directly and communicates by
+  signal, 63 emissions. The discipline is right.
+- **`mission_id` from the URL into `load_mission`/`delete_mission`.** Looked
+  like a path-traversal delete. It is not: both iterate the missions directory
+  and match an `id` field inside each `mission.json`, so the URL value never
+  builds a path.
+- **`send_from_directory` for images.** Werkzeug's `safe_join` handles
+  traversal.
+- **Resource lifecycle.** Threads joined, ports closed, and `offline_maps`
+  explicitly closes sqlite connections in a `finally` — with a comment
+  explaining that sqlite's own context manager does not.
+- **Memory growth.** Telemetry bounded to 5000 points, messages to 100.
+- **The 14 bare `except:`** are around `close()` in teardown paths, where
+  swallowing is the right behaviour.
+- **`MeshtasticManager.send_text`**, which the UI does call, does not block —
+  it writes and returns.

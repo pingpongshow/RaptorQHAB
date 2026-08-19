@@ -211,10 +211,13 @@ class PayloadLink:
                 "params": params or {},
             }).encode())
 
-            deadline = time.time() + timeout
+            # Monotonic: a wall-clock step backwards here would make
+            # `remaining` enormous and park the caller on the condition
+            # variable long past the timeout it asked for.
+            deadline = time.monotonic() + timeout
             with self._replies:
                 while request_id not in self._pending:
-                    remaining = deadline - time.time()
+                    remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise TimeoutError(f"payload did not answer '{method}'")
                     self._replies.wait(remaining)

@@ -42,7 +42,7 @@ log.setLevel(logging.WARNING)
 class WebServer:
     """Flask-based web server for remote GUI access."""
     
-    def __init__(self, host: str = "0.0.0.0", port: int = 5000):
+    def __init__(self, host: str = "127.0.0.1", port: int = 5000):
         self.host = host
         self.port = port
         
@@ -448,9 +448,22 @@ class WebServer:
                 return jsonify({"ok": False, "error": "survey a card first"}), 400
             data = request.get_json(silent=True) or {}
             kinds = set(data.get("kinds") or ["images", "telemetry", "logs"])
-            output = data.get("output") or str(
-                get_data_directory() / "recovered" /
-                (self.card_survey.callsign or "payload"))
+            # Confined to the data directory. This used to take any path the
+            # caller asked for, which -- with the server bound to every
+            # interface, as it was by default -- let anyone on the network
+            # write decrypted flight data anywhere the process could reach.
+            recovered_root = (get_data_directory() / "recovered").resolve()
+            requested = data.get("output")
+            if requested:
+                candidate = (recovered_root / str(requested).lstrip("/")).resolve()
+                if not candidate.is_relative_to(recovered_root):
+                    return jsonify({
+                        "ok": False,
+                        "error": "output must stay inside the recovered folder",
+                    }), 400
+                output = str(candidate)
+            else:
+                output = str(recovered_root / (self.card_survey.callsign or "payload"))
 
             selected = []
             if "images" in kinds:    selected += self.card_survey.images
@@ -1009,6 +1022,19 @@ class WebServer:
         print(f"  RaptorHabGS Web Server")
         print(f"  Running on http://{self.host}:{self.port}")
         print(f"{'='*60}\n")
+
+        # Binding beyond loopback puts thirty state-changing endpoints on the
+        # network with no authentication in front of them: stopping the
+        # receiver, rewriting the radio configuration, deleting recorded
+        # flights. Useful on purpose -- a phone on the same network is a good
+        # second screen at a launch site -- but it should never happen by
+        # accident, which it did when this defaulted to 0.0.0.0.
+        if not self._is_loopback(self.host):
+            print("  !! This is reachable from the whole network and has no")
+            print("  !! authentication. Anyone who can open the page can stop")
+            print("  !! the ground station, change its configuration and")
+            print("  !! delete recorded flights. Use --host 127.0.0.1 unless")
+            print("  !! you are on a network you trust.\n")
         self.socketio.run(
             self.app, 
             host=self.host, 
@@ -1017,6 +1043,16 @@ class WebServer:
             allow_unsafe_werkzeug=True
         )
     
+    @staticmethod
+    def _is_loopback(host: str) -> bool:
+        import ipaddress
+        if host in ("localhost", ""):
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
+
     def shutdown(self):
         """Shutdown the server and managers."""
         print("[WebServer] Shutting down...")

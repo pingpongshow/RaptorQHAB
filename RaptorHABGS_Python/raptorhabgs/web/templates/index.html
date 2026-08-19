@@ -143,6 +143,8 @@
         .status-value.positive { color: var(--accent-green); }
         .status-value.warning { color: var(--accent-yellow); }
         .status-value.danger { color: var(--accent-red); }
+        /* Something the radio does not measure, as opposed to a bad reading. */
+        .status-value.unmeasured { color: var(--text-secondary, #888); }
         
         /* Map Overlays */
         .map-overlay {
@@ -1168,12 +1170,22 @@
             rssiEl.textContent = rssi.toFixed(0) + ' dBm';
             rssiEl.className = 'status-value ' + (rssi > -100 ? 'positive' : rssi > -110 ? 'warning' : 'danger');
             
+            // GFSK has no signal-to-noise measurement -- the SX1262 reports SNR
+            // only for LoRa -- so the modem sends a sentinel rather than a
+            // number that looks like a reading. Older firmware sent -20, which
+            // was RadioLib's error code forwarded as decibels. Both mean "not
+            // measured", and rendering either as "-128.0 dB" in red is worse
+            // than saying so.
+            const snrKnown = snr > -127 && snr !== -20;
+            const snrText = snrKnown ? snr.toFixed(1) + ' dB' : 'n/a';
+
             const snrEl = document.getElementById('sigSnr');
-            snrEl.textContent = snr.toFixed(1) + ' dB';
-            snrEl.className = 'status-value ' + (snr > 5 ? 'positive' : snr > 0 ? 'warning' : 'danger');
+            snrEl.textContent = snrText;
+            snrEl.className = 'status-value ' + (!snrKnown ? 'unmeasured'
+                : snr > 5 ? 'positive' : snr > 0 ? 'warning' : 'danger');
             
             document.getElementById('headerRssi').textContent = `RSSI: ${rssi.toFixed(0)} dBm`;
-            document.getElementById('headerSnr').textContent = `SNR: ${snr.toFixed(1)} dB`;
+            document.getElementById('headerSnr').textContent = `SNR: ${snrText}`;
             
             // Overlay
             document.getElementById('overlayAlt').textContent = data.altitude.toFixed(0) + ' m';

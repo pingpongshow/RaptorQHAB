@@ -28,8 +28,11 @@ def main():
     )
     parser.add_argument(
         '--host', 
-        default='0.0.0.0',
-        help='Host address to bind to (default: 0.0.0.0 for all interfaces)'
+        default='127.0.0.1',
+        help='Host address to bind to (default: 127.0.0.1, this machine only). '
+             'Use 0.0.0.0 to reach it from a phone or tablet on the same '
+             'network -- but read the warning it prints, because there is no '
+             'authentication.'
     )
     parser.add_argument(
         '--port', 

@@ -44,11 +44,37 @@ class ImportWorker(QThread):
         self.finished_with.emit(result)
 
 
+class SurveyWorker(QThread):
+    """
+    Surveys a card off the UI thread.
+
+    survey_card() walks the images and logs directories and calls stat() on
+    every file. A recovered card in this project held 710 images, and on a card
+    read over USB that is seconds of syscalls -- which was happening on the
+    event loop, freezing the window. The import beside it already used a
+    worker; the survey did not.
+    """
+
+    finished_with = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, path):
+        super().__init__()
+        self.path = path
+
+    def run(self):
+        try:
+            self.finished_with.emit(survey_card(self.path))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class CardTab(QWidget):
     def __init__(self):
         super().__init__()
         self.survey: Optional[CardSurvey] = None
         self.worker: Optional[ImportWorker] = None
+        self.survey_worker: Optional[SurveyWorker] = None
         self._build()
         self.rescan()
 
@@ -158,12 +184,19 @@ class CardTab(QWidget):
         if not path or not Path(path).exists():
             QMessageBox.warning(self, "No card", "Choose a card path first.")
             return
-        try:
-            self.survey = survey_card(path)
-        except Exception as exc:
-            QMessageBox.critical(self, "Could not read the card", str(exc))
+        if self.survey_worker and self.survey_worker.isRunning():
             return
 
+        self.summary.setText("Reading the card…")
+        self.survey_worker = SurveyWorker(path)
+        self.survey_worker.finished_with.connect(self._survey_ready)
+        self.survey_worker.failed.connect(
+            lambda message: QMessageBox.critical(
+                self, "Could not read the card", message))
+        self.survey_worker.start()
+
+    def _survey_ready(self, survey):
+        self.survey = survey
         s = self.survey
         if s.sealed_count == 0:
             verdict = "nothing is sealed; all readable"
