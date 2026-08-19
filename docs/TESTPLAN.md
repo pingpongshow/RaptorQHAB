@@ -29,7 +29,7 @@ cd payload && python -m pytest tests/ -q
 **Pass:** all passed, 0 failed. The suite covers the payload, both ground
 stations, and Swift/Python protocol parity.
 
-*Last run: , 0 failed.*
+*Last run: 789 passed, 0 failed.*
 
 ### A2. Every firmware target builds
 
