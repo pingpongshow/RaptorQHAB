@@ -909,3 +909,14 @@ independently in both.
   swallowing is the right behaviour.
 - **`MeshtasticManager.send_text`**, which the UI does call, does not block —
   it writes and returns.
+
+
+### Correction: tools/ was never missing from an install
+
+I claimed `find_payload.sh` "only existed in a checkout" and added an explicit
+copy loop to the installer for it. That was wrong: `install.sh` rsyncs the
+whole `Pi/` tree to `/opt/raptorhab`, excluding only `.venv`, `__pycache__` and
+`tests`, so everything under `tools/` has always shipped. The file was absent
+from the bench Pi because it was written after that Pi was last installed, not
+because the installer skips it. The loop has been removed — a second mechanism
+doing the same job is a thing to keep in sync for no gain.

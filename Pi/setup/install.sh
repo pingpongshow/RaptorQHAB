@@ -566,13 +566,52 @@ say "Installing the payload service"
 step "Installing the WiFi power helper"
 install -m 0755 "$CODE_DIR/setup/wifi-power.sh" /usr/local/sbin/raptorhab-wifi-power
 
-# Diagnostics the operator runs from their own machine, not the Pi -- but they
-# live in the installed tree so a recovered card carries them too.
-install -d -m 0755 /opt/raptorhab/tools
-for helper in find_payload.sh wifi_watch.sh gps_doctor.py recording_key.py; do
-    [ -f "$CODE_DIR/tools/$helper" ] && \
-        install -m 0755 "$CODE_DIR/tools/$helper" "/opt/raptorhab/tools/$helper"
-done
+# --- DHCP on the USB link --------------------------------------------------
+#
+# Only with the ethernet gadget. A private dnsmasq instance reading one
+# explicit config file: the distribution's dnsmasq.service stays disabled and
+# untouched, so the payload never becomes a DNS server. See setup/usb-dhcp.conf
+# for why each option is there.
+if [[ $ENABLE_USB_ETHERNET -eq 1 ]]; then
+    step "Setting up DHCP on the USB link"
+
+    if [[ ! -x /usr/sbin/dnsmasq ]]; then
+        apt-get install -y dnsmasq >/dev/null 2>&1 || true
+        # Installing the package enables the system-wide service, which would
+        # answer DNS on every interface. That is not what this is for.
+        systemctl disable --now dnsmasq >/dev/null 2>&1 || true
+    fi
+
+    if [[ -x /usr/sbin/dnsmasq ]]; then
+        install -d -m 0755 /etc/raptorhab
+        install -m 0644 "$CODE_DIR/setup/usb-dhcp.conf" /etc/raptorhab/usb-dhcp.conf
+        install -m 0644 "$CODE_DIR/setup/raptorhab-usb-dhcp.service" \
+            /etc/systemd/system/raptorhab-usb-dhcp.service
+
+        if /usr/sbin/dnsmasq --test --conf-file=/etc/raptorhab/usb-dhcp.conf >/dev/null 2>&1; then
+            systemctl daemon-reload
+            systemctl enable --now raptorhab-usb-dhcp.service >/dev/null 2>&1 || true
+
+            # It must not have taken port 53. If it has, the config was not the
+            # one that got read, and a payload answering DNS is worse than one
+            # that does not hand out addresses.
+            sleep 1
+            if ss -lnt 2>/dev/null | grep -q ":53 " || ss -lnu 2>/dev/null | grep -q ":53 "; then
+                systemctl disable --now raptorhab-usb-dhcp.service >/dev/null 2>&1 || true
+                warn "the USB DHCP server bound port 53 and was stopped;
+          ssh raptorhab.local still works over the cable"
+            else
+                ok "USB link hands out addresses (10.55.0.10-20, no DNS, no gateway)"
+            fi
+        else
+            warn "dnsmasq rejected the USB DHCP configuration; not enabled.
+          ssh raptorhab.local still works over the cable."
+        fi
+    else
+        warn "dnsmasq unavailable, so the USB link hands out no addresses.
+          ssh raptorhab.local still works; ssh 10.55.0.1 will not."
+    fi
+fi
 
 # No sudoers rule, deliberately. The payload unit sets NoNewPrivileges=true, so
 # sudo refuses outright ("the no new privileges flag is set") and a sudoers

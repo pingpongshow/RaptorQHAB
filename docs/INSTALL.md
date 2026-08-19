@@ -132,11 +132,16 @@ Two things that will mislead you:
 - **`ping raptorhab.local` fails while `ssh raptorhab.local` works.** `ping`
   asks for an IPv4 address and the USB link only has a usable IPv6 one. The
   payload is not down; use `ping6 raptorhab.local` if you want to check.
-- **`ssh 10.55.0.1` does not work** out of the box, despite the payload holding
-  that address. There is no DHCP server on the cable, so your machine
-  self-assigns a `169.254.x.x` address and the two are on different subnets.
-  Earlier versions of this page told you to open System Settings and enter
-  `10.55.0.2/24` by hand. That does work, and you no longer need it.
+- **`ssh 10.55.0.1` works only if the card was prepared with
+  `--usb-ethernet`,** which installs a small DHCP server so your machine is
+  given an address on the cable (`10.55.0.10`–`.20`). Without it your machine
+  self-assigns `169.254.x.x`, the two ends sit on different subnets, and only
+  the `raptorhab.local` route works. Either way you never need to configure an
+  address by hand, which earlier versions of this page told you to do.
+
+  That DHCP server hands out **no gateway, no DNS and no NTP server** — it
+  gives an address and nothing else. Plugging a payload into a laptop must not
+  change how that laptop reaches the internet, or what it thinks the time is.
 
 If mDNS is unavailable — Windows without Bonjour, or two payloads on one desk —
 find it directly:

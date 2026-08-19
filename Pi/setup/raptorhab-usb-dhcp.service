@@ -1,0 +1,21 @@
+[Unit]
+# Hands the machine at the other end of the USB cable an address, so
+# `ssh 10.55.0.1` works without the operator configuring anything.
+#
+# A private dnsmasq instance with an explicit --conf-file: it reads that file
+# and nothing else, so it cannot pick up the distribution's DNS configuration
+# and the system dnsmasq.service stays untouched and disabled.
+Description=RaptorHab: DHCP for the USB link
+After=raptorhab-usb-gadget.service
+Wants=raptorhab-usb-gadget.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/raptorhab/usb-dhcp.conf
+Restart=always
+RestartSec=10
+# usb0 may not exist yet; bind-dynamic copes, and Restart covers the rest.
+TimeoutStartSec=20
+
+[Install]
+WantedBy=multi-user.target
