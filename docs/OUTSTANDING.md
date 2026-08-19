@@ -65,21 +65,7 @@ ssh stephen@fe80::1a:11ff:fe00:2%en15
 
 ---
 
-## 2. Whitening is a wire-format change — every modem must be reflashed
-
-Not a defect, but the thing most likely to waste an afternoon.
-
-Whitening is now on in the payload and in all eight firmware builds. A modem
-running older firmware **will not work at all** with a current payload — not
-degraded, nothing. The sync word is not whitened, so packets arrive cleanly and
-then fail every content check: `Fwd 0, NoRAPT <climbing>`.
-
-The bench T190 is flashed. Any other board — a spare, a second ground station,
-anything flashed before this — needs `pio run -e <env> -t upload`.
-
----
-
-## 3. Dual-E22 board: never tested on hardware
+## 2. Dual-E22 board: never tested on hardware
 
 The board does not exist yet. Everything about it — the pin map, the TX
 arbiter, the slot-A filter bypass, both radios running at once — is reasoned
@@ -92,25 +78,17 @@ front of a 900 MHz module.
 
 ---
 
-## 4. Hygiene, not bugs
+## 3. Hygiene, not bugs
 
-Carried from the first review and still true. None of these affect a flight.
+What is left after the dead-code removal. None of these affect a flight.
 
-- **`Pi/airborne/commands.py` is unreachable** — 620 lines implementing an RF
-  command path nothing constructs. Its replay window was fixed and it now says
-  at the top that it is unwired and authenticates nothing, so it is safe to
-  leave; it should eventually be wired up or deleted rather than left ambiguous.
-- **`PacketScheduler`'s `telemetry_callback`** is accepted and never passed, so
-  that branch is dead code.
-- **`Pi/common/__pycache__/radio_hardware_spi.cpython-313.pyc`** references a
-  module that no longer exists — a refactor left it behind.
 - **`ContentView.swift` is 2,154 lines** and holds six top-level tab views.
+  A refactor, not a defect, and not worth the churn risk mid-project.
 - **The macOS port list accepts any `cu.*`**, which includes Bluetooth ports.
-  Auto-connect now verifies the device before settling on it, so this is
-  cosmetic — the list is noisier than it should be.
-- **`RateLimiter` in `Pi/airborne/utils.py` is unused.**
+  Auto-connect verifies the device before settling on it, so this is now
+  cosmetic: the list is noisier than it needs to be.
 
-## 5. Protocol quirks, deliberately left
+## 4. Protocol quirks, deliberately left
 
 - **Negative altitudes clamp to zero.** Altitude is an unsigned millimetre
   count, so a launch below sea level reports 0 m. Fixing it means changing the
@@ -124,6 +102,16 @@ Carried from the first review and still true. None of these affect a flight.
   which means nothing on a receive-only modem.
 
 ## Closed recently, for context
+
+- **1,407 lines of dead command protocol removed.** `Pi/airborne/commands.py`
+  and `Pi/ground/commands.py` implemented a CMD_PING / CMD_SETPARAM /
+  CMD_CAPTURE / CMD_REBOOT path over the radio. Neither half was ever
+  constructed — not the payload's handler, not the ground station's
+  transmitter — and it had been superseded twice over, by the USB console for
+  configuration and the Meshtastic uplink for over-the-air commands. Deleting
+  both halves together kept the tree self-consistent; deleting one would have
+  been worse than leaving both. `PacketType.CMD_*` stays in `common/protocol.py`
+  as wire-format definition.
 
 - **The modem's CRC error rate is zero.** The `ERR` on the display was entirely
   bad-CRC, and the cause was whitening being disabled while 94% of the traffic

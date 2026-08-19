@@ -6,7 +6,7 @@ Packet assembly and transmission scheduling
 import time
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, List, Generator, Callable
+from typing import Optional, List, Generator
 from queue import Queue, Empty
 from enum import IntEnum, auto
 
@@ -86,7 +86,6 @@ class PacketScheduler:
     
     def __init__(
         self,
-        telemetry_callback: Optional[Callable[[], TelemetryPayload]] = None,
         telemetry_interval: int = TELEMETRY_INTERVAL_PACKETS,
         image_meta_interval: int = IMAGE_META_INTERVAL_PACKETS,
         symbol_size: int = 200,
@@ -97,7 +96,6 @@ class PacketScheduler:
         Initialize packet scheduler
 
         Args:
-            telemetry_callback: Optional function to get current telemetry
             telemetry_interval: Packets between telemetry
             image_meta_interval: Packets between image metadata
             symbol_size: Fountain code symbol size
@@ -105,7 +103,6 @@ class PacketScheduler:
             allow_lt_fallback: Permit the LT encoder, whose output the ground
                 station cannot decode. Bench testing only.
         """
-        self.telemetry_callback = telemetry_callback
         self.telemetry_interval = telemetry_interval
         self.image_meta_interval = image_meta_interval
         self.symbol_size = symbol_size
@@ -277,16 +274,12 @@ class PacketScheduler:
             # Use pre-serialized telemetry if available
             if self._telemetry_bytes:
                 return self._build_and_advance_raw(PacketType.TELEMETRY, self._telemetry_bytes)
-            
-            # Otherwise use callback if available
-            if self.telemetry_callback:
-                payload = self.telemetry_callback()
-                return self._build_and_advance(PacketType.TELEMETRY, payload)
-            
-            # Fallback to empty telemetry
+
+            # Nothing collected yet. An empty frame still carries the sequence
+            # number, which is what tells the ground station the link is alive.
             return self._build_and_advance(PacketType.TELEMETRY, TelemetryPayload())
         except Exception as e:
-            logger.error(f"Telemetry callback failed: {e}")
+            logger.error(f"Could not build a telemetry packet: {e}")
             return self._build_and_advance(PacketType.TELEMETRY, TelemetryPayload())
     
     def _get_image_meta_packet(self) -> Optional[bytes]:

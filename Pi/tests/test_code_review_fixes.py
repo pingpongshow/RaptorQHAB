@@ -367,38 +367,6 @@ def test_restart_does_not_append_to_the_previous_log(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# Uplink command replay
-# --------------------------------------------------------------------------
-
-@pytest.mark.parametrize(
-    "last, seq, duplicate, label",
-    [
-        (100, 101, False, "next in sequence"),
-        (100, 100, True, "exact repeat"),
-        (100, 99, True, "one behind"),
-        (100, 200, False, "edge of the window"),
-        (100, 500, True, "beyond the window"),
-        (100, 65000, True, "far replay -- previously accepted"),
-        (65530, 3, False, "genuine wraparound"),
-        (65530, 65529, True, "behind, across the wrap"),
-    ],
-)
-def test_command_replay_window(last, seq, duplicate, label):
-    """
-    The old test was `abs(seq - last) < window`, with anything outside treated
-    as a wraparound and accepted. That accepted every sequence number more than
-    `window` away, which is most of the 16-bit space.
-    """
-    from airborne.commands import CommandHandler
-
-    handler = object.__new__(CommandHandler)
-    handler._seq_window = 100
-    handler._last_cmd_seq = {PacketType.CMD_PING: last}
-
-    assert handler._is_duplicate(PacketType.CMD_PING, seq) is duplicate, label
-
-
-# --------------------------------------------------------------------------
 # Launch reference taken from the worst fix the receiver produces
 # --------------------------------------------------------------------------
 

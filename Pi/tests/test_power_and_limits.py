@@ -13,7 +13,6 @@ import pytest
 from airborne.power import (
     PowerAction, PowerReport, apply_flight_power_saving,
 )
-from airborne.commands import MAX_PENDING_ACKS
 from airborne.config import AirborneConfig
 from airborne.params import CATEGORY_ORDER, SPECS_BY_NAME
 
@@ -77,34 +76,3 @@ class TestPowerSavingNeverStopsTheFlight:
             disable_wifi_radio=False, disable_bt=False,
             disable_video=False, disable_led=False)
         assert report.actions == []
-
-
-def test_the_ack_queue_is_bounded():
-    """
-    Acks drain one per transmit opportunity. Without a cap, a fault that queues
-    them faster than the radio sends would grow the list until a 512 MB board
-    with no swap gave up.
-    """
-    from airborne.commands import CommandHandler
-    processor = object.__new__(CommandHandler)
-    processor._pending_acks = []
-
-    for i in range(MAX_PENDING_ACKS * 3):
-        CommandHandler.queue_ack(processor, b"ack", priority=i)
-
-    assert len(processor._pending_acks) == MAX_PENDING_ACKS
-
-
-def test_the_highest_priority_acks_survive_the_cap():
-    """Dropping the newest urgent ack would be exactly the wrong sacrifice."""
-    from airborne.commands import CommandHandler
-    processor = object.__new__(CommandHandler)
-    processor._pending_acks = []
-
-    for priority in range(MAX_PENDING_ACKS * 2):
-        CommandHandler.queue_ack(processor, bytes([priority % 256]),
-                                   priority=priority)
-
-    priorities = [p for p, _ in processor._pending_acks]
-    assert priorities[0] == max(priorities)
-    assert min(priorities) > 0, "the low-priority tail should have been dropped"

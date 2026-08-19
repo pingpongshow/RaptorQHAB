@@ -368,36 +368,6 @@ class Watchdog:
                 break
 
 
-class RateLimiter:
-    """
-    Simple rate limiter for packet transmission
-    """
-    
-    def __init__(self, max_per_second: float):
-        """
-        Initialize rate limiter
-        
-        Args:
-            max_per_second: Maximum operations per second
-        """
-        self.min_interval = 1.0 / max_per_second
-        self.last_time = 0.0
-    
-    def wait(self):
-        """Wait if necessary to maintain rate limit"""
-        now = time.monotonic()
-        elapsed = now - self.last_time
-        
-        if elapsed < self.min_interval:
-            time.sleep(self.min_interval - elapsed)
-        
-        self.last_time = time.monotonic()
-    
-    def can_proceed(self) -> bool:
-        """Check if we can proceed without waiting"""
-        return (time.monotonic() - self.last_time) >= self.min_interval
-
-
 def format_bytes(size: int) -> str:
     """Format bytes as human-readable string"""
     for unit in ['B', 'KB', 'MB', 'GB']:
