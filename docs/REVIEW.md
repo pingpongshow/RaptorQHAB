@@ -545,6 +545,21 @@ on the real sentence.
 **Sealed telemetry** writes one file on the Pi, and 11 records (header plus ten
 rows) decrypt correctly with the matching private key.
 
+**The launch-point refinement, running live on the real receiver:**
+
+```
+12:45:56  Launch point captured from first fix: 51.50117, -0.10865 at 164 m MSL; refining for 180 s
+12:48:57  Launch point settled over 180 s (81 fixes, 41 used): 51.50118, -0.10868 at 165 m MSL (+1 m vs the first fix)
+```
+
+Reported AGL went from **−37 m** on the old code to **−0 m**. The correction
+itself was only +1 m on this run, and that is worth being precise about: the
+receiver was hot-started, already holding ten satellites from the previous run,
+so there was almost nothing to converge. The 29 m figure came from the cold
+start earlier in the session — which is the condition a launch day actually
+presents. The mechanism is what was verified here; the size of the correction
+depends on how cold the receiver is.
+
 **The payload runs.** Camera, radio, GPS, fountain encoder, zone scheduling; no
 watchdog trips and no restarts across the test.
 
