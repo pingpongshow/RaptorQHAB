@@ -234,7 +234,7 @@ struct SidebarView: View {
                         Spacer()
                         
                         Button("Auto") {
-                            _ = groundStation.autoConnectSerial()
+                            groundStation.autoConnectSerial()
                         }
                         .buttonStyle(.borderless)
                         .disabled(groundStation.isReceiving)

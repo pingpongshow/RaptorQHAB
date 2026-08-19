@@ -488,8 +488,16 @@ class GroundStationManager: ObservableObject {
         selectedSerialPort = port
     }
     
-    func autoConnectSerial() -> Bool {
-        return serialPort.autoConnect()
+    /// Find and connect to a RaptorHAB modem, verifying it is one.
+    ///
+    /// Reports why it failed rather than just returning false: "no modem found"
+    /// and "found three serial ports, none of them a modem" send the operator
+    /// to very different places.
+    func autoConnectSerial(completion: ((Bool, String) -> Void)? = nil) {
+        serialPort.autoConnect { [weak self] ok, detail in
+            if !ok { self?.errorMessage = "Auto-connect failed: \(detail)" }
+            completion?(ok, detail)
+        }
     }
     
     func updateRadioConfig(_ config: RadioConfig) {

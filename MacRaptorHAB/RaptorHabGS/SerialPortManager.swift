@@ -42,6 +42,24 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
 
     /// Decodes the Meshtastic stream, and transmits through the modem.
     let meshtastic = ModemMeshtasticLink()
+
+    /// Set as soon as something unmistakably modem-shaped arrives: a framed
+    /// packet, or one of the lines the firmware prints. Used to tell a
+    /// RaptorHAB modem from any other serial device that happens to enumerate
+    /// first -- the payload's own USB console is one, and it sits on this
+    /// machine's other usbmodem port.
+    private let modemSeenLock = NSLock()
+    private var _sawModemTraffic = false
+    var sawModemTraffic: Bool {
+        modemSeenLock.lock(); defer { modemSeenLock.unlock() }
+        return _sawModemTraffic
+    }
+    private func noteModemTraffic() {
+        modemSeenLock.lock(); _sawModemTraffic = true; modemSeenLock.unlock()
+    }
+    private func clearModemTraffic() {
+        modemSeenLock.lock(); _sawModemTraffic = false; modemSeenLock.unlock()
+    }
     
     // MARK: - Callbacks
     
@@ -325,6 +343,13 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
     
     /// Process text lines from modem (for configuration responses)
     private func processTextLine(_ line: String) {
+        // Lines only a RaptorHAB modem prints.
+        if line.hasPrefix("[STATS]") || line.hasPrefix("[RADIO]")
+            || line.hasPrefix("CFG_") || line.hasPrefix("MTX_")
+            || line.hasPrefix("MCFG_") || line.hasPrefix("[CONFIG]") {
+            noteModemTraffic()
+        }
+
         // A transmit verdict comes back on the same text channel as everything
         // else the modem prints, and the sender is blocked waiting for it.
         if meshtastic.handleModemLine(line) { return }
@@ -716,6 +741,8 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         debugLog("Received packet: \(dataLen) bytes, RSSI: \(rssi) dBm, SNR: \(snr) dB")
         debugLog("  Hex: \(packetData.prefix(20).map { String(format: "%02X", $0) }.joined(separator: " "))\(packetData.count > 20 ? "..." : "")")
         
+        noteModemTraffic()
+
         DispatchQueue.main.async { [weak self] in
             self?.packetsReceived += 1
             self?.lastRSSI = rssi
@@ -764,24 +791,69 @@ extension SerialPortManager {
         return patterns.contains { port.contains($0) }
     }
     
-    /// Auto-connect to first available ESP32-like port
-    func autoConnect() -> Bool {
+    /// Connect to the first port that proves it is a RaptorHAB modem.
+    ///
+    /// Opening a port succeeds for any serial device, so the old version --
+    /// "connect to the first thing whose name contains usbmodem" -- would
+    /// settle happily on the wrong one and report success while receiving
+    /// nothing. That is not hypothetical here: the payload's own USB console
+    /// enumerates as a second `cu.usbmodem*` on the same machine, and which of
+    /// the two sorts first is luck.
+    ///
+    /// So each candidate is opened and listened to. A framed packet or a line
+    /// the firmware prints settles it; silence moves on to the next port.
+    ///
+    /// Asynchronous because the listening is real waiting, and this is called
+    /// from a button.
+    func autoConnect(perPortTimeout: TimeInterval = 2.5,
+                     completion: @escaping (Bool, String) -> Void) {
         refreshAvailablePorts()
-        
-        // Try likely ESP32 ports first
-        for port in availablePorts {
-            if Self.isLikelyESP32Port(port) {
-                if connect(to: port) {
-                    return true
+
+        let candidates = availablePorts.filter { Self.isLikelyESP32Port($0) }
+            + availablePorts.filter { !Self.isLikelyESP32Port($0) }
+
+        guard !candidates.isEmpty else {
+            completion(false, "no serial ports found")
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var tried: [String] = []
+
+            for port in candidates {
+                guard let self else { return }
+                tried.append(port)
+
+                self.clearModemTraffic()
+                guard self.connect(to: port) else { continue }
+
+                let deadline = Date().addingTimeInterval(perPortTimeout)
+                while Date() < deadline && !self.sawModemTraffic {
+                    Thread.sleep(forTimeInterval: 0.05)
                 }
+
+                if self.sawModemTraffic {
+                    DispatchQueue.main.async { completion(true, port) }
+                    return
+                }
+                self.disconnect()
+            }
+
+            DispatchQueue.main.async {
+                completion(false,
+                    "opened \(tried.count) port(s) but none sent modem traffic: "
+                    + tried.joined(separator: ", "))
             }
         }
-        
-        // Try any available port
-        if let port = availablePorts.first {
-            return connect(to: port)
+    }
+
+    /// The async form.
+    @discardableResult
+    func autoConnect(perPortTimeout: TimeInterval = 2.5) async -> (Bool, String) {
+        await withCheckedContinuation { continuation in
+            autoConnect(perPortTimeout: perPortTimeout) { ok, detail in
+                continuation.resume(returning: (ok, detail))
+            }
         }
-        
-        return false
     }
 }

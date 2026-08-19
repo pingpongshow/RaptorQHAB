@@ -796,3 +796,28 @@ radio packet, and nothing in the signature warns a future caller.
 - **sqlite in `OfflineMapManager`.** Three prepares, three finalises, one open,
   one close.
 - **No `try!`, no `fatalError`,** and the published history arrays are bounded.
+
+
+### M7. "Auto" connected to the first serial port and called it a modem
+
+Opening a serial port succeeds for any device on it, so `autoConnect()` --
+"connect to the first port whose name contains usbmodem" -- would settle on the
+wrong one, report success, and receive nothing.
+
+Not hypothetical on this desk. The payload's USB gadget presents a CDC-ACM
+console, so the machine has **two** `cu.usbmodem*` ports:
+
+```
+/dev/cu.usbmodem1101 : 28025 bytes, 188 frames in 3 s  -> the modem
+/dev/cu.usbmodem21401:     0 bytes,   0 frames          -> the payload console
+```
+
+`availablePorts` is sorted, so it happened to pick the right one. Alphabetical
+luck, not intent — a payload that enumerated lower would have taken the
+connection and left the operator with a connected-looking app and no data.
+
+Auto-connect now opens each candidate and listens: a framed packet or a line
+only the firmware prints settles it, silence moves on. It is asynchronous
+because that listening is real waiting and it is called from a button, and it
+reports *why* it failed — "no serial ports found" and "opened three, none of
+them a modem" send you to different places.
