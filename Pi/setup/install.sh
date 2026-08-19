@@ -140,6 +140,46 @@ if [[ $CHECK_ONLY -eq 1 ]]; then
     systemctl is-active --quiet raptorhab-airborne \
         && ok "service running" || warn "service not running"
 
+    # Every one of these has failed silently on real hardware. A payload that
+    # is up and transmitting while unreachable looks identical to a dead one
+    # from the ground, so check them rather than assume.
+
+    if command -v iw >/dev/null 2>&1 && [[ -d /sys/class/net/wlan0 ]]; then
+        # iw prints "Power save: off" with a capital P; matching case
+        # sensitively here reported the opposite of the truth.
+        if iw dev wlan0 get power_save 2>/dev/null | grep -qi "power save: off"; then
+            ok "WiFi power saving off"
+        else
+            warn "WiFi power saving is ON: the Pi will hold its association and"
+            warn "its DHCP lease while dropping inbound packets, which looks"
+            warn "exactly like a hung payload"
+        fi
+    fi
+
+    if [[ -d /sys/kernel/config/usb_gadget/raptorhab ]]; then
+        if [[ -s /sys/kernel/config/usb_gadget/raptorhab/UDC ]]; then
+            ok "USB gadget bound to $(cat /sys/kernel/config/usb_gadget/raptorhab/UDC)"
+        else
+            warn "USB gadget is configured but not bound to a controller;"
+            warn "the console will not appear on the host. Check whether"
+            warn "g_ether or another gadget module holds the UDC."
+        fi
+    elif [[ $ENABLE_USB_GADGET -eq 1 ]]; then
+        warn "USB gadget was requested but no gadget is configured"
+    fi
+
+    if grep -q "g_ether" /boot/firmware/cmdline.txt 2>/dev/null; then
+        warn "cmdline.txt still loads g_ether; it will take the USB controller"
+        warn "at boot and the payload console will never bind"
+    fi
+
+    if [[ -f /etc/NetworkManager/conf.d/10-raptorhab-usb0-unmanaged.conf ]]; then
+        ok "usb0 left to the gadget script"
+    elif [[ -d /sys/class/net/usb0 ]]; then
+        warn "NetworkManager may be managing usb0; it will DHCP against a cable"
+        warn "with no server and leave the interface without an address"
+    fi
+
     say "Resolved configuration"
     (cd "$CODE_DIR" && sudo -u "$SERVICE_USER" "$VENV/bin/python" \
         -m airborne.main --print-config 2>/dev/null | head -25) \
