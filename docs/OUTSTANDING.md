@@ -110,11 +110,11 @@ What is left after the dead-code removal. None of these affect a flight.
   genuine traps are now written down: `ping raptorhab.local` fails while `ssh`
   succeeds, because ping wants IPv4 and only IPv6 is usable on that link; and
   `ssh 10.55.0.1` cannot work without hand-configuring the host, because
-  nothing on the cable hands out addresses. `Pi/tools/find_payload.sh` covers
+  nothing on the cable hands out addresses. `payload/tools/find_payload.sh` covers
   the case where mDNS is not available.
 
-- **1,407 lines of dead command protocol removed.** `Pi/airborne/commands.py`
-  and `Pi/ground/commands.py` implemented a CMD_PING / CMD_SETPARAM /
+- **1,407 lines of dead command protocol removed.** `payload/airborne/commands.py`
+  and `payload/ground/commands.py` implemented a CMD_PING / CMD_SETPARAM /
   CMD_CAPTURE / CMD_REBOOT path over the radio. Neither half was ever
   constructed — not the payload's handler, not the ground station's
   transmitter — and it had been superseded twice over, by the USB console for

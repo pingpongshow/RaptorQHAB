@@ -31,7 +31,7 @@ ciphertext and nothing that decrypts it.
 Generate a keypair once, on your Mac:
 
 ```bash
-python3 Pi/tools/recording_key.py generate
+python3 payload/tools/recording_key.py generate
 ```
 
 Then set two parameters on the payload, from the macOS app or the config file:
@@ -44,7 +44,7 @@ recording_public_key = <the public key it printed>
 After a flight, decrypt what you recover:
 
 ```bash
-python3 Pi/tools/recording_key.py decrypt /Volumes/SDCARD/var/lib/raptorhab --out ./recovered
+python3 payload/tools/recording_key.py decrypt /Volumes/SDCARD/var/lib/raptorhab --out ./recovered
 ```
 
 ### How it works
@@ -128,13 +128,13 @@ being written anywhere; **Import & decrypt** writes plaintext out.
 
 ```bash
 # A whole directory, recursively
-python3 Pi/tools/recording_key.py decrypt /Volumes/rootfs/var/lib/raptorhab --out ./recovered
+python3 payload/tools/recording_key.py decrypt /Volumes/rootfs/var/lib/raptorhab --out ./recovered
 
 # One file
-python3 Pi/tools/recording_key.py decrypt img_00042_1787104085.webp.rhs --out ./recovered
+python3 payload/tools/recording_key.py decrypt img_00042_1787104085.webp.rhs --out ./recovered
 
 # A key kept somewhere other than ~/.raptorhab/recording_key
-python3 Pi/tools/recording_key.py --key /Volumes/backup/flightkey decrypt ./images --out ./recovered
+python3 payload/tools/recording_key.py --key /Volumes/backup/flightkey decrypt ./images --out ./recovered
 ```
 
 Sealed files carry a `.rhs` suffix; the tool strips it, so
@@ -143,7 +143,7 @@ Sealed files carry a `.rhs` suffix; the tool strips it, so
 Check a key against a card before you start:
 
 ```bash
-python3 Pi/tools/recording_key.py verify <the public key from the payload config>
+python3 payload/tools/recording_key.py verify <the public key from the payload config>
 ```
 
 The payload records which key it sealed to, so you can read that off the card
@@ -164,7 +164,7 @@ the format:
 ```python
 from pathlib import Path
 import sys
-sys.path.insert(0, "Pi")                      # or RaptorHABGS_Python
+sys.path.insert(0, "Pi")                      # or groundstation/python
 
 from common.sealedbox import open_sealed       # raptorhabgs.core.sealedbox works too
 

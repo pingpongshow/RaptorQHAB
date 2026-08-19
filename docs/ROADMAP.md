@@ -67,17 +67,17 @@ Two things follow that are worth stating plainly:
 config that actually persists and a payload that actually recovers.*
 
 1. ✅ Fixed `REVIEW.md` A1-A5, A7, A8, B1-B3, B5-B7, C1-C5, C8.
-2. ✅ `Pi/common/configstore.py`: JSON-backed, schema-versioned, atomic write
+2. ✅ `payload/common/configstore.py`: JSON-backed, schema-versioned, atomic write
    (temp file + fsync + `os.replace` + directory fsync), `0600` permissions,
    quarantines a corrupt file, leaves an *unreadable* one alone, and preserves
    unknown keys across a firmware downgrade.
 3. ✅ `AirborneConfig` resolves defaults → JSON file → env → CLI. `from_env()`
    still works. One bad key no longer discards the whole file.
-4. ✅ `Pi/airborne/params.py` — every parameter carries type, range, category,
+4. ✅ `payload/airborne/params.py` — every parameter carries type, range, category,
    description, env var, and `live` vs `restart` apply semantics.
    `--print-schema` emits the JSON the Phase 2 UI will render from.
 5. ✅ Radio defaults collapsed to one authoritative copy.
-6. ✅ `Pi/tests/` — 148 hardware-free tests.
+6. ✅ `payload/tests/` — 148 hardware-free tests.
 
 **Exit criteria — met:** `cd Pi && python -m pytest` passes on a laptop with no
 radio, camera, or GPS; the payload recovers from an induced error storm; a
@@ -171,15 +171,15 @@ Meshtastic transmission without touching the image downlink.
 node. That closes Q2 and is the gate on Phase 5.
 
 ```bash
-sudo python3 Pi/tools/bench_lora.py rx --duration 120
+sudo python3 payload/tools/bench_lora.py rx --duration 120
 ```
 
 ```bash
-sudo python3 Pi/tools/bench_lora.py tx --count 5 --power 17
+sudo python3 payload/tools/bench_lora.py tx --count 5 --power 17
 ```
 
 ```bash
-sudo python3 Pi/tools/bench_lora.py switch --count 50
+sudo python3 payload/tools/bench_lora.py switch --count 50
 ```
 
 The `switch` measurement matters beyond a pass/fail: it sets how finely the

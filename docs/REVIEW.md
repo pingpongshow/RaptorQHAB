@@ -15,7 +15,7 @@ with a regression test. A7, A8, B6, and B7 were found while writing those tests.
 ## A — Flight-critical
 
 ### A1. Error-state recovery is dead code — the payload never reboots **[FIXED in Phase 1]**
-`Pi/airborne/main.py:311-314` increments `_error_count`, calls
+`payload/airborne/main.py:311-314` increments `_error_count`, calls
 `_set_state(State.ERROR_STATE)` and `break`s out of the main loop. Control then
 falls to `finally: self._cleanup()` and the process exits. `_handle_error_state()`
 (`main.py:520`), which contains the `reboot_on_fatal_error` logic, is **never
@@ -44,7 +44,7 @@ stays hung. The watchdog needs to either set `_shutdown` (letting systemd
 restart) or drive the hardware watchdog at `/dev/watchdog`.
 
 ### A5. Import-time `os.makedirs` on an absolute root path **[FIXED in Phase 1]**
-`Pi/airborne/config.py:92-95` runs `os.makedirs("/RaptorHAB/airborne/images")`
+`payload/airborne/config.py:92-95` runs `os.makedirs("/RaptorHAB/airborne/images")`
 from `__post_init__`, and `DEFAULT_CONFIG = Config()` at line 220 executes it at
 **module import**. Any non-root import of `airborne.config` — a unit test, a
 config-dump CLI, the new USB config service — raises `PermissionError` before
@@ -54,7 +54,7 @@ config-dump CLI, the new USB config service — raises `PermissionError` before
 The receive path is now wired (`radio_manager.receive_lora_window`, driven by
 `Activity.LISTEN` in the transmit scheduler) and has been exercised against a
 bench transmitter and a live mesh node at two hops, −59 dBm.
-`Pi/common/radio.py:833` implements RX, but nothing in `airborne/` calls it, and
+`payload/common/radio.py:833` implements RX, but nothing in `airborne/` calls it, and
 the board uses **both** `SET_DIO2_AS_RF_SWITCH_CTRL` (`radio.py:558`) and a
 separate `pin_txen` GPIO (`radio.py:781`). That combination needs bench
 validation before the Meshtastic repeater / uplink features can be trusted —
@@ -108,7 +108,7 @@ the full-buffer length still tried last for variable-length types.
 ## B — Wrong behavior
 
 ### B1. `IMAGE_META` interval slot never fires **[FIXED in Phase 1]**
-`Pi/airborne/packets.py:233-240`. With the airborne defaults
+`payload/airborne/packets.py:233-240`. With the airborne defaults
 (`telemetry_interval_packets = 5`, `image_meta_interval_packets = 10`), every
 counter value divisible by 10 is *also* divisible by 5, so the telemetry branch
 always wins first. Verified: over 1000 packets the distribution is
@@ -134,7 +134,7 @@ a dropped image is reported as transmitted and the `ImageInfo` is lost.
 `except queue.Full:`.
 
 ### B4. Uplink command path is entirely dead
-`Pi/airborne/commands.py` (604 lines) defines a full `CommandHandler` with
+`payload/airborne/commands.py` (604 lines) defines a full `CommandHandler` with
 `CMD_PING` / `CMD_SETPARAM` / `CMD_CAPTURE` / `CMD_REBOOT`. Nothing in
 `airborne/` imports it — verified by grep. The payload is TX-only in practice.
 This is relevant to the new work: the wire protocol for remote configuration
@@ -183,7 +183,7 @@ so any call raised `TypeError`. Dead today because the uplink path is unwired
 - **C6** `PacketScheduler.__init__` accepts a `telemetry_callback` that
   `main.py:233` never passes, so the callback branch (`packets.py:258`) is dead.
 - **C7** Committed `__pycache__/` and `.DS_Store` throughout — now handled by
-  the new `.gitignore`, but `Pi/common/__pycache__/radio_hardware_spi.cpython-313.pyc`
+  the new `.gitignore`, but `payload/common/__pycache__/radio_hardware_spi.cpython-313.pyc`
   references a module that no longer exists in the tree, which suggests a
   refactor left something behind.
 - **C8** **[FIXED in Phase 1 — 148 tests]** No tests anywhere in the repo. Given a flight system with a one-shot
@@ -278,9 +278,9 @@ carries long runs of constant bytes.
 
 ## Second full review of the balloon code (2026-08)
 
-A fresh comprehensive pass over `Pi/airborne/` and `Pi/common/` — about 13,500
+A fresh comprehensive pass over `payload/airborne/` and `payload/common/` — about 13,500
 lines. Nine defects, all fixed, all with regression tests in
-`Pi/tests/test_code_review_fixes.py`. None of them were visible on the bench;
+`payload/tests/test_code_review_fixes.py`. None of them were visible on the bench;
 they need a clock step, a partial GPS fix, or a power cut to appear, which is
 why they survived the first review.
 
@@ -915,7 +915,7 @@ independently in both.
 
 I claimed `find_payload.sh` "only existed in a checkout" and added an explicit
 copy loop to the installer for it. That was wrong: `install.sh` rsyncs the
-whole `Pi/` tree to `/opt/raptorhab`, excluding only `.venv`, `__pycache__` and
+whole `payload/` tree to `/opt/raptorhab`, excluding only `.venv`, `__pycache__` and
 `tests`, so everything under `tools/` has always shipped. The file was absent
 from the bench Pi because it was written after that Pi was last installed, not
 because the installer skips it. The loop has been removed — a second mechanism

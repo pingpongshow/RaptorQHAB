@@ -82,11 +82,11 @@ So the division is:
 
 ### Running it
 
-`Pi/tools/provision_sd.sh` prepares the card before it has ever booted. Put the
+`payload/tools/provision_sd.sh` prepares the card before it has ever booted. Put the
 freshly flashed card in your Mac or Linux machine and run:
 
 ```bash
-./Pi/tools/provision_sd.sh --camera imx219
+./payload/tools/provision_sd.sh --camera imx219
 ```
 
 If the card has no cloud-init on it — an older Pi OS, or a card flashed without
@@ -147,7 +147,7 @@ If mDNS is unavailable — Windows without Bonjour, or two payloads on one desk 
 find it directly:
 
 ```bash
-./Pi/tools/find_payload.sh <your-username>
+./payload/tools/find_payload.sh <your-username>
 ```
 
 which prints the exact `ssh` command, for example:
@@ -207,7 +207,7 @@ that is honest about needing a wire.
 | Option | Effect |
 |---|---|
 | `--boot PATH` | Boot partition (auto-detects `bootfs`) |
-| `--source PATH` | Payload tree to stage (defaults to the `Pi/` directory holding the script) |
+| `--source PATH` | Payload tree to stage (defaults to the `payload/` directory holding the script) |
 | `--hostname NAME` | Hostname, default `raptorhab` |
 | `--user NAME` / `--password PASS` | Create an account, **only if the card has no cloud-init**. The password is hashed before it is written; the plain text never lands on the card. |
 | `--wifi SSID` / `--wifi-password` / `--wifi-country` | Optional WiFi, **only if the card has no cloud-init**. |
@@ -223,12 +223,12 @@ would add and which are already present.
 
 ## 2. Get the code onto the Pi
 
-Boot the Pi, find it on the network, and copy the `Pi/` directory across.
+Boot the Pi, find it on the network, and copy the `payload/` directory across.
 
 From your Mac, in the RaptorHAB project directory:
 
 ```bash
-rsync -av --exclude '__pycache__' --exclude '.venv' Pi/ raptorhab.local:~/raptorhab/
+rsync -av --exclude '__pycache__' --exclude '.venv' payload/ raptorhab.local:~/raptorhab/
 ```
 
 If `raptorhab.local` does not resolve, use the address from your router, or
@@ -434,14 +434,14 @@ Instead, seal recordings to a public key the payload cannot read back.
 Generate a keypair on your Mac:
 
 ```bash
-python3 Pi/tools/recording_key.py generate
+python3 payload/tools/recording_key.py generate
 ```
 
 Set `recording_encryption_enabled` and `recording_public_key` on the payload,
 then after recovery:
 
 ```bash
-python3 Pi/tools/recording_key.py decrypt /Volumes/SDCARD/var/lib/raptorhab --out ./recovered
+python3 payload/tools/recording_key.py decrypt /Volumes/SDCARD/var/lib/raptorhab --out ./recovered
 ```
 
 Separately, audit the credentials already on the card:
@@ -526,7 +526,7 @@ sudo /opt/raptorhab/.venv/bin/python /opt/raptorhab/tools/bench_lora.py switch -
 Re-sync the code and re-run the installer. It preserves your config and state:
 
 ```bash
-rsync -av --exclude '__pycache__' --exclude '.venv' Pi/ raptorhab.local:~/raptorhab/
+rsync -av --exclude '__pycache__' --exclude '.venv' payload/ raptorhab.local:~/raptorhab/
 ```
 
 ```bash
@@ -570,7 +570,7 @@ a key kept somewhere else.
 Generate a keypair on the **ground station**, never on the payload:
 
 ```bash
-python3 Pi/tools/recording_key.py generate
+python3 payload/tools/recording_key.py generate
 ```
 
 That writes the private key to `~/.raptorhab/recording_key` (mode `0600`) and
@@ -588,7 +588,7 @@ ground station, or by editing the config directly:
 Confirm the payload is sealing to a key you can open before you fly:
 
 ```bash
-python3 Pi/tools/recording_key.py verify XhdssUXd+ZymEOS/Gb9zSOE7usnX3x8WTF7Jd3GP4XE=
+python3 payload/tools/recording_key.py verify XhdssUXd+ZymEOS/Gb9zSOE7usnX3x8WTF7Jd3GP4XE=
 ```
 
 ### Reading recordings afterwards
@@ -599,7 +599,7 @@ fails, are in [SECURITY.md](SECURITY.md#decrypting-by-hand).
 From a recovered card, or from files pulled off over USB:
 
 ```bash
-python3 Pi/tools/recording_key.py decrypt /Volumes/rootfs/var/lib/raptorhab/images --out ./recovered
+python3 payload/tools/recording_key.py decrypt /Volumes/rootfs/var/lib/raptorhab/images --out ./recovered
 ```
 
 The Python ground station does the same thing with a survey first, which

@@ -34,7 +34,7 @@ Two things that will fool you into thinking it is dead when it is not:
   Nothing on the cable hands out addresses.
 
 If mDNS is unavailable — Windows without Bonjour, two payloads on one bench —
-`./Pi/tools/find_payload.sh <your-username>` prints the exact command.
+`./payload/tools/find_payload.sh <your-username>` prints the exact command.
 
 ---
 
@@ -46,7 +46,7 @@ Images and telemetry are sealed to a public key as they are written. The
 payload holds only the public half and cannot read its own recordings back.
 
 ```bash
-python3 Pi/tools/recording_key.py generate
+python3 payload/tools/recording_key.py generate
 ```
 
 - [ ] Keypair generated
@@ -64,11 +64,11 @@ Do not skip this. A key that is present but wrong fails exactly like a key that
 is right — silently, until the flight is over.
 
 ```bash
-python3 Pi/tools/recording_key.py show
+python3 payload/tools/recording_key.py show
 ```
 
 ```bash
-python3 Pi/tools/recording_key.py verify <the public key the payload will use>
+python3 payload/tools/recording_key.py verify <the public key the payload will use>
 ```
 
 The second command answers the only question that matters:
@@ -87,7 +87,7 @@ matches the private key at ~/.raptorhab/recording_key: yes
 ### A3. Provision the card
 
 ```bash
-./Pi/tools/provision_sd.sh --camera imx219 --generate-key
+./payload/tools/provision_sd.sh --camera imx219 --generate-key
 ```
 
 Provisioning refuses to enable encryption without a keypair it has confirmed

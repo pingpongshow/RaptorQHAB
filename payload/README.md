@@ -55,13 +55,7 @@ sealed to an X25519 public key as they are written. The payload holds only the
 public half and physically cannot decrypt its own recordings, so recovering
 the balloon yields ciphertext. **31 ms** to seal a 50 KB image on a Pi Zero.
 
-The keypair is created when you prepare the card, and the private half never
-goes near the payload. That matters more than it sounds: sealing to a key you
-do not hold does not make the recordings hard to read, it makes them
-impossible, and nothing detects that until you try. Card provisioning refuses
-to enable encryption without a keypair it has confirmed you have.
-
-**Configure everything over one USB cable.** All **98** payload parameters,
+**Configure everything over one USB cable.** All **89** payload parameters,
 plus a real terminal, over the Pi's USB port. The macOS app builds its
 configuration form from a schema the payload sends, so the two never drift
 apart. Configuration is USB-only by design — the payload will not accept
@@ -84,7 +78,7 @@ drawing and how old it is.
 | Radio | Waveshare Core1262-HF (SX1262), 850–930 MHz |
 | Camera | IMX219 / OV5647 / IMX708 / IMX477 |
 | GPS | L76K on the PL011 UART |
-| Downlink | GFSK, 96 kbps, 50 kHz deviation, 234 kHz RX, 915 MHz, RaptorQ |
+| Downlink | GFSK, 96 kbps, 50 kHz deviation, 915 MHz, RaptorQ |
 | Mesh | LoRa, Meshtastic-compatible, 17 regions reachable |
 | Power | Runs unattended; restarts itself on any fault |
 
@@ -92,11 +86,10 @@ drawing and how old it is.
 
 | | |
 |---|---|
-| Boards | Seven builds: Heltec WiFi LoRa 32 V3 & V4, Wireless Stick Lite V3, Vision Master T190, LilyGO T3-S3, Seeed XIAO + Wio-SX1262 |
+| Boards | Heltec WiFi LoRa 32 V3/V4, Wireless Stick Lite V3, Vision Master T190, LilyGO T3-S3, Seeed XIAO + Wio-SX1262 (all SX1262) |
 | Display | 1.9" TFT — live RSSI, SNR, packet counts, radio settings |
 | Link | USB serial to the Mac at 921600 baud |
 | Config | RF parameters set from the macOS app, no reflashing |
-| Persistence | Settings stored in flash; comes up listening after a power cycle |
 
 ### macOS companion
 
@@ -171,32 +164,17 @@ Waveshare HF HAT.
 
 | | |
 |---|---|
-| Image downlink | Complete 1280x960 image reassembled from 242 RaptorQ symbols, 0 checksum failures |
-| GFSK downlink | 210-byte packets, 8/8 at every length tested |
+| GFSK downlink | 20/20 packets, telemetry decoded correctly |
 | Meshtastic transmit | 19/19 packets decrypted by an independent radio |
 | LoRa receive | Bench transmitter **and** a live mesh node at 2 hops, −59 dBm |
 | Radio mode switch | 3.68 ms into LoRa, 4.02 ms back |
 | Recording encryption | 50 KB sealed in 31 ms; payload cannot decrypt it |
-| USB configuration | 98 parameters, ~500 ms round trip |
-| Tagged repeating | Untagged and third-party traffic ignored; public-channel commands refused |
-| Tests | **593**, no hardware required |
+| USB configuration | 89 parameters, ~500 ms round trip |
+| Tests | **559**, no hardware required |
 
 ---
 
 ## Getting started
-
-Flash **Raspberry Pi OS Lite (64-bit)**, setting your username, password and
-WiFi in Raspberry Pi Imager.
-
-**Either** prepare the card before it ever boots, which also makes the Pi
-reachable over the USB cable if WiFi is unavailable or your access point
-isolates clients:
-
-```bash
-./payload/tools/provision_sd.sh --camera imx219
-```
-
-**Or** copy the code over the network:
 
 ```bash
 rsync -av --exclude '__pycache__' payload/ raptorhab.local:~/raptorhab/
@@ -212,46 +190,18 @@ Reboot, then verify:
 sudo /opt/raptorhab/setup/install.sh --check
 ```
 
-Either way, one command gets you in — over WiFi, or over the USB cable if WiFi
-is unavailable, with nothing to configure on your machine:
-
-```bash
-ssh <your-username>@raptorhab.local
-```
-
-`ping raptorhab.local` will fail while that succeeds: ping asks for an IPv4
-address and only the IPv6 one is usable over the cable. The payload is fine.
-
 Full instructions, including flashing the modem and troubleshooting, are in
 **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 ---
-
-## Layout
-
-```
-payload/          the airborne Raspberry Pi — flight software, installer, tools
-groundstation/
-  macos/          the macOS companion app
-  python/         the cross-platform ground station (Qt app and web UI)
-firmware/
-  gs-modem/       receiver firmware, seven boards from one source tree
-  dual-e22/       dual-radio board: images and Meshtastic at the same time
-docs/             everything written down, including the pre-launch checklist
-archive/          abandoned experiments, kept for reference
-```
 
 ## Documentation
 
 | | |
 |---|---|
 | **[INSTALL.md](docs/INSTALL.md)** | From a blank SD card to a payload that transmits |
-| **[PRELAUNCH.md](docs/PRELAUNCH.md)** | The checklist to work through before you let go |
 | **[ROADMAP.md](docs/ROADMAP.md)** | Architecture, design decisions, and hardware results |
 | **[REVIEW.md](docs/REVIEW.md)** | Every defect found and fixed, with the reasoning |
-| **[OUTSTANDING.md](docs/OUTSTANDING.md)** | What is known to be wrong and not yet fixed |
-| **[MESHTASTIC.md](docs/MESHTASTIC.md)** | What the balloon broadcasts, the uplink commands, and message relaying |
-| **[POWER.md](docs/POWER.md)** | What draws current in flight, and what was done about it |
 | **[SECURITY.md](docs/SECURITY.md)** | What a finder can read, and what to do about it |
 
 ---
