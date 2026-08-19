@@ -41,6 +41,22 @@ SERIAL="$(tr -d '\0' < /proc/device-tree/serial-number 2>/dev/null || echo 00000
 MANUFACTURER="RaptorHab"
 PRODUCT="RaptorHab Payload"
 
+configure_ecm_address() {
+    # Give the gadget's ethernet side its static address. There is no DHCP
+    # server on the other end of a USB cable, so without this the interface
+    # comes up with nothing.
+    [[ "$USB_ETHERNET" == "1" ]] || return 0
+    for iface in usb0 usb1; do
+        if [[ -d "/sys/class/net/$iface" ]]; then
+            ip addr flush dev "$iface" 2>/dev/null || true
+            ip addr add "$ECM_ADDRESS" dev "$iface" 2>/dev/null || true
+            ip link set "$iface" up 2>/dev/null || true
+            echo "$iface configured with $ECM_ADDRESS"
+            break
+        fi
+    done
+}
+
 case "${1:-start}" in
 start)
     # A card prepared by provision_sd.sh boots with g_ether, so the Pi is
@@ -65,8 +81,27 @@ start)
     modprobe libcomposite
 
     if [[ -d "$GADGET_DIR" ]]; then
-        echo "gadget already configured"
-        exit 0
+        # A directory is not a working gadget. If an earlier attempt built the
+        # configfs tree but failed to bind -- which is exactly what happens when
+        # something else held the UDC -- then the tree is present, the UDC file
+        # is empty, and the host sees nothing. Exiting here on the strength of
+        # the directory alone leaves that state permanent, and the only symptom
+        # is a console that never appears.
+        if [[ -s "$GADGET_DIR/UDC" ]]; then
+            echo "gadget already configured and bound to $(cat "$GADGET_DIR/UDC")"
+            exit 0
+        fi
+
+        echo "gadget tree exists but is not bound; binding it now"
+        udc="$(ls /sys/class/udc | head -1)"
+        if [[ -n "$udc" ]] && echo "$udc" > "$GADGET_DIR/UDC" 2>/dev/null; then
+            echo "bound to $udc"
+            configure_ecm_address
+            exit 0
+        fi
+
+        echo "could not bind the existing tree; tearing it down and rebuilding"
+        "$0" stop >/dev/null 2>&1 || true
     fi
 
     mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
