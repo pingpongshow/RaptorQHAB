@@ -37,6 +37,7 @@ from common.protocol import build_packet
 from common.radio import SX1262Radio
 
 from airborne.config import AirborneConfig
+from airborne.power import apply_flight_power_saving
 from airborne.utils import (
     setup_logging,
     get_cpu_temperature,
@@ -149,6 +150,9 @@ class RaptorHabAirborne:
         self._telemetry_logger: Optional[TelemetryLogger] = None
         self._scheduler: Optional[PacketScheduler] = None
         self._watchdog: Optional[Watchdog] = None
+        # Pet at a quarter of the timeout: comfortably inside the window even
+        # if a cycle runs long, without waking the CPU for no reason.
+        self._watchdog_pet_interval: float = 5.0
 
         # Meshtastic (Phase 3). The zone-aware scheduling that decides how
         # often these run relative to image downlink arrives in Phase 4; for
@@ -222,11 +226,29 @@ class RaptorHabAirborne:
                 timeout_sec=self.config.watchdog_timeout_sec,
                 callback=self._watchdog_triggered,
             )
+            self._watchdog_pet_interval = max(1.0, self.config.watchdog_timeout_sec / 4.0)
             self._watchdog.start()
         else:
             self._logger.warning("Watchdog disabled by configuration")
         
         # Initialize radio
+        # Switch off what a flying payload does not use, before anything else
+        # starts drawing current. Off by default; see docs/POWER.md.
+        if self.config.flight_power_saving:
+            report = apply_flight_power_saving(
+                disable_wifi_radio=self.config.power_disable_wifi,
+                disable_bt=self.config.power_disable_bluetooth,
+                disable_video=self.config.power_disable_hdmi,
+                disable_led=self.config.power_disable_led,
+            )
+            self._power_report = report.as_dict()
+        else:
+            self._power_report = None
+            self._logger.info(
+                "Power saving is off; WiFi, Bluetooth and HDMI stay powered "
+                "(roughly 100 mA). Enable flight_power_saving before launch."
+            )
+
         self._logger.info("Initializing radio...")
         self._radio = SX1262Radio(
             frequency_mhz=self.config.frequency_mhz,
@@ -935,8 +957,12 @@ class RaptorHabAirborne:
                     packets_this_cycle += 1
                     self._packets_sent += 1
             else:
-                # No packet ready, small delay
-                time.sleep(0.001)
+                # Nothing ready. The old 1 ms sleep spun the CPU a thousand
+                # times a second waiting for a scheduler that grants packets on
+                # a far slower cadence, which burns power to no purpose. 20 ms
+                # is still far below the interval between packets and costs
+                # fifty wake-ups a second instead of a thousand.
+                time.sleep(0.02)
             
             # Pet watchdog periodically
             if packets_this_cycle % 100 == 0 and self._watchdog:
@@ -965,16 +991,28 @@ class RaptorHabAirborne:
         if self._radio:
             self._radio.set_standby()
         
+        # The watchdog times out after tens of seconds; petting it ten times a
+        # second was six hundred times more often than it needed, and each
+        # wake-up keeps the core out of its deeper idle states. Sleep in
+        # half-second slices instead: still responsive to shutdown, still far
+        # inside the watchdog window, and an order of magnitude fewer wakes.
+        #
+        # This is the payload's largest single block of idle time -- in cruise
+        # it is most of the flight -- so it is the one worth getting right.
+        PAUSE_SLICE_SEC = 0.5
         pause_start = time.time()
-        while time.time() - pause_start < pause_duration:
-            if self._shutdown.is_set():
+        last_pet = 0.0
+        while True:
+            remaining = pause_duration - (time.time() - pause_start)
+            if remaining <= 0 or self._shutdown.is_set():
                 break
-            
-            # Pet watchdog during pause
-            if self._watchdog:
+
+            now = time.time()
+            if self._watchdog and now - last_pet >= self._watchdog_pet_interval:
                 self._watchdog.pet()
-            
-            time.sleep(0.1)
+                last_pet = now
+
+            time.sleep(min(PAUSE_SLICE_SEC, remaining))
         
         self._logger.debug("Pause cycle complete")
     

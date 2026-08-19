@@ -187,6 +187,7 @@ CATEGORY_ORDER: Tuple[str, ...] = (
     "Meshtastic Private",
     "Meshtastic Repeater",
     "Storage",
+    "Power",
     "Reliability",
     "Debug",
     "Hardware Pins",
@@ -418,6 +419,36 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         "watchdog_enabled", Kind.BOOL, "Reliability",
         "Monitor the main loop and recover if it stops making progress.",
         apply=Apply.RESTART,
+    ),
+    _spec(
+        "flight_power_saving", Kind.BOOL, "Power",
+        "Switch off WiFi, Bluetooth, HDMI and the activity LED at startup. "
+        "Worth roughly 100 mA on a Pi Zero 2 W, which on a typical pack is the "
+        "difference between beaconing for eight hours after landing and four. "
+        "Off by default because disabling WiFi takes away SSH; the USB console "
+        "is unaffected and still reaches the payload.",
+        apply=Apply.RESTART,
+    ),
+    _spec(
+        "power_disable_wifi", Kind.BOOL, "Power",
+        "Part of flight_power_saving. The largest single saving, and the one "
+        "that costs you SSH.",
+        apply=Apply.RESTART, advanced=True,
+    ),
+    _spec(
+        "power_disable_bluetooth", Kind.BOOL, "Power",
+        "Part of flight_power_saving. Nothing in flight uses Bluetooth.",
+        apply=Apply.RESTART, advanced=True,
+    ),
+    _spec(
+        "power_disable_hdmi", Kind.BOOL, "Power",
+        "Part of flight_power_saving. A payload has nothing plugged into HDMI.",
+        apply=Apply.RESTART, advanced=True,
+    ),
+    _spec(
+        "power_disable_led", Kind.BOOL, "Power",
+        "Part of flight_power_saving. The activity LED is invisible at 30 km.",
+        apply=Apply.RESTART, advanced=True,
     ),
     _spec(
         "watchdog_timeout_sec", Kind.INT, "Reliability",

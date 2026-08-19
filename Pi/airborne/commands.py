@@ -26,6 +26,10 @@ from airborne.config import AirborneConfig
 logger = logging.getLogger(__name__)
 
 
+
+# A transmit opportunity sends one ack, so anything beyond a modest backlog is
+# a symptom rather than a queue.
+MAX_PENDING_ACKS = 32
 class CommandStatus(IntEnum):
     """Command acknowledgment status codes."""
     SUCCESS = 0x00
@@ -491,6 +495,18 @@ class CommandHandler:
         self._pending_acks.append((priority, ack_packet))
         # Sort by priority (descending)
         self._pending_acks.sort(key=lambda x: x[0], reverse=True)
+
+        # Bound the queue. Acks are drained one per transmit opportunity, so a
+        # burst of commands -- or a fault that queues them faster than the
+        # radio can send -- would otherwise grow this without limit on a board
+        # with 512 MB and no swap. Dropping the lowest-priority tail is the
+        # right sacrifice: the newest high-priority acks are the ones the
+        # operator is waiting on.
+        if len(self._pending_acks) > MAX_PENDING_ACKS:
+            dropped = len(self._pending_acks) - MAX_PENDING_ACKS
+            del self._pending_acks[MAX_PENDING_ACKS:]
+            logger.warning(
+                f"Ack queue full; dropped {dropped} low-priority ack(s)")
     
     def get_pending_ack(self) -> Optional[bytes]:
         """

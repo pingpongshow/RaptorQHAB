@@ -188,6 +188,14 @@ class Config:
     auto_capture_interval_sec: int = 30
     watchdog_enabled: bool = True
     watchdog_timeout_sec: int = 60
+
+    # Power saving. Off by default: disabling WiFi takes away SSH, and doing
+    # that to someone's bench Pi by surprise would be hostile.
+    flight_power_saving: bool = False
+    power_disable_wifi: bool = True
+    power_disable_bluetooth: bool = True
+    power_disable_hdmi: bool = True
+    power_disable_led: bool = True
     reboot_on_fatal_error: bool = True
     max_consecutive_errors: int = 10
 
