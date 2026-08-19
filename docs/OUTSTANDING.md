@@ -103,6 +103,16 @@ What is left after the dead-code removal. None of these affect a flight.
 
 ## Closed recently, for context
 
+- **USB access was easy, and documented as hard.** `ssh raptorhab.local` works
+  over the cable with nothing configured — verified going over `usb0` with WiFi
+  simultaneously up. The instructions told the operator to open System Settings
+  and hand-enter `10.55.0.2/24`, which is the fallback, not the method. Two
+  genuine traps are now written down: `ping raptorhab.local` fails while `ssh`
+  succeeds, because ping wants IPv4 and only IPv6 is usable on that link; and
+  `ssh 10.55.0.1` cannot work without hand-configuring the host, because
+  nothing on the cable hands out addresses. `Pi/tools/find_payload.sh` covers
+  the case where mDNS is not available.
+
 - **1,407 lines of dead command protocol removed.** `Pi/airborne/commands.py`
   and `Pi/ground/commands.py` implemented a CMD_PING / CMD_SETPARAM /
   CMD_CAPTURE / CMD_REBOOT path over the radio. Neither half was ever

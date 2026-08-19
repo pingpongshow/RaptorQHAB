@@ -117,9 +117,44 @@ Then either:
 ssh <your-imager-username>@raptorhab.local
 ```
 
-or, if WiFi did not come up, over the cable. A new network interface appears on
-your machine (macOS: System Settings > Network, an "RNDIS/Ethernet Gadget");
-give it a manual address such as `10.55.0.2/24` and connect to `10.55.0.1`.
+or, if WiFi did not come up, over the cable — **the same command**:
+
+```bash
+ssh <your-imager-username>@raptorhab.local
+```
+
+The payload advertises itself over the USB link, so this works with nothing
+configured on your machine and no administrator password. Verified: with WiFi
+up *and* the cable in, this connects over USB.
+
+Two things that will mislead you:
+
+- **`ping raptorhab.local` fails while `ssh raptorhab.local` works.** `ping`
+  asks for an IPv4 address and the USB link only has a usable IPv6 one. The
+  payload is not down; use `ping6 raptorhab.local` if you want to check.
+- **`ssh 10.55.0.1` does not work** out of the box, despite the payload holding
+  that address. There is no DHCP server on the cable, so your machine
+  self-assigns a `169.254.x.x` address and the two are on different subnets.
+  Earlier versions of this page told you to open System Settings and enter
+  `10.55.0.2/24` by hand. That does work, and you no longer need it.
+
+If mDNS is unavailable — Windows without Bonjour, or two payloads on one desk —
+find it directly:
+
+```bash
+./Pi/tools/find_payload.sh <your-username>
+```
+
+which prints the exact `ssh` command, for example:
+
+```
+Payload found on en15 at fe80::1a:11ff:fe00:2%en15
+
+  ssh stephen@fe80::1a:11ff:fe00:2%en15
+```
+
+It asks every device on the cable to identify itself, which needs no addresses
+and no privileges.
 
 ### Checking that provisioning worked
 
@@ -288,6 +323,24 @@ journalctl -u raptorhab-airborne -f
 It is enabled at boot, so from here on the payload comes up on power-on.
 
 ---
+
+## What the USB cable carries
+
+Three things, over one cable:
+
+| | What it is | How you use it |
+|---|---|---|
+| **CDC-ECM** ethernet | A network link to the payload | `ssh raptorhab.local` — this is the one you want |
+| **CDC-ACM** serial | The configuration and terminal channel the macOS app speaks | Automatic; the app finds it |
+| Power | The Pi runs from it | Nothing to do |
+
+The ethernet half is optional and only appears if the card was prepared with
+`--usb-ethernet`. The serial half is always present.
+
+**There is no login prompt on the serial port.** The installer deliberately
+disables `serial-getty@ttyGS0` because the configuration service owns that
+device and only one process may. Shell access is over SSH, on the ethernet
+half.
 
 ## The USB serial console
 
