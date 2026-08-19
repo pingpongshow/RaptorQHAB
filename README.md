@@ -179,6 +179,19 @@ Waveshare HF HAT.
 
 ## Getting started
 
+Flash **Raspberry Pi OS Lite (64-bit)**, setting your username, password and
+WiFi in Raspberry Pi Imager.
+
+**Either** prepare the card before it ever boots, which also makes the Pi
+reachable over the USB cable if WiFi is unavailable or your access point
+isolates clients:
+
+```bash
+./Pi/tools/provision_sd.sh --camera imx219
+```
+
+**Or** copy the code over the network:
+
 ```bash
 rsync -av --exclude '__pycache__' Pi/ raptorhab.local:~/raptorhab/
 ```

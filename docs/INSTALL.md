@@ -4,6 +4,27 @@ From a blank SD card to a payload that transmits on boot.
 
 ---
 
+## Two ways in
+
+| | Over the network | From the SD card |
+|---|---|---|
+| Pi joins your WiFi | yes | not required |
+| Needs the Pi's IP address | yes | no |
+| Payload source | copied over SSH | staged on the card before first boot |
+| Boot configuration | written by the installer, needs a reboot | already correct on first boot |
+| Reachable if WiFi fails | no | yes, over the USB cable |
+
+The network path is sections 1–5 below. The card path is
+[Provisioning the card before first boot](#provisioning-the-card-before-first-boot),
+and it is the better one if you would rather not put a flight computer on your
+home WiFi, or if your access point isolates clients from each other — which is
+common, and which makes a Pi that is online and still unreachable from the
+laptop next to it.
+
+Either way you finish in the same place, running `install.sh` on the Pi.
+
+---
+
 ## 1. Flash the OS
 
 Use **Raspberry Pi OS Lite (64-bit)**, Bookworm or later.
@@ -25,6 +46,138 @@ In Raspberry Pi Imager, open the gear icon before writing and set:
 - **enable SSH**
 
 The Wi-Fi is only for installation. Nothing in flight needs a network.
+
+---
+
+## Provisioning the card before first boot
+
+`install.sh` needs a booted Pi with a working network, because it installs
+packages. That is a poor fit for a flight computer: it means putting the
+payload on your home WiFi, and it means the first thing you do with a new card
+is go looking for its IP address. On a network with client isolation between
+bands -- common, and something this project has already lost an afternoon to --
+the Pi can be online and still unreachable from your laptop.
+
+### Let Imager own your account and WiFi
+
+Set the username, password, WiFi and hostname **in Raspberry Pi Imager**, not
+here. Those are yours and they differ per person and per network; this script
+has no business guessing them.
+
+On Pi OS Bookworm and later, Imager writes that customisation as cloud-init
+(`user-data` and `network-config` on the boot partition). `provision_sd.sh`
+detects those files and deliberately stands aside — it will refuse `--user` and
+`--wifi` and tell you so, because `firstrun.sh` runs *before* cloud-init and
+would otherwise create the account with one password only for cloud-init to
+replace it with another. You would type the password you set in Imager, it
+would work, and the one you passed here would have quietly evaporated.
+
+So the division is:
+
+| Set in Imager | Set by this script |
+|---|---|
+| username and password | `config.txt`: SPI, GPIO ALT0, `disable-bt`, camera overlay |
+| WiFi network | USB ethernet gadget, so the Pi is reachable without WiFi |
+| hostname, locale, timezone | the payload source, staged for the installer |
+
+### Running it
+
+`Pi/tools/provision_sd.sh` prepares the card before it has ever booted. Put the
+freshly flashed card in your Mac or Linux machine and run:
+
+```bash
+./Pi/tools/provision_sd.sh --camera imx219
+```
+
+If the card has no cloud-init on it — an older Pi OS, or a card flashed without
+Imager's customisation — then `--user`, `--password` and `--wifi` do apply, and
+you will need at least an account to log in with.
+
+It writes the boot partition only — on a Mac the ext4 root mounts read-only, so
+anything needing the root filesystem has to happen on the Pi. It lands the
+payload's `config.txt` changes, stages the source as a tarball, enables SSH, and
+turns on the **USB ethernet gadget**.
+
+It is safe to run twice. Every change is idempotent: it reports lines that are
+already present rather than adding them again, and it warns if the card has
+been provisioned before.
+
+### First boot
+
+Eject the card, put it in the Pi, and connect a cable to the Pi's **data**
+port — the inner socket on a Zero 2 W, not the one marked PWR.
+
+First boot does more than usual: the filesystem is resized, `firstrun.sh` runs
+and reboots, then cloud-init applies your account and WiFi. Allow three or four
+minutes before expecting it to answer.
+
+Then either:
+
+```bash
+ssh <your-imager-username>@raptorhab.local
+```
+
+or, if WiFi did not come up, over the cable. A new network interface appears on
+your machine (macOS: System Settings > Network, an "RNDIS/Ethernet Gadget");
+give it a manual address such as `10.55.0.2/24` and connect to `10.55.0.1`.
+
+### Checking that provisioning worked
+
+```bash
+ls /opt/raptorhab-src/setup/install.sh
+cat /var/log/raptorhab-firstrun.log
+```
+
+The log is the first place to look if anything is missing. `firstrun.sh` writes
+everything it does there, then deletes itself and removes its own hook from
+`cmdline.txt` so it runs exactly once.
+
+Two quick sanity checks that the boot configuration took:
+
+```bash
+ls /dev/spidev0.0          # SPI for the radio
+ls -l /dev/serial0         # should point at ttyAMA0, not ttyS0
+```
+
+`serial0` pointing at `ttyS0` means `disable-bt` did not apply — the GPS would
+be on the mini-UART, whose baud rate follows the CPU clock, which is how you
+get NMEA that decodes at idle and turns to noise under load.
+
+### The one thing it cannot do offline
+
+Installing packages. A fresh Pi OS Lite has no `picamera2` and no
+`python3-venv`, and no amount of card preparation conjures them up. The USB
+ethernet link solves this without WiFi: share your laptop's connection over
+that interface (macOS: System Settings > General > Sharing > Internet Sharing,
+from Wi-Fi to the gadget interface), then run the installer over SSH:
+
+```bash
+sudo /opt/raptorhab-src/setup/install.sh --usb-gadget --camera imx219
+```
+
+The payload never joins your WiFi.
+
+A genuinely air-gapped install would mean staging every `.deb` on the card.
+That is possible, but it breaks whenever Raspberry Pi OS moves a dependency,
+and a provisioning path that works until it silently doesn't is worse than one
+that is honest about needing a wire.
+
+### Options
+
+| Option | Effect |
+|---|---|
+| `--boot PATH` | Boot partition (auto-detects `bootfs`) |
+| `--source PATH` | Payload tree to stage (defaults to the `Pi/` directory holding the script) |
+| `--hostname NAME` | Hostname, default `raptorhab` |
+| `--user NAME` / `--password PASS` | Create an account, **only if the card has no cloud-init**. The password is hashed before it is written; the plain text never lands on the card. |
+| `--wifi SSID` / `--wifi-password` / `--wifi-country` | Optional WiFi, **only if the card has no cloud-init**. |
+| `--camera SENSOR` | Camera overlay: `imx219`, `imx477`, `imx708`, `ov5647` |
+| `--no-usb-ethernet` | Leave the USB gadget off |
+| `--auto-install` | Run the installer on first boot. Needs a network at that moment. |
+| `--dry-run` | Show every change, write nothing |
+
+`--dry-run` first is worth the ten seconds. It prints exactly which lines it
+would add and which are already present.
 
 ---
 
@@ -367,99 +520,3 @@ installer.
 `systemctl status raptorhab-usb-gadget`.
 
 
-## Setting up a card without putting the Pi on your network
-
-`install.sh` needs a booted Pi with a working network, because it installs
-packages. That is a poor fit for a flight computer: it means putting the
-payload on your home WiFi, and it means the first thing you do with a new card
-is go looking for its IP address. On a network with client isolation between
-bands -- common, and something this project has already lost an afternoon to --
-the Pi can be online and still unreachable from your laptop.
-
-### Let Imager own your account and WiFi
-
-Set the username, password, WiFi and hostname **in Raspberry Pi Imager**, not
-here. Those are yours and they differ per person and per network; this script
-has no business guessing them.
-
-On Pi OS Bookworm and later, Imager writes that customisation as cloud-init
-(`user-data` and `network-config` on the boot partition). `provision_sd.sh`
-detects those files and deliberately stands aside — it will refuse `--user` and
-`--wifi` and tell you so, because `firstrun.sh` runs *before* cloud-init and
-would otherwise create the account with one password only for cloud-init to
-replace it with another. You would type the password you set in Imager, it
-would work, and the one you passed here would have quietly evaporated.
-
-So the division is:
-
-| Set in Imager | Set by this script |
-|---|---|
-| username and password | `config.txt`: SPI, GPIO ALT0, `disable-bt`, camera overlay |
-| WiFi network | USB ethernet gadget, so the Pi is reachable without WiFi |
-| hostname, locale, timezone | the payload source, staged for the installer |
-
-### Running it
-
-`Pi/tools/provision_sd.sh` prepares the card before it has ever booted. Put the
-freshly flashed card in your Mac or Linux machine and run:
-
-```bash
-./Pi/tools/provision_sd.sh --camera imx219
-```
-
-If the card has no cloud-init on it — an older Pi OS, or a card flashed without
-Imager's customisation — then `--user`, `--password` and `--wifi` do apply, and
-you will need at least an account to log in with.
-
-It writes the boot partition only, which is the part a Mac can write to (the
-ext4 root mounts read-only there). It lands the payload's `config.txt` changes,
-stages the source as a tarball, enables SSH, creates your account, and turns on
-the **USB ethernet gadget** so the Pi is reachable over the cable with no
-network at all.
-
-Then boot the Pi with a cable to its **data** port -- the inner socket on a Zero
-2 W, not the one marked PWR. First boot resizes the filesystem and reboots once
-on its own, so give it two or three minutes. A new network interface appears on
-your machine; give it an address such as `10.55.0.2/24` and:
-
-```bash
-ssh pilot@raptorhab.local
-```
-
-### The one thing it cannot do offline
-
-Installing packages. A fresh Pi OS Lite has no `picamera2` and no
-`python3-venv`, and no amount of card preparation conjures them up. The USB
-ethernet link solves this without WiFi: share your laptop's connection over
-that interface (macOS: System Settings > General > Sharing > Internet Sharing,
-from Wi-Fi to the gadget interface), then run the installer over SSH:
-
-```bash
-sudo /opt/raptorhab-src/setup/install.sh --usb-gadget --camera imx219
-```
-
-The payload never joins your WiFi.
-
-A genuinely air-gapped install would mean staging every `.deb` on the card.
-That is possible, but it breaks whenever Raspberry Pi OS moves a dependency,
-and a provisioning path that works until it silently doesn't is worse than one
-that is honest about needing a wire.
-
-### Options
-
-| Option | Effect |
-|---|---|
-| `--boot PATH` | Boot partition (auto-detects `bootfs`) |
-| `--source PATH` | Payload tree to stage (defaults to the `Pi/` directory holding the script) |
-| `--hostname NAME` | Hostname, default `raptorhab` |
-| `--user NAME` / `--password PASS` | Create an account, **only if the card has no cloud-init**. The password is hashed before it is written; the plain text never lands on the card. |
-| `--wifi SSID` / `--wifi-password` / `--wifi-country` | Optional WiFi, **only if the card has no cloud-init**. |
-| `--camera SENSOR` | Camera overlay: `imx219`, `imx477`, `imx708`, `ov5647` |
-| `--no-usb-ethernet` | Leave the USB gadget off |
-| `--auto-install` | Run the installer on first boot. Needs a network at that moment. |
-| `--dry-run` | Show every change, write nothing |
-
-`--dry-run` first is worth the ten seconds. It prints exactly which lines it
-would add and which are already present.
-
----
