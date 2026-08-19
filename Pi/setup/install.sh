@@ -590,6 +590,17 @@ ok "in-flight WiFi cutoff watcher enabled"
 # blocked in flight comes back blocked. The payload unblocks on startup too,
 # but only if it starts -- and "the payload is broken" is exactly when being
 # able to reach the Pi matters most.
+# Passive record of the WiFi radio's state. The payload has an intermittent
+# fault where it stays associated and can reach the network while nothing can
+# reach it, and four plausible explanations have already been tested and
+# disproved -- see tools/wifi_watch.sh. Until it is understood, log the
+# evidence rather than guess again.
+install -m 0644 "$CODE_DIR/setup/raptorhab-wifi-watch.service" \
+    /etc/systemd/system/raptorhab-wifi-watch.service
+systemctl daemon-reload
+systemctl enable raptorhab-wifi-watch.service >/dev/null 2>&1 || true
+ok "wlan0 state watcher enabled"
+
 install -m 0644 "$CODE_DIR/setup/raptorhab-wifi-restore.service" \
     /etc/systemd/system/raptorhab-wifi-restore.service
 systemctl daemon-reload

@@ -5,36 +5,63 @@ Delete an item when it is closed, do not mark it done.
 
 ---
 
-## 1. The Pi is unreachable over WiFi (workaround in place)
+## 1. The payload intermittently unreachable over WiFi — cause unknown
 
-**Diagnosed, not fixed. Does not block anything.**
+**Four hypotheses tested, all four wrong. Now instrumented and waiting.**
 
-The payload is healthy and was never the problem. Reached over the USB gadget:
+The fault: the payload stays associated, holds its lease, and can reach the
+gateway and the Mac — but nothing can reach *it*. It clears on its own, and
+transmitting appears to help.
 
-- `wlan0` is associated, holds 10.1.1.75, and **can ping the gateway and this
-  Mac** — outbound works fine
-- rfkill is clear, so the in-flight WiFi cutoff did not fire (it needs 300 m
-  AGL; the payload is on a desk)
-- the payload service is up and transmitting throughout
+### What it is not
 
-What fails is **inbound**: the Mac's ARP entry for 10.1.1.75 goes
-`(incomplete)`. Outbound working while inbound fails, with ARP unresolved, is
-the signature of **AP client isolation** rather than anything on the Pi.
+| Hypothesis | Ruled out by |
+|---|---|
+| AP client isolation | The payload can ping the Mac that cannot reach it. Isolation blocks both directions. **This was my own earlier diagnosis and it was wrong.** |
+| 802.11 power save | `iw dev wlan0 get power_save` → **off**, and NetworkManager resolves `wifi.powersave=2` from the drop-in. The earlier fix did work. |
+| SDIO runtime suspend | `/sys/class/net/wlan0/device/power/runtime_status` → `unsupported`. |
+| Regulatory misconfiguration | 4,612 `CTRL-EVENT-REGDOM-CHANGE ... type=WORLD` messages looked damning, and the global domain really is `country 00`. But `iw phy0 reg get` reports **`country 99`** — the device is *self-managed*, so it owns its own regulatory domain and the global one is meaningless for it. `iw reg set` is ignored by design. The messages are cosmetic. |
 
-**Workaround, and it is a good one:** the USB gadget gives a reliable path that
-does not depend on WiFi at all, with no privileged setup on the Mac:
+### What is known
 
-```bash
-ping6 -c 3 -I en15 ff02::1     # discover it
-ssh stephen@fe80::1a:11ff:fe00:2%en15
+- The radio is healthy while it happens: `signal -24 dBm`, `tx failed 0`,
+  `inactive time 0 ms`, one association lasting hours.
+- The payload sends **zero bytes** on `wlan0` when idle — measured, 10 seconds,
+  counters unmoved. Everything it does is LoRa and the USB gadget. So the
+  interface is genuinely silent for long stretches.
+- During one failure, 5 pings in a row were lost with the payload idle and 5 of
+  8 succeeded while it was transmitting continuously — which is what pointed at
+  power save before the driver contradicted it.
+- It would **not reproduce** across eight minutes of deliberate silence, and is
+  behaving perfectly now.
+
+### Instrumented
+
+`raptorhab-wifi-watch.service` records every 20 s, passively — it sends
+nothing, because generating traffic is exactly what makes the payload reachable
+again and a probe would paper over the thing being investigated:
+
+```
+2026-08-19T17:45:20+00:00 rx=7493481 tx=482483 inactive_ms=0 signal_dbm=-24 \
+    tx_failed=0 assoc_age_s=15271 bssid=ba:28:aa:94:dd:3b ps=off ip=10.1.1.75/24
 ```
 
-The Mac names the interface "RaptorHab Payload". IPv4 over the gadget would
-need `10.55.0.2/24` added to `en15`, which needs an admin password; IPv6
-link-local needs nothing.
+`inactive_ms` is the number to watch: how long since the AP last heard a frame
+from us. `assoc_age_s` resets on reassociation, so a silent relink shows up even
+when nothing logs a disconnect.
 
-**To fix properly:** check for client isolation / AP isolation on the
-PingPongShow SSID, or give the Pi a static reservation on a network without it.
+**Next time it happens, read
+`/var/lib/raptorhab/wifi_watch.log`** rather than hypothesising. That is the
+whole point of it.
+
+### Meanwhile
+
+The USB gadget is unaffected and needs no privileged setup on the Mac:
+
+```bash
+ping6 -c 3 -I en15 ff02::1
+ssh stephen@fe80::1a:11ff:fe00:2%en15
+```
 
 ---
 

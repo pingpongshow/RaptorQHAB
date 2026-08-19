@@ -1,0 +1,16 @@
+[Unit]
+# Passive record of the WiFi radio's state, for diagnosing the intermittent
+# "payload is on the network but unreachable" fault. See tools/wifi_watch.sh
+# for what has already been ruled out.
+Description=RaptorHab: watch wlan0 state
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/raptorhab/tools/wifi_watch.sh
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
