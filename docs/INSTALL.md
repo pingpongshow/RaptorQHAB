@@ -535,6 +535,9 @@ python3 Pi/tools/recording_key.py verify XhdssUXd+ZymEOS/Gb9zSOE7usnX3x8WTF7Jd3G
 
 ### Reading recordings afterwards
 
+Full instructions, including the file format and what to do when decryption
+fails, are in [SECURITY.md](SECURITY.md#decrypting-by-hand).
+
 From a recovered card, or from files pulled off over USB:
 
 ```bash
