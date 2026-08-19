@@ -77,6 +77,14 @@ class Config:
     camera_resolution: Tuple[int, int] = (1280, 960)
     camera_burst_count: int = 5
     webp_quality: int = 75
+
+    # Releasing the sensor between captures. Measured on a Pi Zero 2 W: an
+    # open, idle camera keeps the SoC about 2 C warmer, and releasing costs
+    # about 160 ms per capture against an interval of tens of seconds.
+    # Auto-exposure survives the restart, so no settling sleep is needed.
+    camera_release_when_idle: bool = False
+    camera_warmup_sec: float = 0.0
+    camera_warmup_frames: int = 1
     image_overlay_enabled: bool = True
 
     # Camera image adjustments (0-200 scale, 100 = neutral/normal)

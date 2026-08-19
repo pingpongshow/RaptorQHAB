@@ -421,6 +421,29 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         apply=Apply.RESTART,
     ),
     _spec(
+        "camera_release_when_idle", Kind.BOOL, "Power",
+        "Stop the camera pipeline between captures instead of leaving it "
+        "streaming for the whole flight. Measured on a Pi Zero 2 W: an open, "
+        "idle camera keeps the SoC about 2 C warmer, and releasing costs about "
+        "160 ms per capture against an interval of tens of seconds. Exposure "
+        "survives the restart -- that was measured, not assumed. Off by "
+        "default only because it has not yet flown.",
+        apply=Apply.RESTART,
+    ),
+    _spec(
+        "camera_warmup_sec", Kind.FLOAT, "Power",
+        "Settling time after a restart. Zero by default: exposure state survives stop()/start(), so there is nothing to wait for.",
+        apply=Apply.RESTART, minimum=0.0, maximum=5.0, unit="s", advanced=True,
+    ),
+    _spec(
+        "camera_warmup_frames", Kind.INT, "Power",
+        "Frames discarded after a restart. Not for exposure convergence, which "
+        "survives the restart, but for scene change: the camera cannot adapt "
+        "while it is stopped, so the first frame is metered for the scene as "
+        "it was. One frame gives the loop a cycle to react.",
+        apply=Apply.RESTART, minimum=0, maximum=10, advanced=True,
+    ),
+    _spec(
         "flight_power_saving", Kind.BOOL, "Power",
         "Switch off WiFi, Bluetooth, HDMI and the activity LED at startup. "
         "Worth roughly 100 mA on a Pi Zero 2 W, which on a typical pack is the "

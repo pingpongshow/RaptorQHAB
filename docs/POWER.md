@@ -60,33 +60,79 @@ On Pi OS Lite with no monitor attached and no display server, the HDMI PHY is
 not driving anything to begin with. The 25 mA belongs to a desktop image with a
 display attached, which a payload is not.
 
-## The camera: the biggest remaining saving
+## The camera
 
-`Picamera2.start()` is called once at boot and `stop()` only at shutdown. With
-the default 30-second capture interval, **the sensor and ISP run continuously
-while being used for about one second in thirty.** That is somewhere around
-150–250 mA, which is larger than everything above put together.
+`Picamera2.start()` was called once at boot and `stop()` only at shutdown, so
+the sensor and ISP ran for the entire flight while being used about one second
+in thirty.
 
-It has not been changed, because stopping and restarting the camera is not free:
+### What it actually costs
 
-- Restart latency is on the order of a second, so a capture triggered by an
-  uplink command becomes noticeably slower.
-- Auto-exposure and auto-white-balance reconverge from scratch each time. At
-  altitude, against a bright horizon, the first frame after a restart may be
-  badly exposed — and unlike a dropped packet, a bad image is not recoverable
-  by trying again five minutes later.
+I first asserted 150–250 mA for this, which was not measured and was too high.
+Without a current meter, the honest proxy is temperature:
 
-The right fix is to stop the camera only when the schedule says the next
-capture is far away — in cruise, and always in LANDED where capture is disabled
-outright — and to discard the first frame after a restart. That is a real piece
-of work with a real risk to image quality, and it deserves bench testing
-against actual exposures rather than being merged on the strength of the
-arithmetic.
+```
+camera STREAMING   mean 49.9 C
+camera STOPPED     mean 47.8 C
+difference         +2.0 C with the camera merely open
+```
 
-**If you want the saving before that work is done**, raising
-`auto_capture_interval_sec` reduces the number of captures but not the idle
-draw, because the camera stays open either way. Turning capture off entirely in
-cruise does not currently release it either.
+Two degrees on a passively cooled Zero 2 W is roughly 20–30 mA of SoC-side
+draw, plus whatever the sensor board itself takes, which this measurement
+cannot see. Real, worth having, and smaller than the figure I first gave.
+
+### What releasing costs
+
+Measured with an IMX219 at 1280×960, burst of three:
+
+| | Median per capture |
+|---|---|
+| Always streaming | 2510 ms |
+| Released, one discarded frame | 2672 ms |
+| Released, no warm-up | 2615 ms |
+| Released, 0.4 s + 2 frames | 3007 ms |
+
+**About 160 ms**, or half a percent of a thirty-second interval.
+
+### The assumption that was wrong
+
+The reason this was not done sooner was a belief that auto-exposure reconverges
+from scratch after a restart, risking a badly exposed frame at altitude.
+
+Measured in a lit scene, that is simply not true. libcamera keeps its exposure
+state across `stop()`/`start()` while the configuration is unchanged:
+
+```
+settled reference brightness: 122.7
+trial 1: 122.6  122.7  122.6  122.6 ...
+trial 2: 122.7  122.6  122.7  122.7 ...
+trial 3: 122.8  122.7  122.7  122.7 ...
+frames until within 5% of reference: frame 0, all three trials
+```
+
+Frame zero is already correct. Restarting does not cost an exposure.
+
+### The real risk, which is narrower
+
+What the camera cannot do while stopped is *adapt*. If the scene changes during
+the idle period — the balloon climbs out of cloud into direct sun — the first
+frame after the restart is metered for the scene as it was. That is why the
+default discards one frame: it gives the exposure loop a cycle to react before
+anything is kept. It is not about convergence after a restart, which does not
+happen; it is about a stale meter after a change.
+
+This is the part still untested. The bench scene was static and indoors. A
+flight is neither.
+
+### Enabling it
+
+```
+camera_release_when_idle = true
+```
+
+Off by default only because it has not yet flown. The evidence supports turning
+it on: the cost is 160 ms a capture, exposure survives the restart, and a
+failed restart returns no image rather than a bad one.
 
 ## The idle loop
 

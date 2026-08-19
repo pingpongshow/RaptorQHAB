@@ -304,6 +304,9 @@ class RaptorHabAirborne:
             callsign=self.config.callsign,
             simulation=self.debug,
             sealed_writer=self._sealed_writer,
+            release_when_idle=self.config.camera_release_when_idle,
+            warmup_sec=self.config.camera_warmup_sec,
+            warmup_frames=self.config.camera_warmup_frames,
         )
         self._camera.init()
         
@@ -1181,6 +1184,11 @@ class RaptorHabAirborne:
             if image_info:
                 self._images_captured += 1
                 self._logger.info(f"Captured image {image_info.image_id}: {image_info.size_bytes} bytes")
+
+                # Let the sensor go until the next capture. Does nothing unless
+                # camera_release_when_idle is set.
+                if self._camera:
+                    self._camera.release()
                 
                 # Queue for transmission
                 try:
