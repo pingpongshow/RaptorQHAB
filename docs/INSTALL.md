@@ -376,12 +376,40 @@ is go looking for its IP address. On a network with client isolation between
 bands -- common, and something this project has already lost an afternoon to --
 the Pi can be online and still unreachable from your laptop.
 
+### Let Imager own your account and WiFi
+
+Set the username, password, WiFi and hostname **in Raspberry Pi Imager**, not
+here. Those are yours and they differ per person and per network; this script
+has no business guessing them.
+
+On Pi OS Bookworm and later, Imager writes that customisation as cloud-init
+(`user-data` and `network-config` on the boot partition). `provision_sd.sh`
+detects those files and deliberately stands aside — it will refuse `--user` and
+`--wifi` and tell you so, because `firstrun.sh` runs *before* cloud-init and
+would otherwise create the account with one password only for cloud-init to
+replace it with another. You would type the password you set in Imager, it
+would work, and the one you passed here would have quietly evaporated.
+
+So the division is:
+
+| Set in Imager | Set by this script |
+|---|---|
+| username and password | `config.txt`: SPI, GPIO ALT0, `disable-bt`, camera overlay |
+| WiFi network | USB ethernet gadget, so the Pi is reachable without WiFi |
+| hostname, locale, timezone | the payload source, staged for the installer |
+
+### Running it
+
 `Pi/tools/provision_sd.sh` prepares the card before it has ever booted. Put the
 freshly flashed card in your Mac or Linux machine and run:
 
 ```bash
-./Pi/tools/provision_sd.sh --camera imx219 --user pilot --password 'choose something'
+./Pi/tools/provision_sd.sh --camera imx219
 ```
+
+If the card has no cloud-init on it — an older Pi OS, or a card flashed without
+Imager's customisation — then `--user`, `--password` and `--wifi` do apply, and
+you will need at least an account to log in with.
 
 It writes the boot partition only, which is the part a Mac can write to (the
 ext4 root mounts read-only there). It lands the payload's `config.txt` changes,
@@ -424,8 +452,8 @@ that is honest about needing a wire.
 | `--boot PATH` | Boot partition (auto-detects `bootfs`) |
 | `--source PATH` | Payload tree to stage (defaults to the `Pi/` directory holding the script) |
 | `--hostname NAME` | Hostname, default `raptorhab` |
-| `--user NAME` / `--password PASS` | Create an account. The password is hashed before it is written; the plain text never lands on the card. |
-| `--wifi SSID` / `--wifi-password` / `--wifi-country` | Optional WiFi, if you do want it on the network |
+| `--user NAME` / `--password PASS` | Create an account, **only if the card has no cloud-init**. The password is hashed before it is written; the plain text never lands on the card. |
+| `--wifi SSID` / `--wifi-password` / `--wifi-country` | Optional WiFi, **only if the card has no cloud-init**. |
 | `--camera SENSOR` | Camera overlay: `imx219`, `imx477`, `imx708`, `ov5647` |
 | `--no-usb-ethernet` | Leave the USB gadget off |
 | `--auto-install` | Run the installer on first boot. Needs a network at that moment. |
