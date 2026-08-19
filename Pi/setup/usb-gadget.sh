@@ -43,6 +43,25 @@ PRODUCT="RaptorHab Payload"
 
 case "${1:-start}" in
 start)
+    # A card prepared by provision_sd.sh boots with g_ether, so the Pi is
+    # reachable over USB before anything is installed. That module binds the
+    # USB device controller, and a UDC can only have one gadget driver bound
+    # at a time -- so libcomposite would silently fail to bind and the console
+    # would never appear. Hand the controller over rather than fighting for it.
+    if lsmod 2>/dev/null | grep -qE '^(g_ether|usb_f_ecm|g_serial|g_cdc) '; then
+        echo "releasing the bootstrap USB gadget so libcomposite can bind"
+        modprobe -r g_ether 2>/dev/null || true
+        modprobe -r g_serial 2>/dev/null || true
+        modprobe -r g_cdc 2>/dev/null || true
+    fi
+
+    # Stop it coming back on the next boot, for the same reason.
+    if [[ -f /boot/firmware/cmdline.txt ]] && \
+       grep -q 'modules-load=dwc2,g_ether' /boot/firmware/cmdline.txt; then
+        sed -i 's/ modules-load=dwc2,g_ether//' /boot/firmware/cmdline.txt
+        echo "removed the bootstrap g_ether from cmdline.txt; libcomposite owns the port now"
+    fi
+
     modprobe libcomposite
 
     if [[ -d "$GADGET_DIR" ]]; then

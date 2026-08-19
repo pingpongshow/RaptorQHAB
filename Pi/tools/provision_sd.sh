@@ -37,7 +37,7 @@ CAMERA_OVERLAY=""
 BOOT_PATH=""
 SOURCE_DIR=""
 USB_ETHERNET=1
-AUTO_INSTALL=0
+AUTO_INSTALL=1
 DRY_RUN=0
 
 usage() {
@@ -54,7 +54,7 @@ Usage: provision_sd.sh [options]
   --wifi-country CC    Regulatory domain for WiFi (default: US)
   --camera SENSOR      Camera overlay, e.g. imx219, imx477, imx708, ov5647
   --no-usb-ethernet    Do not enable the USB ethernet gadget
-  --auto-install       Run install.sh automatically on first boot (needs network)
+  --no-auto-install    Do not install automatically; stage the source only
   --dry-run            Show what would be written, change nothing
   -h, --help           This text
 
@@ -80,6 +80,7 @@ while [[ $# -gt 0 ]]; do
         --camera)         CAMERA_OVERLAY="${2:?--camera needs a sensor}"; shift ;;
         --no-usb-ethernet) USB_ETHERNET=0 ;;
         --auto-install)   AUTO_INSTALL=1 ;;
+        --no-auto-install) AUTO_INSTALL=0 ;;
         --dry-run)        DRY_RUN=1 ;;
         -h|--help)        usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
@@ -355,16 +356,41 @@ fi
 "
 
 if [[ $AUTO_INSTALL -eq 1 ]]; then
+    # The install cannot run from firstrun.sh. firstrun.sh is invoked by
+    # systemd.run before the network is up and before cloud-init has applied
+    # the WiFi configuration, so apt would have nothing to talk to. Running it
+    # there fails every time, on a card that looks correctly provisioned.
+    #
+    # Instead firstrun.sh drops a one-shot unit that waits for the network and
+    # for cloud-init to finish, installs, and then disables itself. The log it
+    # leaves behind is the whole point: an unattended install that fails
+    # silently is worse than one that never started.
     FIRSTRUN_BODY+="
-# Automatic install. This needs a working network for apt; if there is none it
-# fails and leaves the source in place for a manual run, which is the right
-# outcome -- better a clear failure than a half-installed flight computer.
-if [ -x /opt/raptorhab-src/setup/install.sh ]; then
-    /opt/raptorhab-src/setup/install.sh --usb-gadget ${CAMERA_OVERLAY:+--camera $CAMERA_OVERLAY}
-    echo \"installer exit: \$?\"
-fi
+# Deferred install, once there is actually a network to install from.
+cat > /etc/systemd/system/raptorhab-firstinstall.service <<'UNIT'
+[Unit]
+Description=RaptorHAB first-boot installation
+After=network-online.target cloud-init.service
+Wants=network-online.target
+ConditionPathExists=/opt/raptorhab-src/setup/install.sh
+ConditionPathExists=!/opt/raptorhab/.venv/bin/python
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=3600
+ExecStart=/opt/raptorhab-src/setup/install.sh --usb-gadget ${CAMERA_OVERLAY:+--camera $CAMERA_OVERLAY}
+ExecStartPost=/bin/sh -c 'systemctl disable raptorhab-firstinstall.service'
+StandardOutput=append:/var/log/raptorhab-install.log
+StandardError=append:/var/log/raptorhab-install.log
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl enable raptorhab-firstinstall.service
+echo 'deferred install unit enabled; it runs once the network is up'
 "
-    warn "--auto-install set: first boot will try to apt-install, which needs network"
+    say "installer will run automatically once the network is up on first boot"
 fi
 
 FIRSTRUN_BODY+="
@@ -407,11 +433,20 @@ else
     STAGE="$(mktemp -d)"
     trap 'rm -rf "$STAGE"' EXIT
     mkdir -p "$STAGE/raptorhab-src"
-    (cd "$SOURCE_DIR" && tar -cf - \
+    # --no-xattrs keeps macOS provenance attributes out of the archive. They
+    # are harmless, but bsdtar records them as extended headers and GNU tar on
+    # the Pi prints a warning for every single file it does not recognise --
+    # dozens of lines of noise in the first-boot log, which is exactly where
+    # someone will later be looking for a real error.
+    TAR_FLAGS=()
+    if tar --no-xattrs -cf /dev/null -T /dev/null 2>/dev/null; then
+        TAR_FLAGS+=(--no-xattrs)
+    fi
+    (cd "$SOURCE_DIR" && tar "${TAR_FLAGS[@]}" -cf - \
         --exclude '__pycache__' --exclude '.venv' --exclude '*.pyc' \
         --exclude '.pytest_cache' --exclude '.DS_Store' --exclude '*.egg-info' \
         .) | (cd "$STAGE/raptorhab-src" && tar -xf -)
-    tar -czf "$TARBALL" -C "$STAGE" raptorhab-src
+    tar "${TAR_FLAGS[@]}" -czf "$TARBALL" -C "$STAGE" raptorhab-src
 
     # Prove the layout is what firstrun.sh will expect, rather than trusting it.
     if ! tar -tzf "$TARBALL" | grep -q '^raptorhab-src/setup/install.sh$'; then
