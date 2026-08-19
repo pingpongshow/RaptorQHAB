@@ -11,6 +11,7 @@ from datetime import datetime
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from .modem_meshtastic import ModemMeshtasticLink
 from .protocol import FrameExtractor, PacketParser, PacketType
 from .config import ModemConfig
 
@@ -39,6 +40,10 @@ class SerialManager(QObject):
     """
     
     packet_received = pyqtSignal(int, int, int, bytes, float, float)
+    # A Meshtastic packet heard on the ground station's own radio. Only a
+    # dual-radio modem ever emits these; a single-radio one cannot listen for
+    # Meshtastic and RAPTOR at the same time.
+    meshtastic_received = pyqtSignal(object)
     connected = pyqtSignal()
     disconnected = pyqtSignal()
     error = pyqtSignal(str)
@@ -56,6 +61,12 @@ class SerialManager(QObject):
         self._stop_event = Event()
         
         self._frame_extractor = FrameExtractor()
+
+        # Decodes Meshtastic packets the modem forwards, and transmits through
+        # it. Left unconfigured until the app supplies channel keys; it decodes
+        # the public channel by default so a bare connection still shows
+        # beacons.
+        self.meshtastic = ModemMeshtasticLink(writer=self.write)
         self._text_buffer = ""
         
         self.stats = SerialStats()
@@ -228,6 +239,14 @@ class SerialManager(QObject):
             else:
                 self.stats.packets_invalid += 1
         
+        # Meshtastic packets arrive on their own delimiter and are collected
+        # separately, so a caller expecting RAPTOR image symbols never gets
+        # handed one.
+        for packet in self.meshtastic.handle_frames(
+            self._frame_extractor.take_meshtastic()
+        ):
+            self.meshtastic_received.emit(packet)
+
         # Emit stats update occasionally
         if self.stats.frames_extracted % 10 == 0:
             self.stats_updated.emit(self.stats)
@@ -251,6 +270,11 @@ class SerialManager(QObject):
     
     def _process_text_line(self, line: str):
         """Process a text line from the modem."""
+        # A transmit verdict comes back on the same text channel as everything
+        # else the modem prints, and the sender is blocked waiting for it.
+        if self.meshtastic.handle_modem_line(line):
+            return
+
         # Configuration acknowledgment
         if line.startswith("CFG_OK:") or line.startswith("CFG_ACK:"):
             self.is_configured = True

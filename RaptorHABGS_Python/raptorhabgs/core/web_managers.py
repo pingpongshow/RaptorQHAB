@@ -14,6 +14,7 @@ from datetime import datetime
 import pynmea2
 import math
 
+from .modem_meshtastic import ModemMeshtasticLink
 from .protocol import (
     FrameExtractor, PacketParser, PacketType,
     TelemetryPayload, ImageMetaPayload, ImageDataPayload, TextMessagePayload
@@ -47,6 +48,11 @@ class WebSerialManager:
         self._stop_event = Event()
         
         self._frame_extractor = FrameExtractor()
+
+        # Same dual-radio support as the Qt app: the web UI should not be the
+        # one that silently drops Meshtastic traffic.
+        self.meshtastic = ModemMeshtasticLink(writer=self.write)
+        self.on_meshtastic_received = None
         self._text_buffer = ""
         
         self.stats = SerialStats()
@@ -170,6 +176,12 @@ class WebSerialManager:
         self._extract_text_lines(data)
         
         frames = self._frame_extractor.add_data(data)
+
+        for packet in self.meshtastic.handle_frames(
+            self._frame_extractor.take_meshtastic()
+        ):
+            if self.on_meshtastic_received:
+                self.on_meshtastic_received(packet)
         
         for rssi, snr, payload in frames:
             self.stats.frames_extracted += 1
@@ -207,6 +219,11 @@ class WebSerialManager:
     
     def _process_text_line(self, line: str):
         """Process a text line from the modem."""
+        # A transmit verdict comes back on the same text channel as everything
+        # else the modem prints, and the sender is blocked waiting for it.
+        if self.meshtastic.handle_modem_line(line):
+            return
+
         if line.startswith("CFG_OK:") or line.startswith("CFG_ACK:"):
             self.is_configured = True
             if self.on_config_response:

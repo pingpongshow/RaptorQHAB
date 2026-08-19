@@ -50,6 +50,17 @@ SYNC_WORD = bytes([0x52, 0x41, 0x50, 0x54])
 
 # Frame delimiters (from Heltec modem)
 FRAME_DELIMITER = 0x7E
+
+# The dual-E22 modem carries two independent radios and so two streams: RAPTOR
+# image traffic on 0x7E, and whole Meshtastic LoRa packets on 0x7B. A modem
+# with one radio only ever sends 0x7E, so both are handled here and neither
+# modem needs to know which ground station it is talking to.
+MESHTASTIC_DELIMITER = 0x7B
+
+# Returned by _extract_frame when a frame belonged to the Meshtastic stream and
+# has been stashed rather than returned. Distinct from None, which means "no
+# complete frame yet" and stops the extraction loop.
+_MESHTASTIC_FRAME = object()
 ESCAPE_BYTE = 0x7D
 
 # Protocol constants
@@ -468,12 +479,28 @@ class FrameExtractor:
         self.frames_extracted = 0
         self.checksum_failures = 0
         self.no_rapt_failures = 0
+
+        # Meshtastic packets from a dual-radio modem, still encrypted. The
+        # modem does not hold the channel keys and deliberately does not
+        # decrypt: a borrowed board never carries them.
+        self._meshtastic: List[Tuple[float, float, bytes]] = []
+        self.meshtastic_frames = 0
+
+    def take_meshtastic(self) -> List[Tuple[float, float, bytes]]:
+        """Whole Meshtastic LoRa packets heard since the last call."""
+        frames, self._meshtastic = self._meshtastic, []
+        return frames
     
     def add_data(self, data: bytes) -> List[Tuple[float, float, bytes]]:
         """
-        Add data to buffer and extract complete frames.
-        
+        Add data to buffer and extract complete RAPTOR frames.
+
         Returns: List of (rssi, snr, payload) tuples
+
+        Meshtastic frames from a dual-radio modem are collected separately and
+        retrieved with take_meshtastic(). Keeping them out of this return value
+        is deliberate: every existing caller treats what comes back as a RAPTOR
+        packet and would try to parse a Meshtastic one as an image symbol.
         """
         self.buffer.extend(data)
         frames = []
@@ -482,6 +509,8 @@ class FrameExtractor:
             frame = self._extract_frame()
             if frame is None:
                 break
+            if frame is _MESHTASTIC_FRAME:
+                continue
             frames.append(frame)
         
         # Prevent buffer overflow
@@ -494,17 +523,21 @@ class FrameExtractor:
     def _extract_frame(self) -> Optional[Tuple[float, float, bytes]]:
         """Extract a single frame from the buffer with byte de-stuffing."""
         
-        # Find frame start delimiter
-        try:
-            start_idx = self.buffer.index(FRAME_DELIMITER)
-        except ValueError:
-            # No start delimiter, clear buffer
+        # Find the start of either stream, whichever comes first.
+        starts = [i for i in (self.buffer.find(FRAME_DELIMITER),
+                              self.buffer.find(MESHTASTIC_DELIMITER)) if i >= 0]
+        if not starts:
+            # Nothing framed in here at all.
             self.buffer.clear()
             return None
-        
+
+        start_idx = min(starts)
+
         # Remove data before frame start
         if start_idx > 0:
             del self.buffer[:start_idx]
+
+        delimiter = self.buffer[0]
         
         # Need at least a few bytes to check
         if len(self.buffer) < 2:
@@ -516,7 +549,10 @@ class FrameExtractor:
         i = 1  # Start after start delimiter
         
         while i < len(self.buffer):
-            if self.buffer[i] == FRAME_DELIMITER:
+            # A frame ends on the same delimiter it began with. The other
+            # stream's delimiter is escaped inside a frame, so it cannot
+            # appear here unescaped.
+            if self.buffer[i] == delimiter:
                 end_offset = i
                 break
             # Skip escape sequences
@@ -541,6 +577,13 @@ class FrameExtractor:
         # De-stuff the data (HDLC-style)
         destuffed = self._destuff(stuffed_data)
         
+        if delimiter == MESHTASTIC_DELIMITER:
+            parsed = self._parse_frame(destuffed, require_sync=False)
+            if parsed is not None:
+                self._meshtastic.append(parsed)
+                self.meshtastic_frames += 1
+            return _MESHTASTIC_FRAME
+
         if destuffed is None or len(destuffed) < 8:
             print(f"[FrameExtractor] Frame too short after de-stuffing: {len(destuffed) if destuffed else 0}")
             return None
@@ -559,6 +602,17 @@ class FrameExtractor:
                 if next_byte == 0x5E:
                     destuffed.append(0x7E)
                     i += 2
+                elif next_byte == 0x5B:
+                    # 0x7B is a frame delimiter on the dual-E22 modem, so it
+                    # escapes it like any other. Missing this mapping is not a
+                    # cosmetic problem: a 210-byte image packet contains a
+                    # 0x7B about 56% of the time, and each one desynchronised
+                    # the frame and failed its checksum. Measured against the
+                    # real parser, 45% of image packets survived instead of
+                    # 100%. A single-radio modem never emits this sequence, so
+                    # accepting it costs those modems nothing.
+                    destuffed.append(0x7B)
+                    i += 2
                 elif next_byte == 0x5D:
                     destuffed.append(0x7D)
                     i += 2
@@ -573,14 +627,18 @@ class FrameExtractor:
         
         return destuffed
     
-    def _parse_frame(self, frame: bytearray) -> Optional[Tuple[float, float, bytes]]:
+    def _parse_frame(self, frame: bytearray,
+                     require_sync: bool = True) -> Optional[Tuple[float, float, bytes]]:
         """
         Parse a de-stuffed frame.
         
         Frame format (after de-stuffing, no delimiters):
         [LEN_HI][LEN_LO][RSSI_INT][RSSI_FRAC][SNR_INT][SNR_FRAC][DATA...][CHECKSUM]
+
+        require_sync is False for Meshtastic frames: they carry a whole LoRa
+        packet from somebody else's radio and have no RAPT sync word to check.
         """
-        if len(frame) < 8:
+        if frame is None or len(frame) < 8:
             return None
         
         # Parse header
@@ -633,14 +691,15 @@ class FrameExtractor:
             return None
         
         # Validate that packet starts with RAPT sync
-        if len(packet_data) < 8:
-            print(f"[FrameExtractor] Packet data too short: {len(packet_data)}")
-            return None
-        
-        if packet_data[:4] != SYNC_WORD:
-            print(f"[FrameExtractor] Packet missing RAPT sync: {packet_data[:4].hex()}")
-            self.no_rapt_failures += 1
-            return None
+        if require_sync:
+            if len(packet_data) < 8:
+                print(f"[FrameExtractor] Packet data too short: {len(packet_data)}")
+                return None
+
+            if packet_data[:4] != SYNC_WORD:
+                print(f"[FrameExtractor] Packet missing RAPT sync: {packet_data[:4].hex()}")
+                self.no_rapt_failures += 1
+                return None
         
         self.frames_extracted += 1
         self.rssi = rssi

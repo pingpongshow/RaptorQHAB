@@ -10,6 +10,7 @@ It replaces the Heltec T190 and adds what a single radio could not do:
 | RAPTOR image downlink | yes | yes (slot B) |
 | Meshtastic receive | no | yes (slot A) |
 | Meshtastic transmit | no | yes (slot A) |
+| Uplink commands to the balloon | no | yes, on the private channel |
 | Both at once | impossible — one SX1262 cannot be in GFSK and LoRa simultaneously | yes, two radios |
 | Output power | ~22 dBm | ~30 dBm (1 W) per slot via the E22 PA |
 
@@ -170,3 +171,59 @@ On first bring-up, check in this order:
    suspect the filter rework before anything else.
 4. `MTX:` a beacon and confirm another node receives it.
 5. Watch `RX blinded by own TX` across a flight's worth of beaconing.
+
+---
+
+## Meshtastic, end to end
+
+The firmware could always put Meshtastic packets on the air and take them off
+it. What was missing was everything at the other end of the USB cable: the
+ground station discarded every packet the board forwarded, and had no way to
+ask it to transmit. The capability existed and was unreachable.
+
+### What the modem does, and deliberately does not
+
+It forwards whole LoRa packets, **still encrypted**, on frame delimiter `0x7B`,
+and transmits whatever it is handed. It holds no channel keys — a borrowed
+board never carries them — so decrypting, parsing, building and encrypting all
+happen on the ground station.
+
+That split is why the modem needs no configuration to work on a new channel:
+change the key on the ground and the modem is unaffected.
+
+### Commands
+
+| Command | Meaning |
+|---|---|
+| `CFG:<freq>,<bitrate>,<dev>,<bw>,<preamble>` | RAPTOR slot (slot B) |
+| `MCFG:<freq>,<bw>,<sf>,<cr>,<power>` | Meshtastic slot (slot A) |
+| `MTX:<hex>` | Transmit one raw packet; replies `MTX_OK` or `MTX_ERR:<why>` |
+
+`MTX:` is answered, not fire-and-forget. An uplink to a balloon that never left
+the ground station is something the operator needs to see immediately.
+
+### From the ground station
+
+```python
+link = serial_manager.meshtastic          # a ModemMeshtasticLink
+
+link.configure_slot(915.0, power_dbm=30)  # point slot A at your region
+link.send_text("hello mesh")              # public channel
+ok, why = link.send_command("beacon now") # private channel only
+```
+
+Commands go on the **private channel only**, and the link refuses to send one
+if no private channel is configured. That mirrors the payload, which ignores
+commands arriving on the public channel because anyone can transmit there.
+
+### Why this is not the same as the other two Meshtastic sources
+
+The ground station already had a Meshtastic node over USB, and MQTT. This is
+different from both:
+
+- A **node** hears what a node on the ground hears.
+- **MQTT** hears what the internet has been told, if anything.
+- **This** hears the balloon directly, on the ground station's own antenna,
+  with no node and no internet in between — and it is the only one of the three
+  that can transmit to the balloon on the private channel without a second
+  radio.

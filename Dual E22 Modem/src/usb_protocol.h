@@ -1,10 +1,20 @@
 /*
   usb_protocol.h — the wire format to the ground station.
 
-  RAPTOR frames are byte-for-byte identical to the Heltec T190's output, so the
-  existing macOS app and Python ground station decode them without a change.
-  That compatibility is deliberate: swapping the modem should not require
-  swapping the software that talks to it.
+  RAPTOR frames use the same layout as the Heltec T190's output, but they are
+  NOT byte-for-byte identical and a ground station does need updating.
+  This header used to claim otherwise, and the claim was wrong in a way that
+  cost more than half the image link.
+
+  The difference is the stuffing alphabet. Two delimiters means a third escape
+  -- 0x7B has to be escaped inside every frame, RAPTOR frames included. A
+  parser that knows only 0x7D 0x5E and 0x7D 0x5D desynchronises on the unknown
+  escape and the frame fails its checksum. A 210-byte image packet contains a
+  0x7B about 56% of the time, and measured against the real parser, 45% of
+  image packets survived instead of 100%.
+
+  Ground stations from this commit onward understand 0x7D 0x5B. A single-radio
+  modem never emits that sequence, so the same build talks to both.
 
     0x7E [LEN_HI][LEN_LO][RSSI_I][RSSI_F][SNR_I][SNR_F][DATA...][CKSUM] 0x7E
 
