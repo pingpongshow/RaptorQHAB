@@ -225,6 +225,7 @@ Full instructions, including flashing the modem and troubleshooting, are in
 | **[PRELAUNCH.md](docs/PRELAUNCH.md)** | The checklist to work through before you let go |
 | **[ROADMAP.md](docs/ROADMAP.md)** | Architecture, design decisions, and hardware results |
 | **[REVIEW.md](docs/REVIEW.md)** | Every defect found and fixed, with the reasoning |
+| **[OUTSTANDING.md](docs/OUTSTANDING.md)** | What is known to be wrong and not yet fixed |
 | **[MESHTASTIC.md](docs/MESHTASTIC.md)** | What the balloon broadcasts, the uplink commands, and message relaying |
 | **[POWER.md](docs/POWER.md)** | What draws current in flight, and what was done about it |
 | **[SECURITY.md](docs/SECURITY.md)** | What a finder can read, and what to do about it |
