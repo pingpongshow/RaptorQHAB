@@ -365,6 +365,14 @@ if [[ $AUTO_INSTALL -eq 1 ]]; then
     # for cloud-init to finish, installs, and then disables itself. The log it
     # leaves behind is the whole point: an unattended install that fails
     # silently is worse than one that never started.
+    #
+    # --usb-ethernet is deliberate. The card boots with g_ether so the Pi is
+    # reachable before anything is installed, and a UDC takes exactly one
+    # gadget driver -- so the installer's console cannot bind while g_ether
+    # holds it. Installing the composite gadget with both CDC-ECM and CDC-ACM
+    # replaces g_ether with something that keeps the network link *and* adds
+    # the console. Without it, installing over the USB link would cut the
+    # branch it is sitting on.
     FIRSTRUN_BODY+="
 # Deferred install, once there is actually a network to install from.
 cat > /etc/systemd/system/raptorhab-firstinstall.service <<'UNIT'
@@ -379,7 +387,7 @@ ConditionPathExists=!/opt/raptorhab/.venv/bin/python
 Type=oneshot
 RemainAfterExit=yes
 TimeoutStartSec=3600
-ExecStart=/opt/raptorhab-src/setup/install.sh --usb-gadget ${CAMERA_OVERLAY:+--camera $CAMERA_OVERLAY}
+ExecStart=/opt/raptorhab-src/setup/install.sh --usb-gadget --usb-ethernet ${CAMERA_OVERLAY:+--camera $CAMERA_OVERLAY}
 ExecStartPost=/bin/sh -c 'systemctl disable raptorhab-firstinstall.service'
 StandardOutput=append:/var/log/raptorhab-install.log
 StandardError=append:/var/log/raptorhab-install.log

@@ -24,6 +24,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ENABLE_USB_GADGET=0
 CHECK_ONLY=0
+KEEP_FIREWALL=0
 NEEDS_REBOOT=0
 CAMERA_OVERLAY=""
 ENABLE_USB_ETHERNET=0
@@ -49,7 +50,8 @@ while [[ $# -gt 0 ]]; do
         --usb-gadget) ENABLE_USB_GADGET=1 ;;
         --check)      CHECK_ONLY=1 ;;
         --camera)     CAMERA_OVERLAY="${2:?--camera needs a sensor name}"; shift ;;
-        --usb-ethernet) ENABLE_USB_ETHERNET=1; ENABLE_USB_GADGET=1 ;;
+  --usb-ethernet) ENABLE_USB_ETHERNET=1; ENABLE_USB_GADGET=1 ;;
+        --keep-firewall) KEEP_FIREWALL=1 ;;
         --camera=*)   CAMERA_OVERLAY="${1#*=}" ;;
         -h|--help)    usage ;;
         *)            die "unknown option: $1 (try --help)" ;;
@@ -404,6 +406,60 @@ if [[ $ENABLE_USB_GADGET -eq 1 ]]; then
     if systemctl is-enabled --quiet serial-getty@ttyGS0.service 2>/dev/null; then
         systemctl disable --now serial-getty@ttyGS0.service >/dev/null 2>&1 || true
         warn "disabled the plain getty on ttyGS0; the console service owns it now"
+    fi
+fi
+
+# --------------------------------------------------------------------------
+# Local firewall
+# --------------------------------------------------------------------------
+#
+# Raspberry Pi OS ships without a firewall, so on a clean install this finds
+# nothing and says so. It exists because a payload that has been used for
+# something else first may carry one, and a host firewall on a flight computer
+# is a poor trade: the machine has no route to the internet in flight, its only
+# services are a USB console and SSH on a bench network, and a rule that blocks
+# the ground station during recovery costs far more than it protects.
+#
+# Pass --keep-firewall to leave whatever is configured alone.
+
+say "Checking for a local firewall"
+
+FIREWALL_FOUND=0
+
+if [[ $KEEP_FIREWALL -eq 1 ]]; then
+    ok "leaving firewall configuration alone (--keep-firewall)"
+else
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+        FIREWALL_FOUND=1
+        ufw --force disable >/dev/null 2>&1 || true
+        systemctl disable --now ufw >/dev/null 2>&1 || true
+        systemctl mask ufw >/dev/null 2>&1 || true
+        warn "ufw was active; disabled and masked so it cannot come back"
+    fi
+
+    if systemctl is-enabled nftables >/dev/null 2>&1 || \
+       systemctl is-active nftables >/dev/null 2>&1; then
+        # Only act if it actually carries rules. An enabled-but-empty nftables
+        # blocks nothing, and disabling it would be noise.
+        if nft list ruleset 2>/dev/null | grep -qE "drop|reject"; then
+            FIREWALL_FOUND=1
+            systemctl disable --now nftables >/dev/null 2>&1 || true
+            warn "nftables carried blocking rules; disabled"
+        fi
+    fi
+
+    if command -v iptables >/dev/null 2>&1; then
+        if iptables -S 2>/dev/null | grep -qE "^-P (INPUT|FORWARD) DROP|^-A INPUT .*(DROP|REJECT)"; then
+            FIREWALL_FOUND=1
+            iptables -P INPUT ACCEPT 2>/dev/null || true
+            iptables -P FORWARD ACCEPT 2>/dev/null || true
+            iptables -F 2>/dev/null || true
+            warn "iptables had blocking rules; flushed and set to ACCEPT"
+        fi
+    fi
+
+    if [[ $FIREWALL_FOUND -eq 0 ]]; then
+        ok "no firewall is blocking anything"
     fi
 fi
 
