@@ -41,3 +41,7 @@ Pi/ground/data/
 # PlatformIO build output for the dual-E22 modem
 Dual E22 Modem/.pio/
 Ground Station Modem/.pio/
+
+# Editor and assistant tooling state
+.claude/
+**/.claude/

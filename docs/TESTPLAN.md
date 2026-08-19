@@ -2,11 +2,11 @@
 
 Two arms, split by what each can actually establish.
 
-**Arm A — Claude.** Anything measurable from a machine: the suites, the builds,
-protocol parity, and behaviour that can be driven over a wire and read back.
-Fast, repeatable, and it proves the parts agree with each other.
+**Arm A — automated.** Anything measurable from a machine: the suites, the
+builds, protocol parity, and behaviour that can be driven over a wire and read
+back. Fast, repeatable, and it proves the parts agree with each other.
 
-**Arm B — you.** Anything that needs hands, eyes, or judgement: does the card
+**Arm B — manual.** Anything that needs hands, eyes, or judgement: does the card
 boot, does the app show what it should, does the image look right, does the
 antenna stay on. Arm A cannot tell you a photograph is in focus or that a
 connector is seated.
@@ -18,7 +18,7 @@ Every check says what a pass looks like. "Verify it works" is not a check.
 
 ---
 
-## Arm A — automated, run by Claude
+## Arm A — automated
 
 ### A1. Test suites
 
