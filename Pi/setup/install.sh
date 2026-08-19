@@ -410,6 +410,53 @@ if [[ $ENABLE_USB_GADGET -eq 1 ]]; then
 fi
 
 # --------------------------------------------------------------------------
+# Network behaviour that costs you the payload
+# --------------------------------------------------------------------------
+#
+# Two defaults on a Pi Zero 2 W will make a working payload look like a dead
+# one. Both were diagnosed from a recovered card after the Pi ran perfectly for
+# an hour while being completely unreachable.
+#
+# WiFi power save: the adapter stays associated and keeps its DHCP lease, so
+# the Pi believes it is online and the access point lists it as connected --
+# but inbound frames are dropped while it sleeps. The symptom is a Pi that
+# answers for a minute after boot and then silently stops, with nothing in any
+# log to explain it, because from the Pi's point of view nothing happened.
+#
+# NetworkManager and usb0: the gadget interface is given a static address by
+# the gadget script. If NetworkManager also claims it -- which it does, because
+# Raspberry Pi Imager writes a netplan ethernet profile with an empty match,
+# and an empty match matches everything -- it runs DHCP against a link that
+# has no server, and the interface ends up with no usable address at all.
+
+say "Adjusting network defaults that break payload reachability"
+
+install -d -m 0755 /etc/NetworkManager/conf.d
+
+cat > /etc/NetworkManager/conf.d/10-raptorhab-wifi-powersave.conf <<'NMCONF'
+# 2 = disable power saving. A sleeping adapter loses inbound packets while
+# still holding its association and lease, which is indistinguishable from a
+# hung payload right up until you recover the card.
+[connection]
+wifi.powersave = 2
+NMCONF
+ok "WiFi power saving disabled"
+
+cat > /etc/NetworkManager/conf.d/10-raptorhab-usb0-unmanaged.conf <<'NMCONF'
+# The USB gadget interface is configured by raptorhab-usb-gadget, which gives
+# it a static address. NetworkManager must not also try to DHCP it: there is no
+# server on the other end of a USB cable, and the attempt leaves the interface
+# with no address rather than the one we assigned.
+[keyfile]
+unmanaged-devices=interface-name:usb0;interface-name:usb1
+NMCONF
+ok "usb0 left to the gadget script, not NetworkManager"
+
+if systemctl is-active NetworkManager >/dev/null 2>&1; then
+    systemctl reload NetworkManager >/dev/null 2>&1 || true
+fi
+
+# --------------------------------------------------------------------------
 # Local firewall
 # --------------------------------------------------------------------------
 #
