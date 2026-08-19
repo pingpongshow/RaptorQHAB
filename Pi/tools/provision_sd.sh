@@ -87,6 +87,12 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+# macOS writes AppleDouble sidecars (._name) when it copies to a filesystem
+# that cannot hold extended attributes, which FAT32 cannot. They are harmless
+# to Raspberry Pi OS but they clutter a card an operator may well inspect, and
+# COPYFILE_DISABLE keeps tar from burying them inside the archive too.
+export COPYFILE_DISABLE=1
+
 say()  { printf '  %s\n' "$*"; }
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$*"; }
 warn() { printf '  \033[33mwarn\033[0m %s\n' "$*"; }
@@ -120,6 +126,30 @@ if [[ $DRY_RUN -eq 0 ]]; then
     rm -f "$BOOT_PATH/.rhwrite"
 fi
 ok "boot partition: $BOOT_PATH"
+
+# Raspberry Pi Imager on Bookworm and later writes a cloud-init user-data file,
+# which already sets the hostname, creates the account, configures WiFi and
+# enables SSH. Duplicating that here is not merely redundant: firstrun.sh runs
+# before cloud-init, so it would create the account with one password and then
+# have cloud-init quietly replace it with another. Whichever the operator typed
+# into Imager is the one they will try, so cloud-init has to win.
+#
+# What cloud-init does not do is the payload's boot configuration or staging
+# the source, and that is what this script is actually for.
+CLOUD_INIT=0
+if [[ -f "$BOOT_PATH/user-data" ]]; then
+    CLOUD_INIT=1
+    ok "cloud-init detected — deferring hostname, account and WiFi to it"
+    if grep -q '^hostname:' "$BOOT_PATH/user-data" 2>/dev/null; then
+        say "  hostname: $(grep '^hostname:' "$BOOT_PATH/user-data" | head -1 | cut -d: -f2- | tr -d ' ')"
+    fi
+    if grep -qE '^[[:space:]]*-?[[:space:]]*name:' "$BOOT_PATH/user-data" 2>/dev/null; then
+        say "  account:  $(grep -E '^[[:space:]]*-?[[:space:]]*name:' "$BOOT_PATH/user-data" | head -1 | sed 's/.*name:[[:space:]]*//')"
+    fi
+    if [[ -f "$BOOT_PATH/network-config" ]] && grep -q 'access-points' "$BOOT_PATH/network-config" 2>/dev/null; then
+        say "  wifi:     configured"
+    fi
+fi
 
 # Refuse to quietly re-provision a card that has already been through this,
 # unless the operator is watching a dry run.
@@ -243,12 +273,21 @@ exec >>\$LOG 2>&1
 echo \"--- RaptorHAB first boot: \$(date) ---\"
 TARGET_USER=\"$USERNAME\"
 
+$( [[ $CLOUD_INIT -eq 1 ]] && echo "# Hostname left to cloud-init." || cat <<HOSTBLOCK
 # Hostname
 CURRENT=\$(cat /etc/hostname | tr -d ' \\t\\n\\r')
 echo '$HOSTNAME_NEW' > /etc/hostname
-sed -i \"s/127.0.1.1.*\$CURRENT/127.0.1.1\\t$HOSTNAME_NEW/g\" /etc/hosts
-echo \"hostname set to $HOSTNAME_NEW\"
+sed -i "s/127.0.1.1.*\$CURRENT/127.0.1.1\\t$HOSTNAME_NEW/g" /etc/hosts
+echo "hostname set to $HOSTNAME_NEW"
+HOSTBLOCK
+)
 "
+
+if [[ -n "$USERNAME" && $CLOUD_INIT -eq 1 ]]; then
+    warn "--user ignored: cloud-init already defines the account, and creating"
+    warn "it here first would leave you with a password Imager did not set"
+    USERNAME=""
+fi
 
 if [[ -n "$USERNAME" ]]; then
     [[ -n "$PASSWORD" ]] || die "--user needs --password"
@@ -274,6 +313,11 @@ echo \"user $USERNAME created\"
     ok "user '$USERNAME' will be created on first boot"
 fi
 
+if [[ -n "$WIFI_SSID" && $CLOUD_INIT -eq 1 ]]; then
+    warn "--wifi ignored: cloud-init already carries the network configuration"
+    WIFI_SSID=""
+fi
+
 if [[ -n "$WIFI_SSID" ]]; then
     FIRSTRUN_BODY+="
 # WiFi, written as a NetworkManager keyfile (Pi OS Bookworm and later).
@@ -286,6 +330,8 @@ nmcli connection up 'raptorhab' 2>/dev/null
 echo 'wifi configured for $WIFI_SSID'
 "
     ok "WiFi '$WIFI_SSID' will be configured"
+elif [[ $CLOUD_INIT -eq 1 ]]; then
+    say "WiFi comes from cloud-init; the USB gadget is there as a fallback"
 else
     say "no WiFi configured — reach the Pi over the USB cable"
 fi
@@ -373,6 +419,15 @@ else
     fi
     ok "staged $(du -h "$TARBALL" | cut -f1) to $(basename "$TARBALL")"
     date -u '+%Y-%m-%dT%H:%M:%SZ' > "$BOOT_PATH/raptorhab-provisioned"
+fi
+
+# Sweep the sidecars macOS creates as a side effect of writing to FAT32.
+if [[ $DRY_RUN -eq 0 ]]; then
+    if command -v dot_clean >/dev/null 2>&1; then
+        dot_clean -m "$BOOT_PATH" 2>/dev/null || true
+    fi
+    rm -f "$BOOT_PATH"/._* "$BOOT_PATH"/.DS_Store 2>/dev/null || true
+    ok "removed macOS sidecar files"
 fi
 
 # ------------------------------------------------------------------ done ---
