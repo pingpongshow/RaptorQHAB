@@ -24,7 +24,15 @@
 #include <RadioLib.h>
 #include <Preferences.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_ST7789.h>
+#include "boards.h"
+
+#if BOARD_HAS_TFT
+  #include <Adafruit_ST7789.h>
+#elif BOARD_HAS_OLED
+  #include <Adafruit_SSD1306.h>
+#elif BOARD_HAS_EINK
+  #include <GxEPD2_BW.h>
+#endif
 
 // ============================================================================
 // Configuration
@@ -33,38 +41,6 @@
 #define DEBUG_OUTPUT        false
 
 // Pin Definitions - Heltec Vision Master T190 LoRa
-#define LORA_NSS    8
-#define LORA_SCK    9
-#define LORA_MOSI   10
-#define LORA_MISO   11
-#define LORA_RST    12
-#define LORA_BUSY   13
-#define LORA_DIO1   14
-#define USER_BUTTON 21
-
-// Pin Definitions - Battery Monitoring
-#define ADC_CTRL_PIN    46      // Controls P-FET switch for battery divider
-#define VBAT_READ_PIN   6       // ADC input from voltage divider
-
-// Battery voltage divider: R9=390K, R11=100K -> ratio = 100/(390+100) = 0.204
-#define VBAT_DIVIDER_RATIO  4.9f    // Multiply ADC voltage by this to get VBAT
-#define VBAT_MIN            3.0f    // Empty LiPo
-#define VBAT_MAX            4.2f    // Full LiPo
-
-// Pin Definitions - TFT Display (ST7789V3)
-#define TFT_CS      39
-#define TFT_RST     40
-#define TFT_DC      47
-#define TFT_SCLK    38
-#define TFT_MOSI    48
-#define TFT_LED_EN  17
-#define TFT_PWR     7
-
-// Display dimensions (landscape orientation)
-#define TFT_WIDTH   320
-#define TFT_HEIGHT  170
-
-// Default RF Configuration
 #define DEFAULT_FREQUENCY       915.0
 #define DEFAULT_BITRATE         96.0
 #define DEFAULT_DEVIATION       50.0
@@ -89,7 +65,9 @@ const uint8_t SYNC_WORD[] = {0x52, 0x41, 0x50, 0x54};
 #define SERIAL_BAUD         921600
 #define MAX_PACKET_SIZE     255
 
-// Colors for display
+// Colors for display. ST77XX_* only exists when the TFT driver is compiled in;
+// the other panels are monochrome and do not use these at all.
+#if BOARD_HAS_TFT
 #define COLOR_BG            ST77XX_BLACK
 #define COLOR_HEADER        0x001F   // Dark blue
 #define COLOR_TEXT          ST77XX_WHITE
@@ -99,6 +77,7 @@ const uint8_t SYNC_WORD[] = {0x52, 0x41, 0x50, 0x54};
 #define COLOR_WARN          ST77XX_YELLOW
 #define COLOR_BAD           ST77XX_RED
 #define COLOR_ACCENT        0x07FF   // Cyan
+#endif  // BOARD_HAS_TFT
 
 // ============================================================================
 // Debug macros
@@ -140,8 +119,10 @@ bool configured = false;
 
 SPIClass* spi = nullptr;
 SX1262* radio = nullptr;
+#if BOARD_HAS_TFT
 SPIClass* tftSpi = nullptr;
 Adafruit_ST7789* tft = nullptr;
+#endif
 
 volatile bool packetReceived = false;
 uint32_t packetsTotal = 0;
@@ -224,6 +205,8 @@ void showConfiguredScreen();
 // ============================================================================
 // Display Functions
 // ============================================================================
+
+#if BOARD_HAS_TFT
 
 void initDisplay() {
     pinMode(TFT_PWR, OUTPUT);
@@ -556,6 +539,245 @@ void showConfiguredScreen() {
     drawStaticUI();
 }
 
+#endif  // BOARD_HAS_TFT
+
+#if BOARD_HAS_OLED
+
+// ---------------------------------------------------------------------------
+// SSD1306, 128x64. Small enough that the whole frame is redrawn each time --
+// there is no partial-update complexity to justify at this size.
+// ---------------------------------------------------------------------------
+
+static Adafruit_SSD1306* oled = nullptr;
+
+void initDisplay() {
+    pinMode(VEXT_CTRL_PIN, OUTPUT);
+    digitalWrite(VEXT_CTRL_PIN, VEXT_ON_STATE);   // active LOW on this board
+    delay(50);
+
+    pinMode(OLED_RST, OUTPUT);
+    digitalWrite(OLED_RST, LOW);  delay(20);
+    digitalWrite(OLED_RST, HIGH); delay(50);
+
+    Wire.begin(OLED_SDA, OLED_SCL);
+    oled = new Adafruit_SSD1306(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
+    if (!oled->begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
+        Serial.println("[TFT] SSD1306 not found; continuing without a display");
+        delete oled;
+        oled = nullptr;
+        return;
+    }
+    oled->clearDisplay();
+    oled->setTextColor(SSD1306_WHITE);
+    oled->display();
+}
+
+void showWaitingScreen() {
+    if (!oled) return;
+    oled->clearDisplay();
+    oled->setTextSize(1);
+    oled->setCursor(0, 0);
+    oled->println("RAPTORHAB MODEM");
+    oled->drawFastHLine(0, 10, OLED_WIDTH, SSD1306_WHITE);
+    oled->setCursor(0, 16);
+    oled->println("Waiting for config");
+    oled->setCursor(0, 28);
+    oled->println("over USB serial...");
+    oled->display();
+}
+
+void updateDisplay() {
+    if (!oled) return;
+    if (millis() - lastPacketTime < DISPLAY_IDLE_THRESHOLD_MS) return;
+    if (millis() - lastDisplayUpdate < DISPLAY_UPDATE_INTERVAL_MS) return;
+    lastDisplayUpdate = millis();
+
+    oled->clearDisplay();
+    oled->setTextSize(1);
+
+    oled->setCursor(0, 0);
+    oled->printf("%.1fMHz %.0fk", rfFrequency, rfBitrate);
+    oled->drawFastHLine(0, 10, OLED_WIDTH, SSD1306_WHITE);
+
+    oled->setCursor(0, 14);
+    oled->printf("RSSI %6.1f dBm", lastRssi);
+    oled->setCursor(0, 24);
+    oled->printf("SNR  %6.1f dB", lastSnr);
+
+    oled->setCursor(0, 36);
+    oled->printf("RX %lu  FWD %lu", packetsTotal, packetsForwarded);
+    oled->setCursor(0, 46);
+    oled->printf("CRC %lu  ERR %lu", packetsRejectedCrc, packetsRadioError);
+
+    oled->setCursor(0, 56);
+    oled->printf("%.2fV %d%%", batteryVoltage, batteryPercent);
+    oled->display();
+}
+
+// The TFT splits its redraw into regions to avoid flicker. At 128x64 the whole
+// frame is cheap, so these exist only to satisfy the shared API.
+void drawStaticUI() {}
+void updateSignalDisplay() {}
+void updateStatsDisplay() {}
+void updateBatteryDisplay() {}
+
+void showConfiguredScreen() {
+    if (!oled) return;
+    oled->clearDisplay();
+    oled->setTextSize(1);
+    oled->setCursor(0, 0);
+    oled->println("CONFIGURED");
+    oled->drawFastHLine(0, 10, OLED_WIDTH, SSD1306_WHITE);
+    oled->setCursor(0, 16);
+    oled->printf("%.3f MHz", rfFrequency);
+    oled->setCursor(0, 28);
+    oled->printf("%.0f kbps dev %.0f", rfBitrate, rfDeviation);
+    oled->setCursor(0, 40);
+    oled->printf("BW %.1f pre %d", rfRxBandwidth, rfPreambleLen);
+    oled->setCursor(0, 54);
+    oled->println("Listening...");
+    oled->display();
+}
+
+#elif BOARD_HAS_EINK
+
+// ---------------------------------------------------------------------------
+// 2.9" e-ink, 296x128.
+//
+// E-ink is the wrong display for live telemetry and the right one for a
+// ground station left running: it holds the last reading with the power off,
+// which is exactly what you want when you come back to a modem that has been
+// sitting in a field.
+//
+// The panel is therefore updated rarely and deliberately. A full refresh takes
+// around two seconds during which nothing else runs, and the panel wears with
+// every refresh, so this redraws at most once a minute and only when something
+// meaningful has changed. Driving it at the TFT's rate would make the modem
+// miss packets and shorten the display's life for no benefit.
+// ---------------------------------------------------------------------------
+
+static GxEPD2_BW<GxEPD2_290_BS, GxEPD2_290_BS::HEIGHT>* eink = nullptr;
+static SPIClass einkSPI(HSPI);
+static uint32_t lastEinkUpdate = 0;
+static uint32_t lastEinkPackets = 0;
+static const uint32_t EINK_MIN_INTERVAL_MS = 60000;
+
+void initDisplay() {
+    pinMode(VEXT_CTRL_PIN, OUTPUT);
+    digitalWrite(VEXT_CTRL_PIN, VEXT_ON_STATE);   // active HIGH on this board
+    delay(100);
+
+    einkSPI.begin(EINK_SCLK, -1, EINK_MOSI, EINK_CS);
+    eink = new GxEPD2_BW<GxEPD2_290_BS, GxEPD2_290_BS::HEIGHT>(
+        GxEPD2_290_BS(EINK_CS, EINK_DC, EINK_RST, EINK_BUSY));
+    eink->init(0, true, 2, false, einkSPI, SPISettings(4000000, MSBFIRST, SPI_MODE0));
+    eink->setRotation(1);
+    eink->setTextColor(GxEPD_BLACK);
+}
+
+void showWaitingScreen() {
+    if (!eink) return;
+    eink->setFullWindow();
+    eink->firstPage();
+    do {
+        eink->fillScreen(GxEPD_WHITE);
+        eink->setTextSize(2);
+        eink->setCursor(4, 20);
+        eink->print("RAPTORHAB MODEM");
+        eink->setTextSize(1);
+        eink->setCursor(4, 48);
+        eink->print("Waiting for configuration over USB");
+        eink->setCursor(4, 62);
+        eink->print("Send CFG:<freq>,<br>,<dev>,<bw>,<preamble>");
+    } while (eink->nextPage());
+    lastEinkUpdate = millis();
+}
+
+void updateDisplay() {
+    if (!eink) return;
+    if (millis() - lastPacketTime < DISPLAY_IDLE_THRESHOLD_MS) return;
+    if (millis() - lastEinkUpdate < EINK_MIN_INTERVAL_MS) return;
+    // Nothing new to say. A refresh that changes no pixels is pure wear.
+    if (packetsTotal == lastEinkPackets && lastEinkUpdate != 0) return;
+
+    lastEinkUpdate = millis();
+    lastEinkPackets = packetsTotal;
+
+    eink->setFullWindow();
+    eink->firstPage();
+    do {
+        eink->fillScreen(GxEPD_WHITE);
+        eink->setTextSize(2);
+        eink->setCursor(4, 18);
+        eink->print("RAPTORHAB MODEM");
+        eink->drawFastHLine(0, 26, EINK_WIDTH, GxEPD_BLACK);
+
+        eink->setTextSize(1);
+        eink->setCursor(4, 40);
+        eink->printf("%.3f MHz  %.0f kbps  dev %.0f kHz",
+                     rfFrequency, rfBitrate, rfDeviation);
+
+        eink->setCursor(4, 56);
+        eink->printf("RSSI %.1f dBm    SNR %.1f dB", lastRssi, lastSnr);
+
+        eink->setCursor(4, 72);
+        eink->printf("RX %lu   forwarded %lu", packetsTotal, packetsForwarded);
+        eink->setCursor(4, 86);
+        eink->printf("no sync %lu   bad CRC %lu",
+                     packetsRejectedNoRapt, packetsRejectedCrc);
+
+        eink->setCursor(4, 106);
+        eink->printf("battery %.2f V (%d%%)", batteryVoltage, batteryPercent);
+        eink->setCursor(180, 106);
+        eink->print("updates each minute");
+    } while (eink->nextPage());
+}
+
+void drawStaticUI() {}
+void updateSignalDisplay() {}
+void updateStatsDisplay() {}
+void updateBatteryDisplay() {}
+
+void showConfiguredScreen() {
+    if (!eink) return;
+    // Worth a refresh: this is the moment the operator is waiting for
+    // confirmation that the modem took its settings.
+    eink->setFullWindow();
+    eink->firstPage();
+    do {
+        eink->fillScreen(GxEPD_WHITE);
+        eink->setTextSize(2);
+        eink->setCursor(4, 18);
+        eink->print("CONFIGURED");
+        eink->drawFastHLine(0, 26, EINK_WIDTH, GxEPD_BLACK);
+        eink->setTextSize(1);
+        eink->setCursor(4, 44);
+        eink->printf("%.3f MHz   %.0f kbps   dev %.0f kHz",
+                     rfFrequency, rfBitrate, rfDeviation);
+        eink->setCursor(4, 60);
+        eink->printf("bandwidth %.1f kHz   preamble %d",
+                     rfRxBandwidth, rfPreambleLen);
+        eink->setCursor(4, 84);
+        eink->print("Listening for packets");
+    } while (eink->nextPage());
+    lastEinkUpdate = millis();
+}
+
+#elif !BOARD_HAS_DISPLAY
+
+// A headless build. The modem's job is the radio link, and it does all of it
+// over USB; the panel was only ever a convenience.
+void initDisplay() {}
+void showWaitingScreen() {}
+void updateDisplay() {}
+void drawStaticUI() {}
+void updateSignalDisplay() {}
+void updateStatsDisplay() {}
+void updateBatteryDisplay() {}
+void showConfiguredScreen() {}
+
+#endif
+
 // ============================================================================
 // Configuration Waiting
 // ============================================================================
@@ -659,10 +881,14 @@ bool waitForConfiguration() {
 
             // Update display with countdown
             int remaining = (CONFIG_TIMEOUT_MS - (millis() - startTime)) / 1000;
+#if BOARD_HAS_TFT
             tft->fillRect(100, 120, 50, 10, COLOR_BG);
             tft->setTextColor(COLOR_LABEL);
             tft->setCursor(100, 120);
             tft->printf("%ds", remaining);
+#else
+            (void)remaining;   // the other panels are not redrawn per second
+#endif
         }
 
         delay(10);
@@ -805,11 +1031,13 @@ void setup() {
     if (!initializeRadio()) {
         Serial.println("[ERROR] Radio initialization failed!");
 
+#if BOARD_HAS_TFT
         tft->fillScreen(COLOR_BAD);
         tft->setTextColor(COLOR_TEXT);
         tft->setTextSize(2);
         tft->setCursor(20, 70);
         tft->print("RADIO INIT FAILED!");
+#endif
 
         while (1) {
             Serial.println("[ERROR] Radio init failed - please reset");

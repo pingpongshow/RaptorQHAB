@@ -92,7 +92,7 @@ drawing and how old it is.
 
 | | |
 |---|---|
-| Board | Heltec Vision Master T190 (ESP32-S3 + SX1262) |
+| Boards | Heltec Vision Master T190 (TFT), Vision Master E290 (e-ink), WiFi LoRa 32 V4 (OLED or headless) |
 | Display | 1.9" TFT — live RSSI, SNR, packet counts, radio settings |
 | Link | USB serial to the Mac at 921600 baud |
 | Config | RF parameters set from the macOS app, no reflashing |
