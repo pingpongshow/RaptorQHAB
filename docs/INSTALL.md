@@ -365,3 +365,73 @@ installer.
 `PWR IN`. On the Pi, `ls /sys/class/udc` should be non-empty — if it is empty,
 `dtoverlay=dwc2` has not taken effect yet, so reboot. Then
 `systemctl status raptorhab-usb-gadget`.
+
+
+## Setting up a card without putting the Pi on your network
+
+`install.sh` needs a booted Pi with a working network, because it installs
+packages. That is a poor fit for a flight computer: it means putting the
+payload on your home WiFi, and it means the first thing you do with a new card
+is go looking for its IP address. On a network with client isolation between
+bands -- common, and something this project has already lost an afternoon to --
+the Pi can be online and still unreachable from your laptop.
+
+`Pi/tools/provision_sd.sh` prepares the card before it has ever booted. Put the
+freshly flashed card in your Mac or Linux machine and run:
+
+```bash
+./Pi/tools/provision_sd.sh --camera imx219 --user pilot --password 'choose something'
+```
+
+It writes the boot partition only, which is the part a Mac can write to (the
+ext4 root mounts read-only there). It lands the payload's `config.txt` changes,
+stages the source as a tarball, enables SSH, creates your account, and turns on
+the **USB ethernet gadget** so the Pi is reachable over the cable with no
+network at all.
+
+Then boot the Pi with a cable to its **data** port -- the inner socket on a Zero
+2 W, not the one marked PWR. First boot resizes the filesystem and reboots once
+on its own, so give it two or three minutes. A new network interface appears on
+your machine; give it an address such as `10.55.0.2/24` and:
+
+```bash
+ssh pilot@raptorhab.local
+```
+
+### The one thing it cannot do offline
+
+Installing packages. A fresh Pi OS Lite has no `picamera2` and no
+`python3-venv`, and no amount of card preparation conjures them up. The USB
+ethernet link solves this without WiFi: share your laptop's connection over
+that interface (macOS: System Settings > General > Sharing > Internet Sharing,
+from Wi-Fi to the gadget interface), then run the installer over SSH:
+
+```bash
+sudo /opt/raptorhab-src/setup/install.sh --usb-gadget --camera imx219
+```
+
+The payload never joins your WiFi.
+
+A genuinely air-gapped install would mean staging every `.deb` on the card.
+That is possible, but it breaks whenever Raspberry Pi OS moves a dependency,
+and a provisioning path that works until it silently doesn't is worse than one
+that is honest about needing a wire.
+
+### Options
+
+| Option | Effect |
+|---|---|
+| `--boot PATH` | Boot partition (auto-detects `bootfs`) |
+| `--source PATH` | Payload tree to stage (defaults to the `Pi/` directory holding the script) |
+| `--hostname NAME` | Hostname, default `raptorhab` |
+| `--user NAME` / `--password PASS` | Create an account. The password is hashed before it is written; the plain text never lands on the card. |
+| `--wifi SSID` / `--wifi-password` / `--wifi-country` | Optional WiFi, if you do want it on the network |
+| `--camera SENSOR` | Camera overlay: `imx219`, `imx477`, `imx708`, `ov5647` |
+| `--no-usb-ethernet` | Leave the USB gadget off |
+| `--auto-install` | Run the installer on first boot. Needs a network at that moment. |
+| `--dry-run` | Show every change, write nothing |
+
+`--dry-run` first is worth the ten seconds. It prints exactly which lines it
+would add and which are already present.
+
+---
