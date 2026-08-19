@@ -247,6 +247,7 @@ archive/          abandoned experiments, kept for reference
 |---|---|
 | **[INSTALL.md](docs/INSTALL.md)** | From a blank SD card to a payload that transmits |
 | **[PRELAUNCH.md](docs/PRELAUNCH.md)** | The checklist to work through before you let go |
+| **[TESTPLAN.md](docs/TESTPLAN.md)** | How the whole system is verified, and by whom |
 | **[ROADMAP.md](docs/ROADMAP.md)** | Architecture, design decisions, and hardware results |
 | **[REVIEW.md](docs/REVIEW.md)** | Every defect found and fixed, with the reasoning |
 | **[OUTSTANDING.md](docs/OUTSTANDING.md)** | What is known to be wrong and not yet fixed |
