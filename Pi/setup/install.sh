@@ -556,6 +556,48 @@ fi
 
 say "Installing the payload service"
 
+# --- in-flight WiFi cutoff -------------------------------------------------
+#
+# The payload runs unprivileged and cannot control the radio itself. Measured
+# on a stock image: rfkill gives "cannot open /dev/rfkill: Permission denied"
+# and nmcli gives "Not authorized to perform this operation". Without the
+# helper and this sudoers rule the cutoff silently does nothing, which is the
+# worst outcome -- the operator plans for the saving and never gets it.
+step "Installing the WiFi power helper"
+install -m 0755 "$CODE_DIR/setup/wifi-power.sh" /usr/local/sbin/raptorhab-wifi-power
+
+# No sudoers rule, deliberately. The payload unit sets NoNewPrivileges=true, so
+# sudo refuses outright ("the no new privileges flag is set") and a sudoers
+# grant would be dead weight. Instead the payload writes a request file in its
+# own state directory and this path unit -- already root -- acts on it. The
+# payload gains no ability to run anything as root, only to ask for one
+# specific action, which is strictly less privilege than sudo would have been.
+install -m 0644 "$CODE_DIR/setup/raptorhab-wifi-off.path" \
+    /etc/systemd/system/raptorhab-wifi-off.path
+install -m 0644 "$CODE_DIR/setup/raptorhab-wifi-off.service" \
+    /etc/systemd/system/raptorhab-wifi-off.service
+
+# A request left over from a previous flight would fire the moment the watcher
+# starts, taking WiFi down on the bench.
+rm -f "$STATE_DIR/wifi-off.request"
+
+systemctl daemon-reload
+systemctl enable --now raptorhab-wifi-off.path >/dev/null 2>&1 || true
+ok "in-flight WiFi cutoff watcher enabled"
+
+# Restore WiFi at every boot, independently of the payload. systemd-rfkill
+# saves the soft-block state and restores it on the next boot, so a payload
+# blocked in flight comes back blocked. The payload unblocks on startup too,
+# but only if it starts -- and "the payload is broken" is exactly when being
+# able to reach the Pi matters most.
+install -m 0644 "$CODE_DIR/setup/raptorhab-wifi-restore.service" \
+    /etc/systemd/system/raptorhab-wifi-restore.service
+systemctl daemon-reload
+systemctl enable raptorhab-wifi-restore.service >/dev/null 2>&1 || true
+ok "WiFi restore-at-boot enabled"
+
+/usr/local/sbin/raptorhab-wifi-power on >/dev/null 2>&1 || true
+
 install -m 0644 "$CODE_DIR/systemd/raptorhab-airborne.service" \
     /etc/systemd/system/raptorhab-airborne.service
 systemctl daemon-reload

@@ -1,0 +1,19 @@
+[Unit]
+# Watches for the payload's request to turn WiFi off in flight.
+#
+# The payload runs with NoNewPrivileges=true, so it cannot use sudo -- measured
+# on the target, sudo refuses outright: "the no new privileges flag is set".
+# Nor can it open /dev/rfkill, which is root-only. Rather than weaken the
+# payload's hardening to let it escalate, it drops a file in its own state
+# directory and systemd, which is already root, does the privileged part.
+#
+# This is strictly less privilege than a sudoers rule: the payload gains no
+# ability to run anything as root, only to ask for one specific action.
+Description=RaptorHab: watch for the in-flight WiFi cutoff request
+
+[Path]
+PathExists=/var/lib/raptorhab/wifi-off.request
+Unit=raptorhab-wifi-off.service
+
+[Install]
+WantedBy=multi-user.target

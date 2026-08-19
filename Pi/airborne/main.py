@@ -37,7 +37,11 @@ from common.protocol import build_packet
 from common.radio import SX1262Radio
 
 from airborne.config import AirborneConfig
-from airborne.power import apply_flight_power_saving
+from airborne.power import (
+    LaunchWiFiCutoff,
+    apply_flight_power_saving,
+    restore_wifi,
+)
 from airborne.utils import (
     setup_logging,
     get_cpu_temperature,
@@ -116,6 +120,12 @@ class RaptorHabAirborne:
         # report an uptime of several weeks on a payload that booted a minute
         # ago.
         self._start_time = time.monotonic()
+
+        # Declared here, not only where it is built: the main loop reads it on
+        # every pass, and a component that failed to initialise must leave an
+        # attribute behind rather than an AttributeError.
+        self._wifi_cutoff = None
+        self._power_report = None
         
         # State machine
         self._state = State.INITIALIZING
@@ -238,9 +248,22 @@ class RaptorHabAirborne:
         # Initialize radio
         # Switch off what a flying payload does not use, before anything else
         # starts drawing current. Off by default; see docs/POWER.md.
+        # WiFi is handled separately from the rest when the launch cutoff owns
+        # it. The two settings would otherwise contradict each other: killing
+        # the radio at boot leaves no way to run the pre-launch checks, which
+        # are the whole reason the cutoff waits for launch in the first place.
+        cutoff_owns_wifi = self.config.wifi_off_after_launch
+        if cutoff_owns_wifi and self.config.power_disable_wifi:
+            self._logger.info(
+                "WiFi will stay up until launch: wifi_off_after_launch owns "
+                "the radio, so power_disable_wifi is not applied at boot"
+            )
+
         if self.config.flight_power_saving:
             report = apply_flight_power_saving(
-                disable_wifi_radio=self.config.power_disable_wifi,
+                disable_wifi_radio=(
+                    self.config.power_disable_wifi and not cutoff_owns_wifi
+                ),
                 disable_bt=self.config.power_disable_bluetooth,
                 disable_video=self.config.power_disable_hdmi,
                 disable_led=self.config.power_disable_led,
@@ -251,6 +274,29 @@ class RaptorHabAirborne:
             self._logger.info(
                 "Power saving is off; WiFi, Bluetooth and HDMI stay powered "
                 "(roughly 100 mA). Enable flight_power_saving before launch."
+            )
+
+        self._wifi_cutoff = None
+        if cutoff_owns_wifi:
+            # Undo any block left over from a previous flight before arming.
+            # This is what makes a power cycle the reliable way back into a
+            # recovered payload -- systemd-rfkill would otherwise restore the
+            # in-flight block on every boot, forever.
+            restored = restore_wifi()
+            if not restored.applied:
+                self._logger.warning(
+                    f"Could not confirm WiFi is up at boot: {restored.detail}"
+                )
+
+            self._wifi_cutoff = LaunchWiFiCutoff(
+                altitude_agl_m=self.config.wifi_off_altitude_agl_m,
+                confirmations_needed=self.config.wifi_off_confirmations,
+                enabled=True,
+            )
+            self._logger.info(
+                f"WiFi cutoff armed: off after "
+                f"{self.config.wifi_off_altitude_agl_m} m AGL confirmed on "
+                f"{self.config.wifi_off_confirmations} consecutive 3D fixes"
             )
 
         self._logger.info("Initializing radio...")
@@ -850,6 +896,15 @@ class RaptorHabAirborne:
 
         if self._tx_scheduler is not None:
             self._tx_scheduler.set_zone(self._zone_manager.zone)
+
+        # Fed from here rather than straight off the GPS, because the height
+        # that matters is above the *launch site* and that reference is the
+        # zone manager's -- settled, not the receiver's first guess.
+        if self._wifi_cutoff is not None:
+            self._wifi_cutoff.update(
+                altitude_agl_m=self._zone_manager.state.altitude_agl_m,
+                fix_type=(gps.fix_type if gps is not None else 0),
+            )
 
     def _capture_allowed(self) -> bool:
         """Whether image capture should be running in the current zone."""

@@ -187,3 +187,81 @@ And when it is off, it says that too, so a payload that flew with WiFi burning
 Power saving is off; WiFi, Bluetooth and HDMI stay powered (roughly 100 mA).
 Enable flight_power_saving before launch.
 ```
+
+
+## WiFi in flight
+
+WiFi is the largest controllable draw on the payload, and at altitude it is
+worse than useless: there is no access point at 30 km, so NetworkManager scans,
+fails, and scans again for the entire flight.
+
+It cannot simply be disabled at boot, because the pre-launch checklist is run
+over it — that is how the operator confirms the fix, the link and the key. So
+the radio stays up until the balloon proves it has launched, then goes down for
+the rest of the flight.
+
+### What counts as proof
+
+Three conditions, all required, and both of the first two are only trustworthy
+because of fixes made in the same review:
+
+- **A 3D fix.** A 2D fix reports an altitude it did not solve for, which is the
+  worst possible thing to trigger an irreversible action on. The GPS layer used
+  to call every fix 3D; it no longer does.
+- **Height above the launch reference.** Only meaningful because that reference
+  is now settled over 180 s rather than taken from the receiver's first and
+  worst fix, which was measured 29 m out.
+- **Sustained across three consecutive updates.** One glitched fix should not
+  end the flight's connectivity.
+
+Default 300 m AGL. High enough that nothing on the pad reaches it, low enough
+to take the saving early in the climb.
+
+### How an unprivileged payload turns off a radio
+
+It does not. Every escalation route is closed, measured on the target:
+
+```
+rfkill block wifi     -> cannot open /dev/rfkill: Permission denied
+nmcli radio wifi off  -> Not authorized to perform this operation
+sudo -n <helper> off  -> the "no new privileges" flag is set
+```
+
+That last one is the interesting failure. The unit sets
+`NoNewPrivileges=true`, so a sudoers rule cannot help — and the first
+implementation of this feature was exactly that, a sudoers rule, which would
+have logged "armed" at launch and then silently done nothing.
+
+Weakening the payload's hardening to let it escalate would be a poor trade for
+a power saving. Instead it writes a request file in its own state directory and
+`raptorhab-wifi-off.path` — already root — acts on it. The payload gains no
+ability to run anything as root, only to ask for one specific action. That is
+strictly less privilege than the sudoers rule would have been.
+
+It then reads `/sys/class/rfkill/*/soft`, which is world-readable, to confirm
+the request was actually heard. A request nobody is listening to otherwise
+looks exactly like success.
+
+### Getting back in
+
+Power-cycle the payload. `raptorhab-wifi-restore.service` unblocks the radio at
+boot, before NetworkManager, and does not depend on the payload software
+running — "the payload is broken" being precisely when reaching the Pi matters
+most.
+
+This is not belt and braces. systemd-rfkill saves the soft-block state and
+restores it on the next boot by design, so without that unit a payload blocked
+in flight would come back blocked, every boot, forever.
+
+### Verified on hardware
+
+Unprivileged payload user, hardening intact, no sudo grant:
+
+```
+=== before ===                          soft=0
+applied= True detail= blocked via systemd path unit
+blocked now: True
+=== after ===                           soft=1
+=== request consumed? ===               No such file  (watcher re-armed)
+wifi unblocked                          soft=0
+```

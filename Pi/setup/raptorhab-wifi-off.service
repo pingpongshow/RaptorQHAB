@@ -1,0 +1,9 @@
+[Unit]
+Description=RaptorHab: turn WiFi off for the rest of the flight
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/raptorhab-wifi-power off
+# Consume the request, so the path unit re-arms and a later flight can ask
+# again without the file having to be cleaned up by hand.
+ExecStartPost=/bin/rm -f /var/lib/raptorhab/wifi-off.request

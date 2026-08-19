@@ -1,0 +1,27 @@
+[Unit]
+# Bring WiFi back at every boot, whatever the last flight left behind.
+#
+# The payload also does this when it starts, but that is not enough on its own:
+# if the payload service is broken -- a bad config, a failed dependency, a crash
+# loop -- nothing would ever unblock the radio, and a recovered payload would
+# be unreachable over the network with no indication why.
+#
+# This is the guarantee that a power cycle is always a way back in. It is
+# deliberately the dumbest unit in the system: no dependencies on RaptorHAB, no
+# Python, no configuration to get wrong.
+Description=RaptorHab: restore WiFi at boot
+DefaultDependencies=no
+After=systemd-rfkill.service
+Before=network-pre.target NetworkManager.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/raptorhab-wifi-power on
+RemainAfterExit=yes
+# Never block the boot over this.
+TimeoutStartSec=15
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=sysinit.target

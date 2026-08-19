@@ -212,6 +212,16 @@ class Config:
     power_disable_bluetooth: bool = True
     power_disable_hdmi: bool = True
     power_disable_led: bool = True
+
+    # WiFi is the largest controllable draw in flight, and at altitude it is
+    # worse than useless: there is no access point up there, so NetworkManager
+    # scans, fails and scans again for the whole flight. It cannot simply be
+    # off at boot, because the pre-launch checklist is run over it. So it stays
+    # up until the balloon proves it has launched, then goes down for good.
+    # A power cycle brings it back -- that is the way into a recovered payload.
+    wifi_off_after_launch: bool = True
+    wifi_off_altitude_agl_m: int = 300
+    wifi_off_confirmations: int = 3
     reboot_on_fatal_error: bool = True
     max_consecutive_errors: int = 10
 

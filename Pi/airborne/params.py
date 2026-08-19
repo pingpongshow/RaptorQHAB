@@ -812,6 +812,28 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         apply=Apply.LIVE, minimum=100, maximum=20000, unit="m",
     ),
     _spec(
+        "wifi_off_after_launch", Kind.BOOL, "Power",
+        "Turn WiFi off once the balloon has demonstrably launched, and leave "
+        "it off. WiFi is the largest controllable draw in flight and there is "
+        "no access point at altitude, so it scans and fails for the whole "
+        "flight. It stays up until launch so the pre-launch checks can be run "
+        "over it. Power-cycling a recovered payload brings it back.",
+        apply=Apply.RESTART,
+    ),
+    _spec(
+        "wifi_off_altitude_agl_m", Kind.INT, "Power",
+        "Height above the launch site that counts as launched. High enough "
+        "that nothing on the pad reaches it, low enough to take the saving "
+        "early in the climb.",
+        apply=Apply.RESTART, minimum=50, maximum=10000, unit="m",
+    ),
+    _spec(
+        "wifi_off_confirmations", Kind.INT, "Power",
+        "Consecutive position updates above the threshold before WiFi is cut. "
+        "One glitched fix should not end the flight's connectivity.",
+        apply=Apply.RESTART, minimum=1, maximum=30,
+    ),
+    _spec(
         "zone_launch_settle_sec", Kind.INT, "Zone Launch",
         "How long the auto-captured launch point keeps being refined while "
         "the payload sits on the pad. The first 3D fix a receiver produces is "
