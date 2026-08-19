@@ -477,6 +477,95 @@ ssh raptorhab.local 'cd ~/raptorhab && sudo ./setup/install.sh && sudo systemctl
 
 ---
 
+## Recording encryption keys
+
+Images and telemetry are sealed to an X25519 public key as the payload writes
+them. The payload holds only the public half, so a stranger who recovers the
+balloon gets ciphertext. The private half lives on your ground station and
+never flies.
+
+That protection has one failure mode, and it is total: **if you do not hold the
+private key, the recordings are gone.** Not awkward to read — gone. No amount
+of later effort recovers them.
+
+This is not hypothetical. A card from this project carries 710 images sealed to
+a public key whose private half was never saved. They are unreadable and always
+will be.
+
+### The short version
+
+`provision_sd.sh` handles it. If there is no keypair it offers to make one,
+saves the private half to `~/.raptorhab/recording_key` with mode `0600`, puts
+only the public half on the card, and enables encryption on first boot:
+
+```
+ok   sealing to XhdssUXd+ZymEOS/Gb9zSOE7usnX3x8WTF7Jd3GP4XE=
+ok   private key stays at ~/.raptorhab/recording_key and never goes near the card
+warn back that file up now
+```
+
+Pass `--no-encryption` to record in the clear, or `--recording-key PATH` to use
+a key kept somewhere else.
+
+### Doing it by hand
+
+Generate a keypair on the **ground station**, never on the payload:
+
+```bash
+python3 Pi/tools/recording_key.py generate
+```
+
+That writes the private key to `~/.raptorhab/recording_key` (mode `0600`) and
+the public key alongside it as `recording_key.pub`, then prints the value to
+configure.
+
+Put **only the public half** on the payload — through the macOS app, the Python
+ground station, or by editing the config directly:
+
+```json
+"recording_encryption_enabled": true,
+"recording_public_key": "XhdssUXd+ZymEOS/Gb9zSOE7usnX3x8WTF7Jd3GP4XE="
+```
+
+Confirm the payload is sealing to a key you can open before you fly:
+
+```bash
+python3 Pi/tools/recording_key.py verify XhdssUXd+ZymEOS/Gb9zSOE7usnX3x8WTF7Jd3GP4XE=
+```
+
+### Reading recordings afterwards
+
+From a recovered card, or from files pulled off over USB:
+
+```bash
+python3 Pi/tools/recording_key.py decrypt /Volumes/rootfs/var/lib/raptorhab/images --out ./recovered
+```
+
+The Python ground station does the same thing with a survey first, which
+reports whether the card is readable **before** you spend time copying:
+
+```python
+from raptorhabgs.core.sd_import import survey_card, import_files, load_private_key
+survey = survey_card("/Volumes/rootfs")
+print(survey.as_dict())        # includes key_matches and readable
+import_files(survey.images, "./recovered", load_private_key())
+```
+
+### Backing it up
+
+The private key is 32 bytes. Copy `~/.raptorhab/recording_key` somewhere that
+is not the machine that generated it — a password manager, an encrypted USB
+stick, anywhere you would keep an SSH key.
+
+Regenerating is not a recovery: a new keypair cannot open anything sealed to
+the old one. `recording_key.py generate` refuses to overwrite an existing key
+without `--force` for exactly that reason.
+
+Losing the payload costs you a payload. Losing this file costs you every flight
+it ever recorded.
+
+---
+
 ## Troubleshooting
 
 **The service will not start.** `journalctl -u raptorhab-airborne -n 50`. The

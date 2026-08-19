@@ -55,6 +55,12 @@ sealed to an X25519 public key as they are written. The payload holds only the
 public half and physically cannot decrypt its own recordings, so recovering
 the balloon yields ciphertext. **31 ms** to seal a 50 KB image on a Pi Zero.
 
+The keypair is created when you prepare the card, and the private half never
+goes near the payload. That matters more than it sounds: sealing to a key you
+do not hold does not make the recordings hard to read, it makes them
+impossible, and nothing detects that until you try. Card provisioning refuses
+to enable encryption without a keypair it has confirmed you have.
+
 **Configure everything over one USB cable.** All **98** payload parameters,
 plus a real terminal, over the Pi's USB port. The macOS app builds its
 configuration form from a schema the payload sends, so the two never drift
