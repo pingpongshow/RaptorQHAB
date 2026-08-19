@@ -198,6 +198,11 @@ class Config:
     # === Storage ===
     image_storage_path: str = os.path.join(STATE_ROOT, "images")
     log_path: str = os.path.join(STATE_ROOT, "logs")
+
+    # Survives a restart in flight. Without it a payload that restarts at 20 km
+    # captures a "launch point" 20 km up and every AGL figure afterwards is
+    # measured from the wrong datum.
+    flight_state_path: str = os.path.join(STATE_ROOT, "flight_state.json")
     max_stored_images: int = 20000
 
     # === Operational ===

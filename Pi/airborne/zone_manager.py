@@ -32,6 +32,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from airborne import flight_state
 from statistics import median
 from typing import Deque, List, Optional, Tuple
 from collections import deque
@@ -44,6 +45,11 @@ logger = logging.getLogger(__name__)
 # interval in this module -- dwell timers, rolling windows, beacon spacing --
 # would be wrong across that step, and a step backwards would stall them for
 # the length of the jump.
+
+# How much the peak has to advance before the flight state is written again.
+# Saving on every new peak would write to the SD card roughly once a second for
+# the whole ascent.
+PEAK_SAVE_INTERVAL_M = 250.0
 
 EARTH_RADIUS_M = 6371000.0
 
@@ -101,6 +107,9 @@ class ZoneManager:
         auto_capture_launch_point: bool = True,
         launch_settle_sec: float = 90.0,
         launch_settle_max_drift_m: float = 50.0,
+        state_path: Optional[str] = None,
+        state_max_age_sec: float = flight_state.DEFAULT_MAX_AGE_SEC,
+        inflight_margin_m: float = flight_state.DEFAULT_INFLIGHT_MARGIN_M,
     ):
         """
         Args:
@@ -142,6 +151,13 @@ class ZoneManager:
                 this far from the provisional point. Movement means it has
                 launched, and refining then would drag the reference along
                 with it.
+            state_path: Where to persist the launch point and the arming state
+                so a restart in flight does not throw them away. None disables
+                persistence entirely.
+            state_max_age_sec: Saved state older than this is a previous
+                flight, not this one.
+            inflight_margin_m: How far above the recorded launch altitude
+                counts as still flying.
         """
         self.launch_latitude = launch_latitude
         self.launch_longitude = launch_longitude
@@ -168,6 +184,27 @@ class ZoneManager:
         self._launch_settled = self._launch_point_captured
         self._launch_capture_at: Optional[float] = None
         self._launch_samples: List[Tuple[float, float, Optional[float]]] = []
+
+        # Persistence. The saved state is not applied here: deciding whether it
+        # belongs to a flight still in progress needs a current altitude, and
+        # there is no fix yet.
+        self._state_path = state_path
+        self._state_max_age_sec = state_max_age_sec
+        self._inflight_margin_m = inflight_margin_m
+        self._saved = (
+            flight_state.load(state_path, state_max_age_sec) if state_path else None
+        )
+        self._resumed = False
+        self._peak_saved_at_m = 0.0
+
+        if self._saved is not None:
+            logger.info(
+                f"Found flight state {self._saved.age_sec() / 60:.0f} min old: "
+                f"launch {self._saved.launch_latitude:.5f}, "
+                f"{self._saved.launch_longitude:.5f} at "
+                f"{self._saved.launch_altitude_m} m. Whether it is adopted "
+                f"depends on how high the first fix comes in."
+            )
 
         self._state = ZoneState(
             zone=Zone.UNKNOWN,
@@ -253,6 +290,20 @@ class ZoneManager:
                         f"Landing detection armed: reached "
                         f"{self._peak_altitude_agl_m:.0f} m AGL"
                     )
+                    # Saved immediately. This is the one flag a restart during
+                    # descent could never rebuild, because the balloon will not
+                    # see the arming altitude again on its way down.
+                    self._persist()
+                elif (
+                    self._peak_altitude_agl_m - self._peak_saved_at_m
+                    >= PEAK_SAVE_INTERVAL_M
+                ):
+                    # Every new peak would mean writing to the card once a
+                    # second for the whole ascent. Every 250 m costs about a
+                    # hundred writes across a flight and bounds what a restart
+                    # loses to the last 250 m of climb, which nothing depends
+                    # on to that precision.
+                    self._persist()
 
         distance = haversine_m(
             self.launch_latitude, self.launch_longitude, latitude, longitude
@@ -414,6 +465,24 @@ class ZoneManager:
         if not self.auto_capture_launch_point:
             return
 
+        # A restart in flight must not invent a new launch point at 20 km. The
+        # test is altitude: come up higher than the launch site this payload
+        # recorded and it is still flying, because nothing else explains it.
+        if flight_state.indicates_in_flight(
+            self._saved, altitude_m, self._inflight_margin_m
+        ):
+            self._adopt_saved_state(altitude_m)
+            return
+
+        if self._saved is not None:
+            logger.info(
+                "Saved flight state is from a previous flight -- this payload "
+                f"is at {'unknown' if altitude_m is None else f'{altitude_m:.0f} m'}"
+                f", not above its recorded launch altitude "
+                f"({self._saved.launch_altitude_m} m). Capturing fresh."
+            )
+            self._saved = None
+
         self.launch_latitude = latitude
         self.launch_longitude = longitude
         if self._launch_altitude_auto:
@@ -431,6 +500,61 @@ class ZoneManager:
             + ("" if self._launch_settled
                else f"; refining for {self.launch_settle_sec:.0f} s")
         )
+
+    def _adopt_saved_state(self, altitude_m: Optional[float]) -> None:
+        """
+        Resume a flight already in progress.
+
+        Restores the launch point *and* the arming state. The arming matters as
+        much as the point: landing detection arms once the balloon has been
+        above the arm altitude, and a payload that restarts during descent will
+        never see that height again. Without this it would come down disarmed,
+        never declare itself landed, and keep taking pictures in a field
+        instead of becoming the recovery beacon.
+        """
+        saved = self._saved
+        self.launch_latitude = saved.launch_latitude
+        self.launch_longitude = saved.launch_longitude
+        if self._launch_altitude_auto:
+            self.launch_altitude_m = saved.launch_altitude_m
+
+        self._launch_point_captured = True
+        self._launch_settled = True          # already settled, before the restart
+        self._resumed = True
+
+        self._peak_altitude_agl_m = max(
+            self._peak_altitude_agl_m, saved.peak_altitude_agl_m
+        )
+        self._peak_saved_at_m = self._peak_altitude_agl_m
+        if saved.landing_armed:
+            self._landing_armed = True
+
+        agl = "?" if altitude_m is None else f"{altitude_m - (saved.launch_altitude_m or 0):.0f}"
+        logger.info(
+            f"Restarted in flight at {agl} m above the recorded launch site: "
+            f"keeping the launch point from before the restart "
+            f"({saved.launch_latitude:.5f}, {saved.launch_longitude:.5f} at "
+            f"{saved.launch_altitude_m} m), peak "
+            f"{self._peak_altitude_agl_m:.0f} m AGL, landing detection "
+            f"{'armed' if self._landing_armed else 'not yet armed'}"
+        )
+
+    def _persist(self) -> None:
+        """Save what a restart would otherwise have to relearn in the air."""
+        if not self._state_path:
+            return
+        flight_state.save(
+            self._state_path,
+            flight_state.FlightState(
+                launch_latitude=self.launch_latitude,
+                launch_longitude=self.launch_longitude,
+                launch_altitude_m=self.launch_altitude_m,
+                launch_settled=self._launch_settled,
+                peak_altitude_agl_m=self._peak_altitude_agl_m,
+                landing_armed=self._landing_armed,
+            ),
+        )
+        self._peak_saved_at_m = self._peak_altitude_agl_m
 
     def _refine_launch_point(
         self,
@@ -511,6 +635,8 @@ class ZoneManager:
             None if previous_alt is None or self.launch_altitude_m is None
             else self.launch_altitude_m - previous_alt
         )
+        self._persist()
+
         logger.info(
             f"Launch point {reason} ({len(samples)} fixes, "
             f"{len(tail)} used): {self.launch_latitude:.5f}, "

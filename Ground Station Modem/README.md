@@ -4,19 +4,27 @@ The radio that hears the balloon. It receives the RAPTOR GFSK downlink —
 telemetry and fountain-coded image packets — validates each packet, and
 forwards it to the companion apps over USB serial.
 
-Runs on four Heltec boards from one source tree. See
-**[BOARDS.md](BOARDS.md)** for the pin maps and per-board behaviour.
+Runs on seven boards from one source tree. See **[BOARDS.md](BOARDS.md)** for
+the pin maps and per-board behaviour.
 
 | Board | Display | Environment |
 |---|---|---|
-| Vision Master T190 | 1.9" colour TFT | `heltec_vision_master_t190` |
-| Vision Master E290 | 2.9" e-ink | `heltec_vision_master_e290` |
-| WiFi LoRa 32 V4 | 0.96" OLED | `heltec_wifi_lora_32_v4` |
-| WiFi LoRa 32 V4 | none | `heltec_wifi_lora_32_v4_headless` |
+| Heltec WiFi LoRa 32 V3 | 0.96" OLED | `heltec_wifi_lora_32_v3` |
+| Heltec WiFi LoRa 32 V4 | 0.96" OLED | `heltec_wifi_lora_32_v4` |
+| Heltec WiFi LoRa 32 V4 | none | `heltec_wifi_lora_32_v4_headless` |
+| Heltec Wireless Stick Lite V3 | none | `heltec_wireless_stick_lite_v3` |
+| Heltec Vision Master T190 | 1.9" colour TFT | `heltec_vision_master_t190` |
+| LilyGO T3-S3 | 0.96" OLED | `lilygo_t3s3` |
+| Seeed XIAO ESP32-S3 + Wio-SX1262 | none | `xiao_s3_wio_sx1262` |
+
+**Every one of these needs an SX1262.** The downlink is 96 kbps GFSK with a
+234 kHz receive bandwidth and the SX1276 generation cannot do it — so the
+original T-Beam, the T3 v1.6, and the many 433/915 boards built around an
+SX1276 will not work here whatever the pins are set to.
 
 ```bash
-pio run -e heltec_vision_master_t190 -t upload
-pio run                                          # build all four
+pio run -e heltec_wifi_lora_32_v3 -t upload
+pio run                                          # build all seven
 ```
 
 ## What it does

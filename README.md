@@ -92,7 +92,7 @@ drawing and how old it is.
 
 | | |
 |---|---|
-| Boards | Heltec Vision Master T190 (TFT), Vision Master E290 (e-ink), WiFi LoRa 32 V4 (OLED or headless) |
+| Boards | Seven builds: Heltec WiFi LoRa 32 V3 & V4, Wireless Stick Lite V3, Vision Master T190, LilyGO T3-S3, Seeed XIAO + Wio-SX1262 |
 | Display | 1.9" TFT — live RSSI, SNR, packet counts, radio settings |
 | Link | USB serial to the Mac at 921600 baud |
 | Config | RF parameters set from the macOS app, no reflashing |

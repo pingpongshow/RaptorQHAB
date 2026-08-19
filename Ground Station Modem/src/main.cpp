@@ -30,8 +30,7 @@
   #include <Adafruit_ST7789.h>
 #elif BOARD_HAS_OLED
   #include <Adafruit_SSD1306.h>
-#elif BOARD_HAS_EINK
-  #include <GxEPD2_BW.h>
+
 #endif
 
 // ============================================================================
@@ -406,29 +405,45 @@ void updateStatsDisplay() {
 // ============================================================================
 
 float readBatteryVoltage() {
-    // Enable the battery voltage divider by turning on Q3->Q2
+#if VBAT_READ_PIN < 0
+    // No divider fitted on this board. Saying so is more useful than returning
+    // a number derived from a floating pin.
+    return NAN;
+#else
+
+#ifdef ADC_CTRL_PIN
+    // Enable the battery voltage divider.
+    //
+    // This used to write HIGH unconditionally, which is correct on the V4 and
+    // T190 and wrong on the V3 and Wireless Stick Lite, where the enable is
+    // active LOW -- Heltec changed the polarity between revisions. On those
+    // boards it would leave the divider off and read the battery as flat.
     pinMode(ADC_CTRL_PIN, OUTPUT);
-    digitalWrite(ADC_CTRL_PIN, HIGH);
+    digitalWrite(ADC_CTRL_PIN, ADC_CTRL_ON_STATE);
     delayMicroseconds(100);  // Let it settle (very brief, won't affect packet timing)
-    
+#endif
+
     // Take multiple readings and average for stability
     uint32_t sum = 0;
     const int samples = 4;
     for (int i = 0; i < samples; i++) {
         sum += analogRead(VBAT_READ_PIN);
     }
-    
+
+#ifdef ADC_CTRL_PIN
     // Turn off the divider to save power
-    digitalWrite(ADC_CTRL_PIN, LOW);
-    
+    digitalWrite(ADC_CTRL_PIN, !ADC_CTRL_ON_STATE);
+#endif
+
     // Calculate voltage
     // ESP32-S3 ADC: 12-bit (0-4095), default attenuation gives ~0-2.5V range
     // With ADC_ATTEN_DB_11, range is ~0-3.3V
     float avgRaw = (float)sum / samples;
     float vRead = (avgRaw / 4095.0f) * 3.3f;
     float vBat = vRead * VBAT_DIVIDER_RATIO;
-    
+
     return vBat;
+#endif
 }
 
 void updateBatteryDisplay() {
@@ -439,7 +454,8 @@ void updateBatteryDisplay() {
     
     // Read battery voltage
     batteryVoltage = readBatteryVoltage();
-    
+    if (isnan(batteryVoltage)) return;   // board has no divider fitted
+
     // Calculate percentage (linear approximation between min and max)
     batteryPercent = (int)(((batteryVoltage - VBAT_MIN) / (VBAT_MAX - VBAT_MIN)) * 100.0f);
     batteryPercent = constrain(batteryPercent, 0, 100);
@@ -551,13 +567,20 @@ void showConfiguredScreen() {
 static Adafruit_SSD1306* oled = nullptr;
 
 void initDisplay() {
+#ifdef VEXT_CTRL_PIN
+    // The Heltec boards gate the panel's supply; the T3-S3 does not have the
+    // rail at all. Polarity differs between boards, hence the per-board
+    // VEXT_ON_STATE rather than a literal here.
     pinMode(VEXT_CTRL_PIN, OUTPUT);
-    digitalWrite(VEXT_CTRL_PIN, VEXT_ON_STATE);   // active LOW on this board
+    digitalWrite(VEXT_CTRL_PIN, VEXT_ON_STATE);
     delay(50);
+#endif
 
+#ifdef OLED_RST
     pinMode(OLED_RST, OUTPUT);
     digitalWrite(OLED_RST, LOW);  delay(20);
     digitalWrite(OLED_RST, HIGH); delay(50);
+#endif
 
     Wire.begin(OLED_SDA, OLED_SCL);
     oled = new Adafruit_SSD1306(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
@@ -610,7 +633,11 @@ void updateDisplay() {
     oled->printf("CRC %lu  ERR %lu", packetsRejectedCrc, packetsRadioError);
 
     oled->setCursor(0, 56);
-    oled->printf("%.2fV %d%%", batteryVoltage, batteryPercent);
+    if (isnan(batteryVoltage) || batteryVoltage <= 0.0f) {
+        oled->print("USB powered");
+    } else {
+        oled->printf("%.2fV %d%%", batteryVoltage, batteryPercent);
+    }
     oled->display();
 }
 
@@ -637,130 +664,6 @@ void showConfiguredScreen() {
     oled->setCursor(0, 54);
     oled->println("Listening...");
     oled->display();
-}
-
-#elif BOARD_HAS_EINK
-
-// ---------------------------------------------------------------------------
-// 2.9" e-ink, 296x128.
-//
-// E-ink is the wrong display for live telemetry and the right one for a
-// ground station left running: it holds the last reading with the power off,
-// which is exactly what you want when you come back to a modem that has been
-// sitting in a field.
-//
-// The panel is therefore updated rarely and deliberately. A full refresh takes
-// around two seconds during which nothing else runs, and the panel wears with
-// every refresh, so this redraws at most once a minute and only when something
-// meaningful has changed. Driving it at the TFT's rate would make the modem
-// miss packets and shorten the display's life for no benefit.
-// ---------------------------------------------------------------------------
-
-static GxEPD2_BW<GxEPD2_290_BS, GxEPD2_290_BS::HEIGHT>* eink = nullptr;
-static SPIClass einkSPI(HSPI);
-static uint32_t lastEinkUpdate = 0;
-static uint32_t lastEinkPackets = 0;
-static const uint32_t EINK_MIN_INTERVAL_MS = 60000;
-
-void initDisplay() {
-    pinMode(VEXT_CTRL_PIN, OUTPUT);
-    digitalWrite(VEXT_CTRL_PIN, VEXT_ON_STATE);   // active HIGH on this board
-    delay(100);
-
-    einkSPI.begin(EINK_SCLK, -1, EINK_MOSI, EINK_CS);
-    eink = new GxEPD2_BW<GxEPD2_290_BS, GxEPD2_290_BS::HEIGHT>(
-        GxEPD2_290_BS(EINK_CS, EINK_DC, EINK_RST, EINK_BUSY));
-    eink->init(0, true, 2, false, einkSPI, SPISettings(4000000, MSBFIRST, SPI_MODE0));
-    eink->setRotation(1);
-    eink->setTextColor(GxEPD_BLACK);
-}
-
-void showWaitingScreen() {
-    if (!eink) return;
-    eink->setFullWindow();
-    eink->firstPage();
-    do {
-        eink->fillScreen(GxEPD_WHITE);
-        eink->setTextSize(2);
-        eink->setCursor(4, 20);
-        eink->print("RAPTORHAB MODEM");
-        eink->setTextSize(1);
-        eink->setCursor(4, 48);
-        eink->print("Waiting for configuration over USB");
-        eink->setCursor(4, 62);
-        eink->print("Send CFG:<freq>,<br>,<dev>,<bw>,<preamble>");
-    } while (eink->nextPage());
-    lastEinkUpdate = millis();
-}
-
-void updateDisplay() {
-    if (!eink) return;
-    if (millis() - lastPacketTime < DISPLAY_IDLE_THRESHOLD_MS) return;
-    if (millis() - lastEinkUpdate < EINK_MIN_INTERVAL_MS) return;
-    // Nothing new to say. A refresh that changes no pixels is pure wear.
-    if (packetsTotal == lastEinkPackets && lastEinkUpdate != 0) return;
-
-    lastEinkUpdate = millis();
-    lastEinkPackets = packetsTotal;
-
-    eink->setFullWindow();
-    eink->firstPage();
-    do {
-        eink->fillScreen(GxEPD_WHITE);
-        eink->setTextSize(2);
-        eink->setCursor(4, 18);
-        eink->print("RAPTORHAB MODEM");
-        eink->drawFastHLine(0, 26, EINK_WIDTH, GxEPD_BLACK);
-
-        eink->setTextSize(1);
-        eink->setCursor(4, 40);
-        eink->printf("%.3f MHz  %.0f kbps  dev %.0f kHz",
-                     rfFrequency, rfBitrate, rfDeviation);
-
-        eink->setCursor(4, 56);
-        eink->printf("RSSI %.1f dBm    SNR %.1f dB", lastRssi, lastSnr);
-
-        eink->setCursor(4, 72);
-        eink->printf("RX %lu   forwarded %lu", packetsTotal, packetsForwarded);
-        eink->setCursor(4, 86);
-        eink->printf("no sync %lu   bad CRC %lu",
-                     packetsRejectedNoRapt, packetsRejectedCrc);
-
-        eink->setCursor(4, 106);
-        eink->printf("battery %.2f V (%d%%)", batteryVoltage, batteryPercent);
-        eink->setCursor(180, 106);
-        eink->print("updates each minute");
-    } while (eink->nextPage());
-}
-
-void drawStaticUI() {}
-void updateSignalDisplay() {}
-void updateStatsDisplay() {}
-void updateBatteryDisplay() {}
-
-void showConfiguredScreen() {
-    if (!eink) return;
-    // Worth a refresh: this is the moment the operator is waiting for
-    // confirmation that the modem took its settings.
-    eink->setFullWindow();
-    eink->firstPage();
-    do {
-        eink->fillScreen(GxEPD_WHITE);
-        eink->setTextSize(2);
-        eink->setCursor(4, 18);
-        eink->print("CONFIGURED");
-        eink->drawFastHLine(0, 26, EINK_WIDTH, GxEPD_BLACK);
-        eink->setTextSize(1);
-        eink->setCursor(4, 44);
-        eink->printf("%.3f MHz   %.0f kbps   dev %.0f kHz",
-                     rfFrequency, rfBitrate, rfDeviation);
-        eink->setCursor(4, 60);
-        eink->printf("bandwidth %.1f kHz   preamble %d",
-                     rfRxBandwidth, rfPreambleLen);
-        eink->setCursor(4, 84);
-        eink->print("Listening for packets");
-    } while (eink->nextPage());
-    lastEinkUpdate = millis();
 }
 
 #elif !BOARD_HAS_DISPLAY
@@ -965,11 +868,21 @@ bool initializeRadio() {
     
     Module* mod = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY, *spi);
     radio = new SX1262(mod);
+
+#ifdef RF_SWITCH_RX_PIN
+    // Boards with an external antenna switch rather than one driven from DIO2.
+    // Set before begin(), because begin() configures the switch. Miss this and
+    // the radio transmits and receives into a terminated path: it appears to
+    // work, and hears almost nothing, which looks exactly like a bad antenna.
+    radio->setRfSwitchPins(RF_SWITCH_RX_PIN, RF_SWITCH_TX_PIN);
+    Serial.printf("[RADIO] External RF switch on RX pin %d\n", RF_SWITCH_RX_PIN);
+#endif
     
     Serial.printf("[RADIO] Initializing FSK: Freq=%.1f BR=%.1f Dev=%.1f BW=%.1f Pre=%d\n",
                   rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, rfPreambleLen);
     
-    int state = radio->beginFSK(rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, 10, rfPreambleLen, 1.8, false);
+    int state = radio->beginFSK(rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, 10,
+                                rfPreambleLen, LORA_TCXO_VOLTAGE, false);
     
     if (state != RADIOLIB_ERR_NONE) {
         Serial.printf("[ERROR] FSK init failed: %d\n", state);
@@ -1005,8 +918,10 @@ void setup() {
     pinMode(USER_BUTTON, INPUT_PULLUP);
 
     // Initialize battery monitoring pins
+#ifdef ADC_CTRL_PIN
     pinMode(ADC_CTRL_PIN, OUTPUT);
-    digitalWrite(ADC_CTRL_PIN, LOW);  // Start with divider off to save power
+    digitalWrite(ADC_CTRL_PIN, !ADC_CTRL_ON_STATE);  // divider off to save power
+#endif
     analogReadResolution(12);          // 12-bit ADC (0-4095)
     analogSetAttenuation(ADC_11db);    // Full 0-3.3V range
 
@@ -1089,11 +1004,18 @@ void sendStats() {
 
     float rate = packetsTotal > 0 ? (100.0 * packetsForwarded / packetsTotal) : 0.0;
 
+    char battBuf[24];
+    if (isnan(batteryVoltage) || batteryVoltage <= 0.0f) {
+        snprintf(battBuf, sizeof(battBuf), "n/a");
+    } else {
+        snprintf(battBuf, sizeof(battBuf), "%.2fV(%d%%)", batteryVoltage, batteryPercent);
+    }
+
     char statsBuf[256];
     snprintf(statsBuf, sizeof(statsBuf),
-        "\n[STATS] Total:%lu Fwd:%lu NoRAPT:%lu BadCRC:%lu Err:%lu Rate:%.1f%% Batt:%.2fV(%d%%)\n",
+        "\n[STATS] Total:%lu Fwd:%lu NoRAPT:%lu BadCRC:%lu Err:%lu Rate:%.1f%% Batt:%s\n",
         packetsTotal, packetsForwarded, packetsRejectedNoRapt, packetsRejectedCrc,
-        packetsRadioError, rate, batteryVoltage, batteryPercent);
+        packetsRadioError, rate, battBuf);
     Serial.print(statsBuf);
 }
 

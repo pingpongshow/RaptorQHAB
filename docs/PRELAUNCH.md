@@ -297,6 +297,34 @@ watcher starts.
 
 ---
 
+## J. Restarts in flight
+
+The payload restarts in the air — systemd does it, the watchdog does it, and
+both beat a payload that has stopped. It now carries the launch point and the
+landing-detection arming across a restart, in
+`/var/lib/raptorhab/flight_state.json`.
+
+The test is altitude: if the payload comes up higher than the launch site it
+recorded, it is still flying. On the pad or after recovery it is not, and it
+takes a fresh reading.
+
+- [ ] No stale state file before you power up for the flight:
+
+```bash
+ls /var/lib/raptorhab/flight_state.json
+```
+
+A file left from a previous flight is ignored anyway — it is rejected after 24
+hours, and a payload on the pad is not above its own launch altitude — but
+clearing it removes the question.
+
+> Nothing to do here on launch day. It matters if the payload resets at 20 km:
+> without it, it would capture a "launch point" 20 km up, read 0 m AGL for the
+> rest of the flight, never cut WiFi, and come down with landing detection
+> disarmed — still taking pictures in a field instead of beaconing.
+
+---
+
 ## What happens after you let go
 
 Roughly, and in this order:

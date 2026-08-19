@@ -409,6 +409,14 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         apply=Apply.RESTART, env="RAPTORHAB_LOG_PATH",
     ),
     _spec(
+        "flight_state_path", Kind.STRING, "Storage",
+        "Where the launch point and landing-detection arming are saved so a "
+        "restart in flight does not throw them away. A payload that restarts "
+        "at 20 km would otherwise capture a launch point 20 km up and measure "
+        "every AGL figure from the wrong datum for the rest of the flight.",
+        apply=Apply.RESTART,
+    ),
+    _spec(
         "max_stored_images", Kind.INT, "Storage",
         "Oldest images are deleted beyond this count.",
         apply=Apply.LIVE, minimum=10, maximum=100000,
