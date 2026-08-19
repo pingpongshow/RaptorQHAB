@@ -37,3 +37,6 @@ Pi/ground/data/
 # Test virtualenv
 .venv-test/
 .pytest_cache/
+
+# PlatformIO build output for the dual-E22 modem
+Dual E22 Modem/.pio/
