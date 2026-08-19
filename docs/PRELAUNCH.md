@@ -188,7 +188,11 @@ With the ground station running and the modem connected:
 
 - [ ] A complete image arrives and renders
 - [ ] **Checksum failures: 0**
-- [ ] RSSI and SNR sane at bench range
+- [ ] RSSI sane at bench range
+- [ ] **SNR reads `n/a`** — GFSK has no signal-to-noise measurement, and the
+      modem says so rather than inventing one. A number here means the modem is
+      running firmware from before that was fixed, and every SNR it reports is
+      an error code
 - [ ] Reassembly completes without needing a retry — RaptorQ symbols arriving
 
 > Do this with the payload in its flight configuration, not on the desk with

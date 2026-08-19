@@ -1,7 +1,14 @@
 # RaptorHAB — Meshtastic + USB Configuration Roadmap
 
-Baseline: `c02134b`. Each phase is a branch merged to `main` with a tag.
-Nothing in a later phase starts until the prior phase's exit criteria pass.
+**Historical.** All seven phases are complete. This is kept because it records
+*why* the architecture is the way it is — the radio decision in section 0, the
+answered questions at the end — which is the part that stops being obvious once
+the code exists. For what is still open, see
+[OUTSTANDING.md](OUTSTANDING.md); for how the system is verified, see
+[TESTPLAN.md](TESTPLAN.md).
+
+Baseline: `c02134b`. Each phase was a branch merged to `main` with a tag.
+Nothing in a later phase started until the prior phase's exit criteria passed.
 
 ---
 
@@ -487,14 +494,13 @@ the accuracy the task actually needs. Ocean and unassigned airspace resolve to
   full flight in 30 seconds is worth more than any single feature here.
 - **Log the mode schedule to the downlink.** When a flight goes wrong you want
   to know what the balloon *thought* it was doing, not just what you received.
-- **Meshtastic as a recovery beacon.** After descent, when the balloon is on the
-  ground and the GFSK link is blocked by terrain, a low-rate LoRa beacon at
-  ground level is often the thing that finds the payload. Consider a third
-  zone mode — `LANDED`, triggered by low altitude + no vertical movement — that
-  goes Meshtastic-only and slows everything down to conserve battery. This may
-  be the single highest-value item on this list.
-- **Power budget.** Phase 4 changes the transmit duty cycle substantially.
-  Worth measuring current draw per mode on the bench and putting a projected
-  flight-duration number in the config UI.
-- **CI.** Once Phase 1 has tests, a GitHub Actions run on push costs nothing
-  and prevents the Phase 4 scheduler from silently regressing Phase 1's fixes.
+- ~~**Meshtastic as a recovery beacon.**~~ **Done.** The `LANDED` zone exists,
+  armed only after the balloon has been above 2000 m AGL so a payload on the
+  pad never mistakes itself for a landed one, and it stops imagery entirely in
+  favour of beacons.
+- ~~**Power budget.**~~ **Done, and it corrected two of my own claims.** See
+  [POWER.md](POWER.md): 68 mA measured saving, and the camera figure I had
+  asserted as 150–250 mA turned out to be roughly 20–30 mA when actually
+  measured.
+- **CI.** Still not done. 789 tests run in about six minutes with no hardware,
+  which is exactly the shape that suits a push-triggered run.

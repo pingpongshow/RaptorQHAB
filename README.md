@@ -61,7 +61,7 @@ do not hold does not make the recordings hard to read, it makes them
 impossible, and nothing detects that until you try. Card provisioning refuses
 to enable encryption without a keypair it has confirmed you have.
 
-**Configure everything over one USB cable.** All **98** payload parameters,
+**Configure everything over one USB cable.** All **113** payload parameters,
 plus a real terminal, over the Pi's USB port. The macOS app builds its
 configuration form from a schema the payload sends, so the two never drift
 apart. Configuration is USB-only by design — the payload will not accept
@@ -177,9 +177,11 @@ Waveshare HF HAT.
 | LoRa receive | Bench transmitter **and** a live mesh node at 2 hops, −59 dBm |
 | Radio mode switch | 3.68 ms into LoRa, 4.02 ms back |
 | Recording encryption | 50 KB sealed in 31 ms; payload cannot decrypt it |
-| USB configuration | 98 parameters, ~500 ms round trip |
+| USB configuration | 113 parameters, ~500 ms round trip |
 | Tagged repeating | Untagged and third-party traffic ignored; public-channel commands refused |
-| Tests | **593**, no hardware required |
+| Link error rate | 0 bad CRC in 16,690 packets with whitening on, against 137 in 14,951 without |
+| GPS fix handling | A 2D fix is reported as 2D; the launch reference settles to 0.4 m against a converged one |
+| Tests | **789**, no hardware required |
 
 ---
 
