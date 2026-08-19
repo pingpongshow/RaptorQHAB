@@ -564,3 +564,108 @@ depends on how cold the receiver is.
 watchdog trips and no restarts across the test.
 
 739 tests pass, 36 of them new.
+
+
+---
+
+## Ground station scan (2026-08), and the "ERR" on the T190 display
+
+### What ERR actually was
+
+The TFT shows `ERR` as `packetsRejectedCrc + packetsRejectedNoRapt`, which
+merges two unrelated causes. Reading the modem's serial `[STATS]` line
+separates them, and on the bench unit:
+
+```
+Total:955128 Fwd:940129 NoRAPT:3 BadCRC:14996 Err:0
+```
+
+So it is **entirely CRC failures**. Not false sync detections, not radio
+errors, not lost interrupts — the radio hears a well-formed RAPTOR packet and
+the checksum over the body does not match. Rate: **1.20%** measured over 7412
+packets.
+
+### Where the corruption is, which narrows the cause a lot
+
+The hardware sync word is `RAPT`, so a packet is only counted at all if its
+sync matched cleanly. The software then checks the *next* four bytes. If bit
+errors were random — thermal noise, a weak signal, front-end overload — they
+would land uniformly, and those four bytes would be hit about 4/44 of the time:
+roughly 1360 of the 14996 failures.
+
+**Observed: 3.** Errors are about 450× rarer at the start of a packet than
+uniform noise would produce. Whatever is corrupting these packets accumulates
+*through* the packet rather than striking at random.
+
+That fits two mechanisms, and the measurements so far cannot separate them:
+
+- **Sampling-clock drift.** Whitening is disabled on both the payload
+  (`whitening = 0x00` in `radio.py`) and the modem. 94% of the traffic is
+  48-byte telemetry, and those packets carry a **median longest identical-byte
+  run of 9 bytes** — about 72 bit periods with no transition for the
+  receiver's clock recovery to work from. This is the failure mode already
+  recorded above under "the all-zeros test artifact", where the conclusion was
+  that it "argues for enabling whitening if a future payload type ever carries
+  long runs of constant bytes". Telemetry is that payload type.
+- **Buffer overwrite during read.** The radio is in continuous receive, so a
+  packet arriving while `readData()` is in progress can overwrite the tail of
+  the one being read.
+
+Removing a needless SPI transaction from between `readData()` and
+`startReceive()` — see the SNR fix below — moved the rate from **1.201% to
+0.916%** over 14951 packets. Real, and much too small to be the whole story. A
+first short sample suggested it had fixed the problem outright; a proper
+three-minute measurement showed it had not, which is the only reason that is
+not written here as a fix.
+
+**The whitening A/B test is still outstanding.** It was set up — both ends
+changed, modem reflashed — but the payload went off the network before it could
+be updated, and a whitening mismatch broke the link completely (`Fwd 0,
+NoRAPT 264`, which at least confirms the setting takes effect). Both ends were
+reverted and the link is back at 99.1%. The test needs the payload reachable.
+
+### SNR was never a measurement
+
+`SX126x::getSNR()` returns `RADIOLIB_ERR_WRONG_MODEM` when the active modem is
+not LoRa. That constant is **the integer −20**. The firmware stored it in a
+float, printed it on the display as `-20.0 dB` in red — the red because the
+colour test is `lastSnr > 5 ? good : lastSnr > 0 ? warn : bad` — and forwarded
+it over USB in every frame.
+
+Confirmed against the bench modem: **2281 frames out of 2281 reported exactly
+−20.0**. Every SNR figure the ground station has ever shown or logged for the
+image downlink was this error code.
+
+GFSK has no SNR to report. The modem now sends −128, a value no real link can
+produce, and the display shows `n/a`. The Meshtastic slot on the dual-E22 runs
+LoRa and does report a real SNR, so it is unchanged — that distinction is the
+whole point.
+
+### Other defects found and fixed
+
+- **A failed reconfiguration left the modem deaf and said `CFG_OK`.**
+  `initializeRadio()`'s return value was discarded after a `CFG:` command.
+  Settings can pass the firmware's range checks and still be refused by the
+  radio, and the modem would then answer `CFG_OK` and hear nothing. It now
+  checks, rolls back to the previous settings, and reports `CFG_ERR` — the same
+  class of silent deafness recorded as R4 above.
+- **The USB command buffer had no length limit.** `usbBuffer += c` grew without
+  bound until a newline arrived. Anything that streams bytes without one — a
+  wrong app, a stuck sender — would exhaust the heap from the far end of a
+  cable. Capped at 128 bytes, resynchronising on the next newline.
+- **The macOS app could not decode a dual-radio modem.** Same de-stuffing gap
+  as the Python ground station: `0x7D 0x5B` was an unknown escape, so 55% of
+  image packets failed. Fixed in `SerialPortManager.swift`.
+
+### Noted, not changed
+
+- `PRE: 32 bits` on the display is the *transmit* preamble length. RadioLib
+  takes the receive preamble-detector length as a separate argument, so on a
+  receive-only modem this number describes nothing that affects reception.
+- The payload transmits `RAPT` twice — once as the hardware sync word, once as
+  the first four bytes of the packet body. Four bytes per packet, and it is
+  what makes `NoRAPT` such a useful diagnostic, so it stays.
+- The payload enables a 1-byte hardware CRC on transmit while the modem sets
+  `setCRC(0)`. The radio therefore does no error detection of its own and every
+  corrupted packet reaches software, where the CRC-32 catches it. Harmless as
+  it stands, and it is what makes the failures countable.

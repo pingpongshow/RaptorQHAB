@@ -468,6 +468,7 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         // Find end delimiter - scan for 0x7E that's NOT part of escape sequence
         // In properly stuffed data, 0x7E only appears as delimiter
         // 0x7D 0x5E = escaped 0x7E data byte
+        // 0x7D 0x5B = escaped 0x7B data byte (dual-radio modem)
         // 0x7D 0x5D = escaped 0x7D data byte
         var endOffset: Int? = nil
         var i = 1
@@ -507,7 +508,19 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         while i < stuffedData.count {
             if stuffedData[i] == 0x7D && i + 1 < stuffedData.count {
                 let nextByte = stuffedData[i + 1]
-                if nextByte == 0x5E {
+                if nextByte == 0x5B {
+                    // 0x7B is a second frame delimiter on the dual-radio
+                    // modem, which carries Meshtastic traffic alongside
+                    // RAPTOR, so it escapes 0x7B inside every frame -- RAPTOR
+                    // frames included. Without this mapping the de-stuffer
+                    // desynchronises on the unknown escape and the frame fails
+                    // its checksum. A 210-byte image packet contains a 0x7B
+                    // about 56% of the time; measured, 45% of image packets
+                    // survived instead of 100%. A single-radio modem never
+                    // emits this sequence, so accepting it costs it nothing.
+                    destuffed.append(0x7B)
+                    i += 2
+                } else if nextByte == 0x5E {
                     destuffed.append(0x7E)
                     i += 2
                 } else if nextByte == 0x5D {

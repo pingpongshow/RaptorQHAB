@@ -57,6 +57,19 @@ FRAME_DELIMITER = 0x7E
 # modem needs to know which ground station it is talking to.
 MESHTASTIC_DELIMITER = 0x7B
 
+# GFSK has no signal-to-noise measurement -- the SX1262 reports SNR only for
+# LoRa. Modems send this in the SNR field rather than a number that looks like
+# a reading. Older firmware sent -20 here, which was RadioLib's
+# RADIOLIB_ERR_WRONG_MODEM error code being printed as decibels; both are
+# treated as "not measured".
+SNR_NOT_AVAILABLE = -128.0
+_LEGACY_SNR_ERROR = -20.0
+
+
+def snr_is_measured(snr: float) -> bool:
+    """Whether an SNR field carries a real measurement."""
+    return snr > SNR_NOT_AVAILABLE + 1.0 and snr != _LEGACY_SNR_ERROR
+
 # Returned by _extract_frame when a frame belonged to the Meshtastic stream and
 # has been stashed rather than returned. Distinct from None, which means "no
 # complete frame yet" and stops the extraction loop.

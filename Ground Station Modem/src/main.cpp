@@ -56,6 +56,11 @@
 #define DISPLAY_STATS_INTERVAL_MS   1000
 
 // Sync word "RAPT"
+// Sent in place of an SNR reading, because GFSK does not have one. Chosen to
+// be outside any physically meaningful SNR so a host cannot mistake it for a
+// measurement; it fits the int8 the frame carries.
+#define SNR_NOT_AVAILABLE (-128.0f)
+
 const uint8_t SYNC_WORD[] = {0x52, 0x41, 0x50, 0x54};
 #define SYNC_WORD_LEN       4
 
@@ -317,10 +322,13 @@ void updateSignalDisplay() {
 
     // SNR
     tft->setTextSize(2);
-    uint16_t snrColor = lastSnr > 5 ? COLOR_GOOD : (lastSnr > 0 ? COLOR_WARN : COLOR_BAD);
+    bool snrKnown = lastSnr > SNR_NOT_AVAILABLE + 1.0f;
+    uint16_t snrColor = !snrKnown ? COLOR_LABEL
+                      : (lastSnr > 5 ? COLOR_GOOD : (lastSnr > 0 ? COLOR_WARN : COLOR_BAD));
     tft->setTextColor(snrColor);
     tft->setCursor(90, 105);
-    tft->printf("%.1f", lastSnr);
+    if (snrKnown) tft->printf("%.1f", lastSnr);
+    else          tft->print("n/a");
     tft->setTextSize(1);
     tft->print(" dB");
 
@@ -625,7 +633,8 @@ void updateDisplay() {
     oled->setCursor(0, 14);
     oled->printf("RSSI %6.1f dBm", lastRssi);
     oled->setCursor(0, 24);
-    oled->printf("SNR  %6.1f dB", lastSnr);
+    if (lastSnr > SNR_NOT_AVAILABLE + 1.0f) oled->printf("SNR  %6.1f dB", lastSnr);
+    else                                    oled->print("SNR     n/a");
 
     oled->setCursor(0, 36);
     oled->printf("RX %lu  FWD %lu", packetsTotal, packetsForwarded);
@@ -719,20 +728,64 @@ bool loadConfiguration() {
 // CFG: used to be accepted only during the boot window, so a modem that had
 // already started listening would silently ignore reconfiguration. Accepting
 // it at any time means the app can retune a running modem.
+// The longest command this accepts, with room to spare. Anything longer is not
+// a command, and letting a String grow without limit on a device with no
+// virtual memory is a way to run the heap out from the far end of a USB cable.
+static const size_t MAX_COMMAND_LEN = 128;
+
 void handleUsbCommands() {
     static String usbBuffer = "";
     while (Serial.available()) {
         char c = Serial.read();
-        if (c != '\n' && c != '\r') { usbBuffer += c; continue; }
+        if (c != '\n' && c != '\r') {
+            if (usbBuffer.length() < MAX_COMMAND_LEN) {
+                usbBuffer += c;
+            } else {
+                // Overlong line: drop it and resynchronise on the next newline
+                // rather than keep appending.
+                usbBuffer = "";
+            }
+            continue;
+        }
         if (usbBuffer.length() == 0) continue;
 
         if (usbBuffer.startsWith("CFG:")) {
+            // Keep the settings that are currently working, so a rejected
+            // reconfiguration can be undone rather than merely reported.
+            float prevFreq = rfFrequency, prevBitrate = rfBitrate;
+            float prevDev = rfDeviation, prevBw = rfRxBandwidth;
+            int   prevPre = rfPreambleLen;
+
             if (parseConfigCommand(usbBuffer)) {
-                saveConfiguration();
-                Serial.printf("CFG_OK:%.1f,%.1f,%.1f,%.1f,%d\n",
-                              rfFrequency, rfBitrate, rfDeviation, rfRxBandwidth, rfPreambleLen);
                 Serial.println("[RADIO] Reconfiguring for new settings...");
-                initializeRadio();
+
+                // The return value used to be discarded. A setting that passes
+                // the range checks here can still be refused by the radio --
+                // an rxBandwidth the SX1262 does not offer, for instance -- and
+                // the modem was then left deaf, having already answered CFG_OK.
+                // This is the same failure the ground station spent a long time
+                // chasing the last time it went silent.
+                if (initializeRadio()) {
+                    saveConfiguration();
+                    Serial.printf("CFG_OK:%.1f,%.1f,%.1f,%.1f,%d\n",
+                                  rfFrequency, rfBitrate, rfDeviation,
+                                  rfRxBandwidth, rfPreambleLen);
+                } else {
+                    rfFrequency = prevFreq; rfBitrate = prevBitrate;
+                    rfDeviation = prevDev;  rfRxBandwidth = prevBw;
+                    rfPreambleLen = prevPre;
+
+                    if (initializeRadio()) {
+                        Serial.println("CFG_ERR:Radio refused the settings; "
+                                       "the previous ones are back");
+                    } else {
+                        // Nothing left to fall back to. Say so loudly rather
+                        // than sit there looking connected and hearing nothing.
+                        Serial.println("CFG_ERR:Radio refused the settings and "
+                                       "would not restore the old ones; modem "
+                                       "is deaf until reset");
+                    }
+                }
             } else {
                 Serial.println("CFG_ERR:Invalid parameters");
             }
@@ -1034,7 +1087,17 @@ void handlePacket() {
     
     int state = radio->readData(packet, packetLen);
     lastRssi = radio->getRSSI();
-    lastSnr = radio->getSNR();
+
+    // Not radio->getSNR(). The SX1262 measures SNR only for LoRa: the figure
+    // comes out of the LoRa packet-status registers, and RadioLib returns
+    // RADIOLIB_ERR_WRONG_MODEM -- which is the integer -20 -- when the active
+    // modem is FSK. That value was being stored as a float, printed on the
+    // display as "-20.0 dB" in red, and forwarded over USB in every single
+    // frame. Verified against the modem on the bench: 2281 frames out of 2281
+    // reported exactly -20.0.
+    //
+    // GFSK has no SNR to report, so say so instead of inventing one.
+    lastSnr = SNR_NOT_AVAILABLE;
     packetsTotal++;
     
     // IMMEDIATELY restart receive

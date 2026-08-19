@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QAction
 
+from ..core.protocol import snr_is_measured
 from ..core.ground_station import GroundStationManager
 from ..core.gps_manager import GPSManager
 from ..core.sondehub import SondeHubManager
@@ -365,7 +366,8 @@ class MainWindow(QMainWindow):
         
         rssi = self.ground_station.current_rssi
         snr = self.ground_station.current_snr
-        self.signal_label.setText(f"RSSI: {rssi:.1f} dBm  SNR: {snr:.1f} dB")
+        snr_text = f"{snr:.1f} dB" if snr_is_measured(snr) else "n/a"
+        self.signal_label.setText(f"RSSI: {rssi:.1f} dBm  SNR: {snr_text}")
     
     def _on_status_changed(self, is_receiving: bool, message: str):
         if is_receiving:

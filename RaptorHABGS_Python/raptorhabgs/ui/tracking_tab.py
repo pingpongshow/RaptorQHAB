@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
+from ..core.protocol import snr_is_measured
 from .map_widget import MapWidget
 
 
@@ -315,7 +316,12 @@ class TrackingTab(QWidget):
         self.rssi_row.set_value(f"{rssi:.0f} dBm", rssi_color)
         
         snr_color = "#00ff00" if snr > 5 else "#ffff00" if snr > 0 else "#ff4444"
-        self.snr_row.set_value(f"{snr:.1f} dB", snr_color)
+        if snr_is_measured(snr):
+            self.snr_row.set_value(f"{snr:.1f} dB", snr_color)
+        else:
+            # The image downlink is GFSK, which has no SNR. Showing a number
+            # here meant showing RadioLib's error code as decibels.
+            self.snr_row.set_value("n/a (GFSK)", "#888888")
         
         self.packets_row.set_value(str(self.ground_station.statistics.packets_valid))
         

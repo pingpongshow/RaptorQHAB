@@ -60,6 +60,11 @@ struct MeshConfig {
 static RaptorConfig raptorCfg;
 static MeshConfig   meshCfg;
 
+// Sent in place of an SNR reading on the GFSK slot, which has none. The
+// Meshtastic slot runs LoRa and does report a real SNR, so only slot B uses
+// this -- the distinction is the whole point.
+#define SNR_NOT_AVAILABLE (-128.0f)
+
 static const uint8_t RAPTOR_SYNC[] = { 0x52, 0x41, 0x50, 0x54 };  // "RAPT"
 static constexpr size_t MAX_PACKET = 255;
 
@@ -175,7 +180,9 @@ static void serviceRaptor() {
         }
         int state = raptorRadio->readData(packet, len);
         rssi = raptorRadio->getRSSI();
-        snr  = raptorRadio->getSNR();
+        // GFSK has no SNR. RadioLib returns RADIOLIB_ERR_WRONG_MODEM (-20) for
+        // a non-LoRa modem, which is an error code, not a measurement.
+        snr  = SNR_NOT_AVAILABLE;
         raptorRadio->startReceive();
         if (state != RADIOLIB_ERR_NONE) return;
     }

@@ -49,7 +49,7 @@ def stuff(byte: int, dual_radio: bool) -> bytes:
 def frame(payload: bytes, delimiter: int = 0x7E, dual_radio: bool = True,
           rssi: int = -59, snr: int = 9) -> bytes:
     header = [(len(payload) >> 8) & 0xFF, len(payload) & 0xFF,
-              rssi & 0xFF, 25, snr, 50]
+              rssi & 0xFF, 25, snr & 0xFF, 50]
     checksum = 0
     for value in header + list(payload):
         checksum ^= value
@@ -331,3 +331,38 @@ def test_the_mesh_slot_can_be_pointed_at_a_region():
 def test_configuring_without_a_modem_fails_rather_than_pretending():
     link = ModemMeshtasticLink(callsign="GROUND")
     assert not link.configure_slot(915.0)
+
+
+# --------------------------------------------------------------------------
+# SNR: GFSK does not have one
+# --------------------------------------------------------------------------
+
+def test_the_gfsk_snr_sentinel_is_not_treated_as_a_measurement():
+    """
+    The SX1262 measures SNR only for LoRa. RadioLib returns
+    RADIOLIB_ERR_WRONG_MODEM -- the integer -20 -- when the active modem is
+    FSK, and the modem stored that as a float, printed it on the display as
+    "-20.0 dB" in red, and forwarded it in every frame. Measured on the bench:
+    2281 frames out of 2281 reported exactly -20.0.
+    """
+    from raptorhabgs.core.protocol import SNR_NOT_AVAILABLE, snr_is_measured
+
+    assert not snr_is_measured(SNR_NOT_AVAILABLE)
+    assert not snr_is_measured(-20.0), "the old error code must not read as a measurement"
+
+    # Real LoRa SNRs, which the Meshtastic slot does report.
+    for value in (-15.0, -5.25, 0.0, 6.5, 12.0):
+        assert snr_is_measured(value), value
+
+
+def test_the_sentinel_survives_the_frame_format():
+    """int8 carries it, and the parser must reproduce it exactly."""
+    from raptorhabgs.core.protocol import SNR_NOT_AVAILABLE, snr_is_measured
+
+    extractor = FrameExtractor()
+    payload = image_packet(1)
+    got = extractor.add_data(frame(payload, snr=-128))
+
+    assert len(got) == 1
+    assert got[0][1] == pytest.approx(SNR_NOT_AVAILABLE, abs=0.51)
+    assert not snr_is_measured(got[0][1])
