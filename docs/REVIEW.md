@@ -50,7 +50,10 @@ from `__post_init__`, and `DEFAULT_CONFIG = Config()` at line 220 executes it at
 config-dump CLI, the new USB config service — raises `PermissionError` before
 `main()` is reached. Move directory creation into `_initialize_components()`.
 
-### A6. `receive()` has almost certainly never been exercised on hardware
+### A6. `receive()` has almost certainly never been exercised on hardware **[CLOSED — since validated]**
+The receive path is now wired (`radio_manager.receive_lora_window`, driven by
+`Activity.LISTEN` in the transmit scheduler) and has been exercised against a
+bench transmitter and a live mesh node at two hops, −59 dBm.
 `Pi/common/radio.py:833` implements RX, but nothing in `airborne/` calls it, and
 the board uses **both** `SET_DIO2_AS_RF_SWITCH_CTRL` (`radio.py:558`) and a
 separate `pin_txen` GPIO (`radio.py:781`). That combination needs bench
@@ -195,9 +198,11 @@ so any call raised `TypeError`. Dead today because the uplink path is unwired
 - **M1** `ContentView.swift` is 2118 lines and mixes six top-level tab views;
   the two new tabs (Config/Console, Meshtastic) should be new files rather than
   extending it.
-- **M2** `SerialPortManager.swift:34` hardcodes `baudRate = 921600` as a static.
-  The Pi USB-gadget console and a Meshtastic device (115200) need different
-  rates — this needs to become per-connection.
+- **M2** ~~`SerialPortManager.swift:34` hardcodes `baudRate = 921600`.~~
+  **[CLOSED — not a defect.]** That class serves only the RAPTOR modem, which
+  is always 921600. The payload console and Meshtastic nodes have their own
+  transports (`RawSerialPort`, `MeshtasticTransport`, `PiLinkManager`) with
+  their own rates.
 - **M3** `SerialPortManager.swift:89` accepts any port matching
   `usbserial|usbmodem|cu.` — the `cu.` clause matches essentially every serial
   device including Bluetooth ports. With three device classes now on the bus
