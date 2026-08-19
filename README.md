@@ -212,6 +212,16 @@ Reboot, then verify:
 sudo /opt/raptorhab/setup/install.sh --check
 ```
 
+Either way, one command gets you in — over WiFi, or over the USB cable if WiFi
+is unavailable, with nothing to configure on your machine:
+
+```bash
+ssh <your-username>@raptorhab.local
+```
+
+`ping raptorhab.local` will fail while that succeeds: ping asks for an IPv4
+address and only the IPv6 one is usable over the cable. The payload is fine.
+
 Full instructions, including flashing the modem and troubleshooting, are in
 **[docs/INSTALL.md](docs/INSTALL.md)**.
 

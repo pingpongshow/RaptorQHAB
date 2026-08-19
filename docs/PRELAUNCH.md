@@ -12,6 +12,30 @@ is a five-minute fix on the bench and a lost flight in the air.
 > without both antennas fitted — transmitting into an open port can destroy the
 > PA, and then nothing else on this list matters.
 
+### Getting into the payload
+
+Most checks below are run on the Pi. One command, whether it is on WiFi or only
+on the USB cable:
+
+```bash
+ssh <your-username>@raptorhab.local
+```
+
+The payload advertises itself over the USB link too, so this works with nothing
+configured on your machine and no administrator password — which is what you
+want at a launch site, when the field WiFi is not yours.
+
+Two things that will fool you into thinking it is dead when it is not:
+
+- **`ping raptorhab.local` fails while `ssh` works.** `ping` asks for an IPv4
+  address; only the IPv6 one is usable over the cable. Use `ping6` if you want
+  to check.
+- **`ssh 10.55.0.1` does not work** without hand-configuring your machine.
+  Nothing on the cable hands out addresses.
+
+If mDNS is unavailable — Windows without Bonjour, two payloads on one bench —
+`./Pi/tools/find_payload.sh <your-username>` prints the exact command.
+
 ---
 
 ## A. Before the card goes in the Pi

@@ -566,6 +566,14 @@ say "Installing the payload service"
 step "Installing the WiFi power helper"
 install -m 0755 "$CODE_DIR/setup/wifi-power.sh" /usr/local/sbin/raptorhab-wifi-power
 
+# Diagnostics the operator runs from their own machine, not the Pi -- but they
+# live in the installed tree so a recovered card carries them too.
+install -d -m 0755 /opt/raptorhab/tools
+for helper in find_payload.sh wifi_watch.sh gps_doctor.py recording_key.py; do
+    [ -f "$CODE_DIR/tools/$helper" ] && \
+        install -m 0755 "$CODE_DIR/tools/$helper" "/opt/raptorhab/tools/$helper"
+done
+
 # No sudoers rule, deliberately. The payload unit sets NoNewPrivileges=true, so
 # sudo refuses outright ("the no new privileges flag is set") and a sudoers
 # grant would be dead weight. Instead the payload writes a request file in its
