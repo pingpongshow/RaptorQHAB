@@ -285,10 +285,11 @@ def test_beacon_runs_when_due_and_yields_the_radio_back(tmp_path):
     controller._last_beacon_time = 0.0
     controller._run_beacon_if_due()
 
-    # Position + device telemetry + NodeInfo. No text packet, because no
-    # beacon_text is configured, and no environment packet, because a
-    # developer machine reports no CPU temperature.
-    assert len(radio.lora_packets) == 3
+    # Position + device telemetry + NodeInfo + the project link, which rides
+    # the NodeInfo cadence. No operator text packet, because no beacon_text is
+    # configured, and no environment packet, because a developer machine
+    # reports no CPU temperature.
+    assert len(radio.lora_packets) == 4
     assert controller._radio_manager.mode is RadioMode.GFSK, (
         "the radio must be handed back to the image downlink"
     )
@@ -383,7 +384,9 @@ def test_image_and_beacon_traffic_interleave_without_losing_either(tmp_path):
     assert len(radio.gfsk_packets) == 30
     # Three cycles of position + telemetry, plus NodeInfo on the first only
     # (nodeinfo_every defaults to 6).
-    assert len(radio.lora_packets) == 7
+    # One more than the beacon packets alone: the project link accompanies
+    # the NodeInfo cycle.
+    assert len(radio.lora_packets) == 8
     assert controller._radio_manager.mode is RadioMode.GFSK
 
     stats = controller._radio_manager.get_stats()

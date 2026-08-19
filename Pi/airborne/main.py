@@ -447,6 +447,7 @@ class RaptorHabAirborne:
             primary_channel=primary,
             private_channel=private,
             beacon_text=self.config.meshtastic_beacon_text,
+            project_url=self.config.meshtastic_project_url,
             hop_limit=self.config.meshtastic_hop_limit,
             nodeinfo_every=self.config.meshtastic_nodeinfo_every,
         )
@@ -519,7 +520,17 @@ class RaptorHabAirborne:
 
         def beacon(args):
             """Change the broadcast message, so a recovery crew can be told."""
-            text = " ".join(args)[:120]
+            # Bare "!beacon" used to join zero arguments into an empty string
+            # and clear the message. That is a poor thing to do by accident
+            # over a link with no undo, so it now reports instead, and
+            # clearing has to be asked for.
+            if not args:
+                current = self.config.meshtastic_beacon_text
+                return f"beacon: {current}" if current else "beacon text is empty"
+            if len(args) == 1 and args[0].lower() == "clear":
+                text = ""
+            else:
+                text = " ".join(args)[:120]
             result = self.config.apply_updates({"meshtastic_beacon_text": text})
             if not result["ok"]:
                 return "rejected"
@@ -533,7 +544,20 @@ class RaptorHabAirborne:
             self._trigger_capture()
             return f"capture triggered ({self._images_captured} total)"
 
-        return {
+        def help_(_args):
+            """
+            List what this balloon accepts.
+
+            Worth the airtime: the operator may be running an older ground
+            station, or a different one, and guessing at a command set over a
+            link with no error messages is miserable.
+            """
+            return "commands: " + " ".join(
+                "!" + name for name in sorted(handlers) if name != "position")
+
+        handlers = {
+            "help": help_,
+            "commands": help_,
             "status": status,
             "pos": position,
             "position": position,
@@ -541,6 +565,7 @@ class RaptorHabAirborne:
             "beacon": beacon,
             "capture": capture,
         }
+        return handlers
 
     def _run_listen_window(self, duration_sec: float) -> None:
         """

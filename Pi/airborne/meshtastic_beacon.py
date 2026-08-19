@@ -110,6 +110,7 @@ class MeshtasticBeacon:
         primary_channel: Optional[ChannelConfig] = None,
         private_channel: Optional[ChannelConfig] = None,
         beacon_text: str = "",
+        project_url: str = "",
         hop_limit: int = 0,
         nodeinfo_every: int = 6,
     ):
@@ -121,6 +122,7 @@ class MeshtasticBeacon:
             primary_channel: Public broadcast channel, defaults to LongFast.
             private_channel: Optional second channel with its own key.
             beacon_text: Operator message included in each cycle.
+            project_url: Project link, sent at the node-info cadence.
             hop_limit: Hops for broadcasts. Keep at 0 unless you have a
                 specific reason not to.
             nodeinfo_every: Send NodeInfo once per this many beacon cycles.
@@ -133,6 +135,7 @@ class MeshtasticBeacon:
         self.primary_channel = primary_channel or ChannelConfig(name="LongFast", psk=b"\x01")
         self.private_channel = private_channel
         self.beacon_text = beacon_text
+        self.project_url = project_url
         self.hop_limit = hop_limit
         self.nodeinfo_every = max(1, nodeinfo_every)
 
@@ -255,6 +258,14 @@ class MeshtasticBeacon:
 
         if self._cycle % self.nodeinfo_every == 0:
             packets.append(self.build_nodeinfo_packet(channel))
+
+            # The project link rides the node-info cadence rather than every
+            # cycle: it is useful to a stranger exactly once, and paying for it
+            # every beacon would spend airtime the recovery beacons need. It is
+            # kept apart from beacon_text so that changing the operator message
+            # over the uplink cannot quietly remove it.
+            if self.project_url:
+                packets.append(self.build_text_packet(self.project_url, channel))
 
         if self.beacon_text:
             packets.append(self.build_text_packet(self.beacon_text, channel))

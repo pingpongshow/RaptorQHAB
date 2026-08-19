@@ -224,6 +224,7 @@ Full instructions, including flashing the modem and troubleshooting, are in
 | **[INSTALL.md](docs/INSTALL.md)** | From a blank SD card to a payload that transmits |
 | **[ROADMAP.md](docs/ROADMAP.md)** | Architecture, design decisions, and hardware results |
 | **[REVIEW.md](docs/REVIEW.md)** | Every defect found and fixed, with the reasoning |
+| **[MESHTASTIC.md](docs/MESHTASTIC.md)** | What the balloon broadcasts, the uplink commands, and message relaying |
 | **[SECURITY.md](docs/SECURITY.md)** | What a finder can read, and what to do about it |
 
 ---

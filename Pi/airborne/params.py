@@ -485,6 +485,15 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         apply=Apply.LIVE, minimum=30, maximum=3600, unit="s",
     ),
     _spec(
+        "meshtastic_project_url", Kind.STRING, "Meshtastic",
+        "Project link broadcast periodically on the public channel, at the same "
+        "cadence as node info. Kept separate from the beacon text so that "
+        "changing the operator message over the uplink cannot remove it -- "
+        "somebody who hears this balloon and wants to know what it is should "
+        "always be able to find out. Leave empty to send none.",
+        apply=Apply.LIVE,
+    ),
+    _spec(
         "meshtastic_beacon_text", Kind.STRING, "Meshtastic",
         "Operator message broadcast with each beacon cycle. Leave empty to "
         "send none.",

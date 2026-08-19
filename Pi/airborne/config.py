@@ -112,6 +112,7 @@ class Config:
     meshtastic_tx_power_dbm: int = 22
     meshtastic_hop_limit: int = 0
     meshtastic_beacon_interval_sec: int = 300
+    meshtastic_project_url: str = "https://github.com/pingpongshow/RaptorQHAB"
     meshtastic_beacon_text: str = ""
     meshtastic_inter_packet_delay_ms: int = 500
     meshtastic_nodeinfo_every: int = 6

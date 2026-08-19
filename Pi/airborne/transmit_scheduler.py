@@ -385,6 +385,11 @@ def schedules_from_config(config) -> Dict[Zone, ZoneSchedule]:
         config.zone_landed_mesh_percent,
         config.zone_landed_beacon_interval_sec,
         capture=False,
+        # Listening matters most once it is down. This is the moment somebody
+        # wants to ask the balloon where it is, and with imagery off there is
+        # nothing to trade away -- the time comes out of idle, so it costs
+        # battery and nothing else.
+        listen=(config.repeater_rx_percent if config.repeater_enabled else 0.0),
     )
 
     return {
