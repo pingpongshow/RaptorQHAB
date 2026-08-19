@@ -37,6 +37,13 @@ from collections import deque
 
 logger = logging.getLogger(__name__)
 
+# Elapsed time here comes from the monotonic clock, never the wall clock. The
+# payload runs on a Pi with no RTC: it boots with whatever fake-hwclock saved
+# and systemd-timesyncd later steps the clock, sometimes by months. Every
+# interval in this module -- dwell timers, rolling windows, beacon spacing --
+# would be wrong across that step, and a step backwards would stall them for
+# the length of the jump.
+
 EARTH_RADIUS_M = 6371000.0
 
 
@@ -139,7 +146,7 @@ class ZoneManager:
 
         self._state = ZoneState(
             zone=Zone.UNKNOWN,
-            changed_at=time.time(),
+            changed_at=time.monotonic(),
             reason="no fix yet",
         )
 
@@ -194,7 +201,7 @@ class ZoneManager:
         manager's behaviour and the Q1 decision: the balloon keeps doing what
         it was doing rather than reverting to a default.
         """
-        now = time.time() if now is None else now
+        now = time.monotonic() if now is None else now
 
         if fix_type < 2 or latitude is None or longitude is None:
             return self._state

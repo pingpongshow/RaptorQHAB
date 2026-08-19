@@ -34,6 +34,13 @@ from airborne.zone_manager import Zone
 
 logger = logging.getLogger(__name__)
 
+# Elapsed time here comes from the monotonic clock, never the wall clock. The
+# payload runs on a Pi with no RTC: it boots with whatever fake-hwclock saved
+# and systemd-timesyncd later steps the clock, sometimes by months. Every
+# interval in this module -- dwell timers, rolling windows, beacon spacing --
+# would be wrong across that step, and a step backwards would stall them for
+# the length of the jump.
+
 
 class Activity(str, Enum):
     """What the payload should be doing right now."""
@@ -210,7 +217,7 @@ class TransmitScheduler:
         regardless of accrued debt, because being findable outranks any
         image backlog.
         """
-        now = time.time() if now is None else now
+        now = time.monotonic() if now is None else now
         schedule = self.schedule_for()
 
         self._accrue(now, schedule)
@@ -291,7 +298,7 @@ class TransmitScheduler:
         always allowed to finish. Charging the real duration is what keeps the
         long-run ratios honest.
         """
-        now = time.time() if now is None else now
+        now = time.monotonic() if now is None else now
         actual_sec = max(0.0, actual_sec)
 
         self._debt[activity] -= actual_sec
@@ -307,11 +314,11 @@ class TransmitScheduler:
 
     def record_beacon(self, now: Optional[float] = None) -> None:
         """Note that a beacon cycle went out, restarting the interval."""
-        self._last_beacon_time = time.time() if now is None else now
+        self._last_beacon_time = time.monotonic() if now is None else now
 
     def seconds_until_beacon(self, now: Optional[float] = None) -> float:
         """How long until the next beacon is due. Zero means now."""
-        now = time.time() if now is None else now
+        now = time.monotonic() if now is None else now
         if self._last_beacon_time is None:
             return 0.0
         remaining = (

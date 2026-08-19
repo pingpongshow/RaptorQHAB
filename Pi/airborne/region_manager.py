@@ -49,6 +49,13 @@ from common.meshtastic.regions import (
 
 logger = logging.getLogger(__name__)
 
+# Elapsed time here comes from the monotonic clock, never the wall clock. The
+# payload runs on a Pi with no RTC: it boots with whatever fake-hwclock saved
+# and systemd-timesyncd later steps the clock, sometimes by months. Every
+# interval in this module -- dwell timers, rolling windows, beacon spacing --
+# would be wrong across that step, and a step backwards would stall them for
+# the length of the jump.
+
 
 class RegionSource(str, Enum):
     """Why the active region is what it is."""
@@ -129,7 +136,7 @@ class RegionManager:
             )
             self._home_region = get_region("US")
 
-        now = time.time()
+        now = time.monotonic()
 
         if not self._is_supported(self._home_region):
             # Loud, because it means Meshtastic will never transmit until the
@@ -233,7 +240,7 @@ class RegionManager:
         Returns:
             The current RegionState.
         """
-        now = time.time() if now is None else now
+        now = time.monotonic() if now is None else now
 
         if not self.auto_switch:
             return self._state
@@ -388,7 +395,7 @@ class RegionManager:
     def _adopt(
         self, region: Region, source: RegionSource, now: Optional[float] = None
     ) -> None:
-        now = time.time() if now is None else now
+        now = time.monotonic() if now is None else now
         previous = self._state.code
 
         # Defence in depth: nothing should reach here with an unreachable

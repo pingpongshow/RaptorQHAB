@@ -28,6 +28,13 @@ from typing import Deque, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Elapsed time here comes from the monotonic clock, never the wall clock. The
+# payload runs on a Pi with no RTC: it boots with whatever fake-hwclock saved
+# and systemd-timesyncd later steps the clock, sometimes by months. Every
+# interval in this module -- dwell timers, rolling windows, beacon spacing --
+# would be wrong across that step, and a step backwards would stall them for
+# the length of the jump.
+
 WINDOW_SEC = 3600.0
 
 
@@ -115,7 +122,7 @@ class DutyCycleTracker:
         """Whether a transmission of this length fits the remaining budget."""
         if self.unlimited:
             return True
-        now = time.time() if now is None else now
+        now = time.monotonic() if now is None else now
         with self._lock:
             return self._used_sec(now) + airtime_sec <= self.budget_sec
 
@@ -131,7 +138,7 @@ class DutyCycleTracker:
         flight reports is meaningful in every region rather than only the
         restricted ones.
         """
-        now = time.time() if now is None else now
+        now = time.monotonic() if now is None else now
 
         if self.unlimited:
             with self._lock:
@@ -195,7 +202,7 @@ class DutyCycleTracker:
                     return
 
     def status(self, now: Optional[float] = None) -> DutyCycleStatus:
-        now = time.time() if now is None else now
+        now = time.monotonic() if now is None else now
         with self._lock:
             used = self._used_sec(now)
             budget = self.budget_sec

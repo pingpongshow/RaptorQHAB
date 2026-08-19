@@ -229,7 +229,7 @@ class MeshtasticRepeater:
         Checked cheapest first, so the common case -- untagged traffic from
         strangers -- costs almost nothing.
         """
-        now = time.time() if now is None else now
+        now = time.monotonic() if now is None else now
 
         if not self.enabled:
             return False, DropReason.DISABLED
@@ -300,7 +300,11 @@ class MeshtasticRepeater:
         who actually put it on the air. The tag is stripped so the relayed text
         reads normally.
         """
-        now = time.time() if now is None else now
+        # Same clock as should_repeat(): this call writes the spacing and
+        # rate-limit state that should_repeat() reads back. Mixing wall and
+        # monotonic here would leave _last_repeat about 1.7 billion seconds in
+        # the future and silence the repeater for the rest of the flight.
+        now = time.monotonic() if now is None else now
 
         text = ""
         if packet.port == PortNum.TEXT_MESSAGE_APP:

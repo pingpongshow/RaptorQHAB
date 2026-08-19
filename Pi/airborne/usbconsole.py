@@ -190,7 +190,7 @@ class ControlHandler:
     def __init__(self, config: AirborneConfig, service_name: str = "raptorhab-airborne"):
         self.config = config
         self.service_name = service_name
-        self._started_at = time.time()
+        self._started_at = time.monotonic()
 
     def handle(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -228,7 +228,7 @@ class ControlHandler:
             "payload_id": self.config.payload_id,
             "hostname": os.uname().nodename,
             "state_root": STATE_ROOT,
-            "service_uptime_sec": round(time.time() - self._started_at, 1),
+            "service_uptime_sec": round(time.monotonic() - self._started_at, 1),
         }
 
     def _rpc_get_schema(self, _params: Dict[str, Any]) -> Dict[str, Any]:

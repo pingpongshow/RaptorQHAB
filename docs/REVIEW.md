@@ -268,3 +268,183 @@ carries long runs of constant bytes.
   `CFG:` at any time. Fallback defaults are deliberately never persisted, so a
   modem that has never been configured still waits for the app rather than
   committing to a guess.
+
+---
+
+## Second full review of the balloon code (2026-08)
+
+A fresh comprehensive pass over `Pi/airborne/` and `Pi/common/` — about 13,500
+lines. Nine defects, all fixed, all with regression tests in
+`Pi/tests/test_code_review_fixes.py`. None of them were visible on the bench;
+they need a clock step, a partial GPS fix, or a power cut to appear, which is
+why they survived the first review.
+
+### D1 — A 2D GPS fix was reported as a 3D fix **(flight-critical)**
+
+`common/gps.py` set `fix_type = FIX_3D if fix >= 1`, reading field 6 of GGA.
+That field is fix *quality* — 0 none, 1 GPS, 2 DGPS, 4 RTK — and says nothing
+about whether the solution has a height component. A receiver tracking three
+satellites reports quality 1 and an altitude either held over from the last 3D
+solution or invented outright.
+
+Everything downstream keys off `fix_type >= 2`:
+
+| Consumer | What it does on a "3D" fix |
+|---|---|
+| `region_manager` | Changes **transmit frequency and power** for the region |
+| `zone_manager` | Changes flight mode, arms the landing detector |
+| `meshtastic_beacon` | Declares the position valid and broadcasts it |
+
+So the payload was prepared to re-tune the PA and change flight behaviour on an
+altitude it had no basis for. GSA field 2 is the only sentence that reports
+dimensionality (1 none, 2 = 2D, 3 = 3D); the parser read GSA for its DOP values
+and threw that field away.
+
+Now GGA supplies validity and GSA supplies dimensionality. Two details matter:
+
+- **Cycles are delimited by the position sentence, not by a timer.** A
+  multi-constellation receiver sends one GSA per constellation and the best
+  wins — GPS may report 3D in the same breath GLONASS reports none. The first
+  attempt grouped them with a 0.5 s window, which is wrong: at 9600 baud a full
+  NMEA burst takes about half a second, so any window narrow enough to separate
+  cycles is also narrow enough to split one. GGA now consumes the accumulated
+  best and clears it.
+- **A receiver that emits no GSA keeps working.** If no GSA has been seen for
+  `GSA_STALE_SEC`, the old assumption stands. The fix must not cost a fix.
+
+### D2 — A clock step could reboot the payload, or hang it **(flight-critical)**
+
+The Pi has no RTC. It boots with whatever `fake-hwclock` saved and
+`systemd-timesyncd` later steps the clock — by months, on a card that has been
+on the shelf. I watched this Pi's clock jump two months during setup.
+
+`Watchdog` measured elapsed time with `time.time()`. That step reads as a
+months-long gap since the last feed, and the watchdog reboots a payload that
+was working perfectly. A step *backwards* is worse in the other loops: the pause
+cycle computes `remaining = duration - (now - start)`, which after a backward
+step is enormous, and the loop keeps petting the watchdog while it sits there —
+so nothing rescues it. The payload would idle for the length of the jump.
+
+Every elapsed-time measurement on the flight path now uses `time.monotonic()`:
+the watchdog, the TX and pause cycles, the capture interval, the SX1262 BUSY and
+TX-done waits, GPS position age and `wait_for_fix`, the duty-cycle rolling
+window, the zone and region dwell timers, the beacon interval, and the repeater's
+spacing and hourly rate limit. Genuine wall-clock timestamps — image and
+telemetry row times, the beacon's packet time — are unchanged.
+
+`test_flight_modules_use_monotonic_for_elapsed_time` guards the whole class
+rather than the instances, so this cannot quietly come back.
+
+The repeater needed care: `should_repeat()` reads the spacing state that
+`build_repeat()` writes. Converting one and not the other would have left
+`_last_repeat` about 1.7 billion seconds in the future and silenced the repeater
+for the rest of the flight — a worse bug than the one being fixed. There is a
+test asserting both use the same clock.
+
+### D3 — Encrypted flight logs were split across two files **(flight-critical)**
+
+`TelemetryLogger._write_header()` assigned the writer's return value back to
+`self.filepath`. With sealing on, that return value already ends in `.rhs`, so
+every subsequent `log()` handed an `.rhs` path to a writer that appends `.rhs`:
+
+```
+telemetry_RAPTOR_20260818.csv           0 bytes    (stray)
+telemetry_RAPTOR_20260818.csv.rhs       219 bytes  (header only)
+telemetry_RAPTOR_20260818.csv.rhs.rhs   740 bytes  (the actual flight log)
+```
+
+The path the payload reported in its logs, and the only one an operator would
+think to look for, was the one containing nothing but a header. The flight data
+was in a file with a doubled extension.
+
+The logger now keeps the base path it hands to the writer separate from the path
+the writer actually wrote. Verified end to end: header and every row in one
+file, decrypting correctly with the matching private key.
+
+### D4 — The watchdog was petted on a packet counter, not a clock
+
+`if packets_this_cycle % 100 == 0` — wrong in both directions. While the counter
+sat at zero it petted on *every* loop iteration; once the counter came to rest on
+a non-multiple of 100, which is exactly what happens when the radio starts
+failing partway through a cycle, it stopped petting entirely. Now time-based,
+matching the pause loop.
+
+### D5 — `SealedWriter.append_line()` did not keep the promise the class makes
+
+The module docstring states that a sealing failure never loses data. `write()`
+honoured it; `append_line()` called `seal()` outside any try and raised into its
+caller — which is a GPS reader-thread callback. The GPS layer catches per-callback
+exceptions so the thread survived, but the row was lost with a traceback rather
+than a diagnosis. `TelemetryLogger.log()` compounded it by catching only
+`IOError`, which does not cover a `ValueError` from the crypto path.
+
+Both fixed: `append_line()` falls back to plaintext exactly as `write()` does,
+and the logger catches broadly.
+
+### D6 — Nothing was ever flushed to the card
+
+`append_line()`'s docstring reasons carefully about power loss — it is the stated
+justification for sealing each row as its own record instead of one growing box —
+and then never flushed anything. The records were correct and sitting in the page
+cache, where a power cut discards them.
+
+Whole-file writes (images) are now atomic: temp file, `fsync`, `rename`, `fsync`
+the directory. This matters more for sealed files than plaintext ones, because a
+truncated box is not "most of an image" — the authentication tag is at the end,
+so a partial file does not open at all.
+
+Appended logs `fsync` every 10 seconds. Every line would be honest but punishing:
+a 1 Hz log means 3600 erase-block flushes an hour on an SD card. Ten seconds
+bounds the loss to ten rows.
+
+### D7 — The uplink replay window was open on the far side
+
+`abs(seq - last_seq) < window` with everything outside treated as "a large gap,
+assume wraparound, not a duplicate". With `last_seq = 100`, a replayed command
+carrying `seq = 65000` fell through the far side and executed. Every sequence
+number more than `window` away was accepted, which is most of the 16-bit space.
+
+Now computed as a forward distance modulo 2^16, which handles genuine wraparound
+(65530 → 3 is a distance of 9, accepted) without the hole (100 → 65000 is 64900,
+rejected).
+
+This path is still not wired to anything — see B4 — and the module now says so at
+the top, including the fact that it authenticates nothing: any transmitter that
+can produce a valid CRC reaches `_handle_reboot`. The Meshtastic uplink path,
+which *is* live, requires the private channel key. Fixed anyway so the hazard is
+not waiting for whoever wires it up.
+
+### D8 — The GPS thread woke 100 times a second all flight
+
+`_read_loop` polled `in_waiting` and slept 10 ms when it found nothing, so it
+woke a hundred times a second for the whole flight to learn that a 1 Hz receiver
+had not spoken yet. The port is already opened with `timeout=1.0`, so a blocking
+one-byte read parks the thread in the kernel and costs nothing while it waits;
+the rest of the burst is then drained in one call. Shutdown latency stays inside
+the 2 s join in `stop()`.
+
+### D9 — Two copies of the frame format
+
+`_build_and_advance_raw()` re-implemented `build_packet()` inline — same sync
+word, same `'>BHB'` header, same CRC — and silently dropped `build_packet()`'s
+`MAX_PAYLOAD_SIZE` check. `build_packet()` already accepts raw bytes, so the
+duplicate had no reason to exist. Deleted.
+
+### Noted, not changed
+
+- **Negative altitudes clamp to zero.** `TelemetryPayload` serialises altitude as
+  an unsigned millimetre count, so a launch below sea level — the Dead Sea,
+  Death Valley, much of the Netherlands — reports 0 m. Fixing it means changing
+  the wire format in Python, Swift and the modem firmware simultaneously, which
+  is not worth it for the launch sites this will realistically see. Recorded so
+  the next person does not have to rediscover it.
+- **`RateLimiter` in `airborne/utils.py` is unused.** Converted to the monotonic
+  clock with everything else rather than deleted, since it is harmless and
+  someone may want it.
+
+### Verification
+
+710 tests pass, 28 of them new. **Not yet run against hardware** — the Pi was
+powered down when these landed. What wants checking on the bench: that the GPS
+reports `fix_type` 2 rather than 3 with a real antenna and a partial fix, and
+that a flight leaves exactly one telemetry file on the card.

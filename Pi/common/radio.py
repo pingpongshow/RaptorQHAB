@@ -286,11 +286,11 @@ class SX1262(LoRaModeMixin):
         if GPIO is None or self._simulation:
             return True
         
-        start = time.time()
+        start = time.monotonic()
         timeout_sec = timeout_ms / 1000.0
         
         while GPIO.input(self.config.pin_busy):
-            if time.time() - start > timeout_sec:
+            if time.monotonic() - start > timeout_sec:
                 logger.error("SX1262 BUSY timeout")
                 return False
             time.sleep(0.0001)
@@ -1036,7 +1036,7 @@ class SX1262(LoRaModeMixin):
         Returns:
             True if flag set, False if timeout
         """
-        start = time.time()
+        start = time.monotonic()
         timeout_sec = timeout_ms / 1000.0
         
         while True:
@@ -1045,7 +1045,7 @@ class SX1262(LoRaModeMixin):
                 self._clear_irq(mask)
                 return True
             
-            if time.time() - start > timeout_sec:
+            if time.monotonic() - start > timeout_sec:
                 return False
             
             time.sleep(0.001)
@@ -1057,7 +1057,7 @@ class SX1262(LoRaModeMixin):
         Returns:
             IRQ status (0 if timeout)
         """
-        start = time.time()
+        start = time.monotonic()
         timeout_sec = timeout_ms / 1000.0
         
         while True:
@@ -1066,7 +1066,7 @@ class SX1262(LoRaModeMixin):
                 self._clear_irq(irq)
                 return irq
             
-            if time.time() - start > timeout_sec:
+            if time.monotonic() - start > timeout_sec:
                 return 0
             
             time.sleep(0.001)

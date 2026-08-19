@@ -111,12 +111,16 @@ class RaptorHabAirborne:
         """
         self.config = config
         self.debug = debug
-        self._start_time = time.time()
+        # Uptime is an elapsed measurement, so it comes off the monotonic
+        # clock; the wall clock steps when NTP first syncs and would otherwise
+        # report an uptime of several weeks on a payload that booted a minute
+        # ago.
+        self._start_time = time.monotonic()
         
         # State machine
         self._state = State.INITIALIZING
         self._state_lock = threading.Lock()
-        self._state_enter_time = time.time()
+        self._state_enter_time = time.monotonic()
         
         # Shutdown flag
         self._shutdown = threading.Event()
@@ -751,8 +755,8 @@ class RaptorHabAirborne:
 
         # Initial image capture
         self._trigger_capture()
-        last_capture_time = time.time()
-        last_status_time = time.time()
+        last_capture_time = time.monotonic()
+        last_status_time = time.monotonic()
 
         try:
             self._main_loop_body(last_capture_time, last_status_time)
@@ -766,7 +770,7 @@ class RaptorHabAirborne:
                 if self._watchdog:
                     self._watchdog.pet()
                 
-                now = time.time()
+                now = time.monotonic()
 
                 # Keep the flight zone current before deciding what to do.
                 self._update_zone()
@@ -932,7 +936,7 @@ class RaptorHabAirborne:
             duration_sec: How long to transmit. Defaults to the fixed
                 tx_period_sec; the zone scheduler passes its slice length.
         """
-        cycle_start = time.time()
+        cycle_start = time.monotonic()
         tx_duration = (
             self.config.tx_period_sec if duration_sec is None else duration_sec
         )
@@ -947,7 +951,8 @@ class RaptorHabAirborne:
         
         # Transmit packets until time expires
         packets_this_cycle = 0
-        while time.time() - cycle_start < tx_duration:
+        last_pet = 0.0
+        while time.monotonic() - cycle_start < tx_duration:
             if self._shutdown.is_set():
                 break
             
@@ -967,9 +972,16 @@ class RaptorHabAirborne:
                 # fifty wake-ups a second instead of a thousand.
                 time.sleep(0.02)
             
-            # Pet watchdog periodically
-            if packets_this_cycle % 100 == 0 and self._watchdog:
+            # Pet on a clock, not on a packet count. The old
+            # `packets_this_cycle % 100 == 0` petted on every single iteration
+            # while the counter sat at zero, and then stopped petting entirely
+            # if the counter came to rest on a non-multiple of 100 -- which is
+            # exactly what happens when the radio starts failing partway
+            # through a cycle. Wrong in both directions.
+            now = time.monotonic()
+            if self._watchdog and now - last_pet >= self._watchdog_pet_interval:
                 self._watchdog.pet()
+                last_pet = now
         
         self._logger.debug(f"TX cycle complete: {packets_this_cycle} packets sent")
     
@@ -1003,14 +1015,14 @@ class RaptorHabAirborne:
         # This is the payload's largest single block of idle time -- in cruise
         # it is most of the flight -- so it is the one worth getting right.
         PAUSE_SLICE_SEC = 0.5
-        pause_start = time.time()
+        pause_start = time.monotonic()
         last_pet = 0.0
         while True:
-            remaining = pause_duration - (time.time() - pause_start)
+            remaining = pause_duration - (time.monotonic() - pause_start)
             if remaining <= 0 or self._shutdown.is_set():
                 break
 
-            now = time.time()
+            now = time.monotonic()
             if self._watchdog and now - last_pet >= self._watchdog_pet_interval:
                 self._watchdog.pet()
                 last_pet = now
@@ -1041,7 +1053,7 @@ class RaptorHabAirborne:
         if not (self._beacon and self._radio_manager):
             return
 
-        now = time.time()
+        now = time.monotonic()
         if now - self._last_beacon_time < self.config.meshtastic_beacon_interval_sec:
             return
 
@@ -1100,7 +1112,7 @@ class RaptorHabAirborne:
         telemetry = BeaconTelemetry(
             battery_mv=get_battery_voltage(),
             cpu_temp_c=get_cpu_temperature(),
-            uptime_sec=int(time.time() - self._start_time),
+            uptime_sec=int(time.monotonic() - self._start_time),
         )
 
         # Meshtastic's battery_level is a percentage. Map a single-cell
@@ -1264,7 +1276,7 @@ class RaptorHabAirborne:
     def _get_status_dict(self) -> Dict[str, Any]:
         """Get current status as dictionary."""
         return {
-            "uptime": time.time() - self._start_time,
+            "uptime": time.monotonic() - self._start_time,
             "state": self._state.name,
             "cpu_temp": get_cpu_temperature(),
             "free_memory_kb": get_memory_usage().get("available_kb", 0),
@@ -1278,7 +1290,7 @@ class RaptorHabAirborne:
         with self._state_lock:
             old_state = self._state
             self._state = new_state
-            self._state_enter_time = time.time()
+            self._state_enter_time = time.monotonic()
             if old_state != new_state:
                 self._logger.info(f"State change: {old_state.name} -> {new_state.name}")
     
@@ -1384,7 +1396,7 @@ class RaptorHabAirborne:
         
         return SystemStatus(
             state=self._state,
-            uptime_sec=time.time() - self._start_time,
+            uptime_sec=time.monotonic() - self._start_time,
             gps_fix=gps_fix,
             gps_sats=gps_sats,
             altitude_m=altitude,

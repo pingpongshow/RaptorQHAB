@@ -5,6 +5,7 @@ Sensor data collection and telemetry packet assembly
 
 import time
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -185,9 +186,14 @@ class TelemetryLogger:
         self.callsign = callsign
         self._writer = sealed_writer or SealedWriter(enabled=False)
         
-        # Create log file with timestamp and callsign
+        # Create log file with timestamp and callsign.
+        #
+        # Two paths, deliberately. `_base_path` is what the writer is always
+        # handed; `filepath` is what it actually wrote, which gains ".rhs" when
+        # sealing. Collapsing the two is what caused the bug below.
         filename = datetime.now().strftime(f"telemetry_{callsign}_%Y%m%d_%H%M%S.csv")
-        self.filepath = os.path.join(log_path, filename)
+        self._base_path = os.path.join(log_path, filename)
+        self.filepath = self._writer.path_for(self._base_path)
         
         # Write header
         self._write_header()
@@ -204,10 +210,28 @@ class TelemetryLogger:
             "image_id", "image_progress", "rssi"
         ]
         
-        # Truncate any previous file, then let the writer own the format.
-        open(self.filepath, "w").close()
+        # Truncate whatever the writer is actually going to write, then let it
+        # own the format.
+        #
+        # This used to truncate self.filepath and then assign the writer's
+        # return value back to self.filepath. With sealing on, that return
+        # value is already the ".rhs" path, so every subsequent log() handed an
+        # ".rhs" path back to a writer that appends ".rhs" -- and the flight
+        # data went to "telemetry.csv.rhs.rhs" while the header sat alone in
+        # "telemetry.csv.rhs" and an empty "telemetry.csv" sat beside them
+        # both. Encrypted flight logs were being split across two files, and
+        # the one the payload named in its logs was the empty one.
+        # Removed rather than truncated: truncating creates the file, which
+        # in the sealed case leaves a zero-byte plaintext log sitting next to
+        # the real one looking like a failed flight.
+        for candidate in {self._base_path, self.filepath}:
+            try:
+                os.remove(candidate)
+            except FileNotFoundError:
+                pass
+
         self.filepath = self._writer.append_line(
-            self.filepath, ','.join(headers) + '\n'
+            self._base_path, ','.join(headers) + '\n'
         )
     
     def log(
@@ -280,8 +304,14 @@ class TelemetryLogger:
             ]
         
         try:
-            self._writer.append_line(self.filepath, ','.join(values) + '\n')
-        except IOError as e:
+            self._writer.append_line(self._base_path, ','.join(values) + '\n')
+        except Exception as e:
+            # Was `except IOError`, which let anything the sealing path raises
+            # -- a ValueError from a malformed key, for instance -- escape into
+            # the GPS reader thread that calls this. The GPS layer catches it,
+            # so the thread survives, but the row was lost with a traceback
+            # instead of a diagnosis. Losing telemetry must never be able to
+            # disturb the caller.
             logger.error(f"Failed to log telemetry: {e}")
     
     def close(self):

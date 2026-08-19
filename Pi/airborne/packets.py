@@ -374,17 +374,16 @@ class PacketScheduler:
         payload_bytes: bytes,
         flags: int = PacketFlags.NONE
     ) -> bytes:
-        """Build packet from raw payload bytes and advance sequence number"""
-        from common.crc import crc32_bytes
-        from common.constants import SYNC_WORD
-        import struct
-        
-        header = struct.pack('>BHB', packet_type, self._sequence, flags)
-        packet_without_crc = SYNC_WORD + header + payload_bytes
-        crc = crc32_bytes(packet_without_crc)
-        packet = packet_without_crc + crc
-        self._sequence = (self._sequence + 1) % 65536
-        return packet
+        """
+        Build packet from raw payload bytes and advance sequence number.
+
+        This used to re-implement build_packet inline -- same sync word, same
+        '>BHB' header, same CRC -- which meant two copies of the frame format
+        that had to be changed together, and this copy silently dropped
+        build_packet's MAX_PAYLOAD_SIZE check. build_packet already accepts raw
+        bytes, so there was never a reason for the duplicate.
+        """
+        return self._build_and_advance(packet_type, payload_bytes, flags)
     
     def get_current_image_status(self) -> tuple:
         """

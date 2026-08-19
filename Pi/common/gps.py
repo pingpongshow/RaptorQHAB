@@ -18,6 +18,15 @@ from common.constants import FixType
 
 logger = logging.getLogger(__name__)
 
+# How long a GSA-reported fix mode stays authoritative. Receivers emit GSA once
+# per position cycle (typically 1 Hz); five seconds tolerates a few dropped
+# sentences without letting a stale mode outlive its usefulness.
+GSA_STALE_SEC = 5.0
+
+# A cycle is delimited by the position sentence, not by a timer. At 9600 baud
+# a full NMEA burst takes roughly half a second to arrive, so any time-based
+# window narrow enough to separate cycles is also narrow enough to split one.
+
 
 @dataclass
 class GPSData:
@@ -37,7 +46,7 @@ class GPSData:
     time_utc: int = 0               # Unix timestamp
     time_valid: bool = False
     position_valid: bool = False
-    last_update: float = 0.0        # time.time() of last update
+    last_update: float = 0.0        # time.monotonic() of last update
     
     def is_valid(self) -> bool:
         """Check if we have a valid 3D fix"""
@@ -45,7 +54,7 @@ class GPSData:
     
     def age(self) -> float:
         """Get age of position in seconds"""
-        return time.time() - self.last_update if self.last_update > 0 else float('inf')
+        return time.monotonic() - self.last_update if self.last_update > 0 else float('inf')
 
 
 class GPS:
@@ -91,6 +100,18 @@ class GPS:
         self._thread: Optional[threading.Thread] = None
         self._data = GPSData()
         self._data_lock = threading.Lock()
+
+        # GGA reports fix *quality*, not dimensionality: a 2D fix and a 3D fix
+        # both come through as quality 1. Only GSA distinguishes them, so its
+        # mode field is kept here and combined with GGA's validity flag.
+        #
+        # A multi-constellation receiver sends one GSA per constellation, so
+        # this holds the best mode seen in the current cycle rather than the
+        # last -- GPS may have 3D while GLONASS reports 1 in the same breath.
+        # Best mode seen since the last position sentence. GGA consumes it
+        # and resets it, so each fix is judged on its own cycle's sentences.
+        self._gsa_cycle_best: int = 0
+        self._gsa_mode_at: float = 0.0
         self._callbacks: List[Callable[[GPSData], None]] = []
         
         # Register initial callback if provided
@@ -104,7 +125,7 @@ class GPS:
         self._sim_lat = 40.7128
         self._sim_lon = -74.0060
         self._sim_alt = 0.0
-        self._sim_start_time = time.time()
+        self._sim_start_time = time.monotonic()
     
     def init(self) -> bool:
         """
@@ -242,7 +263,7 @@ class GPS:
     def _read_loop(self):
         """Main GPS reading loop"""
         bytes_received = 0
-        last_log_time = time.time()
+        last_log_time = time.monotonic()
         
         while self._running:
             if self.simulate:
@@ -255,16 +276,29 @@ class GPS:
                 continue
             
             try:
-                # Read available data
-                if self._serial.in_waiting > 0:
-                    data = self._serial.read(self._serial.in_waiting)
+                # Block in the kernel rather than spinning on in_waiting.
+                #
+                # The old loop polled in_waiting and slept 10 ms when it found
+                # nothing, so it woke a hundred times a second for the whole
+                # flight to discover that a 1 Hz receiver had not said anything
+                # yet. The port is already opened with timeout=1.0, so a
+                # blocking read of one byte parks the thread until data
+                # actually arrives and costs nothing while it waits.
+                #
+                # read(1) returns b"" on timeout, which is the loop's chance to
+                # notice _running went false; shutdown latency stays under the
+                # 2 s join in stop().
+                first = self._serial.read(1)
+                if first:
+                    # A whole NMEA burst lands at once, so take the rest of it
+                    # in one call instead of a byte at a time.
+                    rest = self._serial.read(self._serial.in_waiting or 0)
+                    data = first + rest
                     bytes_received += len(data)
                     self._process_data(data)
-                else:
-                    time.sleep(0.01)
                 
                 # Log stats every 10 seconds
-                now = time.time()
+                now = time.monotonic()
                 if now - last_log_time >= 10.0:
                     with self._data_lock:
                         logger.debug(f"GPS stats: {bytes_received} bytes, "
@@ -379,15 +413,60 @@ class GPS:
                 self._data.altitude = alt
                 self._data.satellites = sats
                 self._data.hdop = hdop
-                self._data.fix_type = FixType.FIX_3D if fix >= 1 else FixType.NONE
+                self._data.fix_type = self._resolve_fix_type(fix)
                 self._data.position_valid = fix >= 1
-                self._data.last_update = time.time()
+                self._data.last_update = time.monotonic()
             
             self._notify_callbacks()
             
         except (ValueError, IndexError) as e:
             logger.debug(f"GGA parse error: {e}")
     
+    def _resolve_fix_type(self, gga_quality: int) -> FixType:
+        """
+        Combine GGA validity with GSA dimensionality.
+
+        This used to read `FIX_3D if gga_quality >= 1`, which is wrong: field 6
+        of GGA is fix *quality* (0 none, 1 GPS, 2 DGPS, 4 RTK fixed...) and says
+        nothing about whether the solution has a height component. A receiver
+        tracking three satellites reports quality 1 and an altitude that is
+        held over from the last 3D solution, or simply invented.
+
+        That mattered because everything downstream keys off `fix_type >= 2`:
+        the zone manager changes flight mode on it, and the region manager
+        changes *transmit frequency and power* on it. Both were prepared to act
+        on a 2D fix's altitude while believing it had been told a 3D one.
+
+        Falls back to the old assumption when no GSA has been seen recently,
+        so a receiver that does not emit GSA behaves as it did before rather
+        than losing its fix entirely.
+        """
+        mode = self._gsa_cycle_best
+        fresh = bool(self._gsa_mode_at) and (
+            time.monotonic() - self._gsa_mode_at
+        ) <= GSA_STALE_SEC
+
+        # Consume the cycle either way, so the next fix is judged on the next
+        # cycle's sentences rather than inheriting this one's.
+        self._gsa_cycle_best = 0
+
+        if gga_quality < 1:
+            return FixType.NONE
+
+        if fresh and mode:
+            if mode >= 3:
+                return FixType.FIX_3D
+            if mode == 2:
+                return FixType.FIX_2D
+            # GSA says no fix while GGA says there is one. Trust the more
+            # conservative of the two: the position may well be usable, but
+            # the altitude that comes with it is not.
+            return FixType.FIX_2D
+
+        # No GSA seen recently. A receiver that does not emit GSA at all must
+        # keep working exactly as it did before, rather than losing its fix.
+        return FixType.FIX_3D
+
     def _parse_nmea_rmc(self, parts: List[str]):
         """Parse NMEA RMC sentence (recommended minimum data)"""
         try:
@@ -438,6 +517,19 @@ class GPS:
             if len(parts) < 18:
                 return
             
+            # Field 2 is the fix mode: 1 no fix, 2 = 2D, 3 = 3D. This is the
+            # only sentence that reports it, and it was previously discarded.
+            try:
+                mode = int(parts[2]) if parts[2] else 0
+            except ValueError:
+                mode = 0
+
+            # Best of the constellations reporting in this cycle. GPS may
+            # have a 3D solution in the same breath GLONASS reports none, and
+            # the receiver's answer is the better of the two.
+            self._gsa_cycle_best = max(self._gsa_cycle_best, mode)
+            self._gsa_mode_at = time.monotonic()
+
             # Parse PDOP, HDOP, VDOP
             pdop = float(parts[15]) if parts[15] else 99.9
             hdop = float(parts[16]) if parts[16] else 99.9
@@ -447,6 +539,8 @@ class GPS:
                 self._data.pdop = pdop
                 self._data.hdop = hdop
                 self._data.vdop = vdop
+                # Fix type is resolved when the position sentence arrives,
+                # so that every GSA in the cycle has had its say.
             
         except (ValueError, IndexError):
             pass
@@ -476,7 +570,7 @@ class GPS:
     
     def _update_simulation(self):
         """Update simulated GPS data"""
-        elapsed = time.time() - self._sim_start_time
+        elapsed = time.monotonic() - self._sim_start_time
         
         with self._data_lock:
             # Simulate balloon ascent
@@ -492,7 +586,7 @@ class GPS:
             self._data.time_utc = int(time.time())
             self._data.time_valid = True
             self._data.hdop = 1.0
-            self._data.last_update = time.time()
+            self._data.last_update = time.monotonic()
         
         self._notify_callbacks()
     
@@ -546,9 +640,9 @@ class GPS:
         Returns:
             True if fix acquired
         """
-        start = time.time()
+        start = time.monotonic()
         
-        while time.time() - start < timeout_sec:
+        while time.monotonic() - start < timeout_sec:
             data = self.get_data()
             if data.is_valid():
                 logger.info(f"GPS fix acquired: {data.latitude:.6f}, {data.longitude:.6f}, "

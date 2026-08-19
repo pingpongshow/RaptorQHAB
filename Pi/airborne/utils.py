@@ -318,7 +318,12 @@ class Watchdog:
         """
         self.timeout_sec = timeout_sec
         self.callback = callback or self._default_callback
-        self.last_feed = time.time()
+        # Monotonic, not wall clock. The Pi has no RTC: it boots with whatever
+        # fake-hwclock saved, then systemd-timesyncd steps the clock -- by
+        # months, on a card that has been on the shelf. Measured against
+        # time.time(), that step lands as an apparent months-long gap since the
+        # last feed and reboots a payload that was working perfectly.
+        self.last_feed = time.monotonic()
         self._running = False
         self._thread = None
     
@@ -329,7 +334,7 @@ class Watchdog:
     
     def feed(self):
         """Reset the watchdog timer"""
-        self.last_feed = time.time()
+        self.last_feed = time.monotonic()
     
     def pet(self):
         """Alias for feed() - reset the watchdog timer"""
@@ -355,7 +360,7 @@ class Watchdog:
         while self._running:
             time.sleep(1.0)
             
-            elapsed = time.time() - self.last_feed
+            elapsed = time.monotonic() - self.last_feed
             if elapsed > self.timeout_sec:
                 logging.critical(f"Watchdog timeout after {elapsed:.1f}s")
                 self._running = False
@@ -380,17 +385,17 @@ class RateLimiter:
     
     def wait(self):
         """Wait if necessary to maintain rate limit"""
-        now = time.time()
+        now = time.monotonic()
         elapsed = now - self.last_time
         
         if elapsed < self.min_interval:
             time.sleep(self.min_interval - elapsed)
         
-        self.last_time = time.time()
+        self.last_time = time.monotonic()
     
     def can_proceed(self) -> bool:
         """Check if we can proceed without waiting"""
-        return (time.time() - self.last_time) >= self.min_interval
+        return (time.monotonic() - self.last_time) >= self.min_interval
 
 
 def format_bytes(size: int) -> str:

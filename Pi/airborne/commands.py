@@ -3,6 +3,23 @@ RaptorHab Airborne - Command Handler Module
 
 Processes commands received from ground station and generates acknowledgments.
 Supports ping, parameter setting, forced capture, and reboot commands.
+
+NOT CURRENTLY WIRED TO ANYTHING.
+--------------------------------
+`CommandHandler` is not constructed anywhere in the payload. The two command
+paths that actually run are:
+
+  - USB console commands, handled in `airborne/usbconsole.py` and dispatched by
+    `AirborneController._build_command_handlers()`.
+  - Meshtastic uplink commands, handled by `MeshtasticRepeater.handle_command()`,
+    which accepts them only on the configured private channel.
+
+This module predates both. It is kept because the packet-level command format
+it implements is still the one the ground station builds, but understand before
+wiring it up that it authenticates nothing: any transmitter on the downlink
+frequency that can produce a valid CRC can reach `_handle_reboot`. The
+Meshtastic path requires a shared channel key; this one requires only that you
+know the frame format, which is in this repository.
 """
 
 import logging
@@ -164,18 +181,30 @@ class CommandHandler:
             return None
     
     def _is_duplicate(self, cmd_type: PacketType, seq: int) -> bool:
-        """Check if command is a duplicate based on sequence number."""
+        """
+        Check if command is a duplicate based on sequence number.
+
+        Accepts a command only when its sequence is genuinely *ahead* of the
+        last one, by no more than the window.
+
+        The previous version tested `abs(seq - last_seq) < window` and treated
+        anything outside that as "a large gap, assume wraparound, not a
+        duplicate" -- so with last_seq = 100, a replayed command carrying
+        seq = 65000 fell through the far side and was executed. Every sequence
+        number more than `window` away was accepted, which is most of them.
+        Computing the distance forward modulo 2**16 handles the real wraparound
+        case without leaving that hole: 65530 -> 3 is a forward distance of 9
+        and is accepted, while 100 -> 65000 is a distance of 64900 and is not.
+        """
         if cmd_type not in self._last_cmd_seq:
             return False
-        
+
         last_seq = self._last_cmd_seq[cmd_type]
-        
-        # Handle sequence wraparound
-        if abs(seq - last_seq) < self._seq_window:
-            return seq <= last_seq
-        
-        # Large gap - assume wraparound, not duplicate
-        return False
+        forward = (seq - last_seq) & 0xFFFF
+
+        if forward == 0:
+            return True                      # exact repeat
+        return not (forward <= self._seq_window)
     
     def _dispatch_command(
         self, cmd_type: PacketType, payload: bytes
