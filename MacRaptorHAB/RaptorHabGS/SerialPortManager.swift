@@ -33,6 +33,15 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
     
     static let baudRate: speed_t = 921600
     static let frameDelimiter: UInt8 = 0x7E
+
+    /// The dual-radio modem carries two streams down one cable: RAPTOR image
+    /// traffic on 0x7E, and whole Meshtastic LoRa packets on 0x7B. A
+    /// single-radio modem only ever sends 0x7E, so handling both here means
+    /// one build talks to either board.
+    static let meshtasticDelimiter: UInt8 = 0x7B
+
+    /// Decodes the Meshtastic stream, and transmits through the modem.
+    let meshtastic = ModemMeshtasticLink()
     
     // MARK: - Callbacks
     
@@ -59,6 +68,8 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
     // MARK: - Initialization
     
     init() {
+        // The link needs the port to transmit through.
+        meshtastic.attach(serial: self)
         refreshAvailablePorts()
     }
     
@@ -304,6 +315,10 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
     
     /// Process text lines from modem (for configuration responses)
     private func processTextLine(_ line: String) {
+        // A transmit verdict comes back on the same text channel as everything
+        // else the modem prints, and the sender is blocked waiting for it.
+        if meshtastic.handleModemLine(line) { return }
+
         debugLog("Modem text: \(line)")
         
         configResponseBuffer += line + "\n"
@@ -380,12 +395,18 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         // First, check for text lines (modem status messages)
         extractTextLines()
         
-        // Process complete frames
-        while let frame = extractFrame() {
+        // Process complete frames. The two streams are kept apart: a
+        // Meshtastic packet handed to parseFrame would be read as an image
+        // symbol, since everything downstream assumes RAPTOR.
+        while let extracted = extractFrame() {
+            if extracted.isMeshtastic {
+                handleMeshtasticFrame(extracted.data)
+                continue
+            }
             DispatchQueue.main.async { [weak self] in
                 self?.framesExtracted += 1
             }
-            parseFrame(frame)
+            parseFrame(extracted.data)
         }
         
         // Prevent buffer from growing too large
@@ -439,7 +460,14 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         }
     }
     
-    private func extractFrame() -> Data? {
+    /// A frame plus the stream it arrived on, so the caller can route it.
+    struct ExtractedFrame {
+        let delimiter: UInt8
+        let data: Data
+        var isMeshtastic: Bool { delimiter == SerialPortManager.meshtasticDelimiter }
+    }
+
+    private func extractFrame() -> ExtractedFrame? {
         bufferLock.lock()
         defer { bufferLock.unlock() }
         
@@ -448,10 +476,10 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         
         let bytes = [UInt8](rxBuffer)
         
-        // Find start delimiter
+        // Find the start of either stream, whichever comes first.
         var startOffset = -1
         for i in 0..<bytes.count {
-            if bytes[i] == Self.frameDelimiter {
+            if bytes[i] == Self.frameDelimiter || bytes[i] == Self.meshtasticDelimiter {
                 startOffset = i
                 break
             }
@@ -470,10 +498,14 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         // 0x7D 0x5E = escaped 0x7E data byte
         // 0x7D 0x5B = escaped 0x7B data byte (dual-radio modem)
         // 0x7D 0x5D = escaped 0x7D data byte
+        let openingDelimiter = bytes[startOffset]
         var endOffset: Int? = nil
         var i = 1
         while i < bytes.count {
-            if bytes[i] == Self.frameDelimiter {
+            // A frame ends on the same delimiter it began with. The other
+            // stream's delimiter is escaped inside a frame, so it cannot
+            // appear here unescaped.
+            if bytes[i] == openingDelimiter {
                 endOffset = i
                 break
             }
@@ -571,8 +603,28 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
             debugLog("Trimming \(destuffed.count - expectedSize) extra bytes")
             destuffed = Array(destuffed.prefix(expectedSize))
         }
-        
-        return Data(destuffed)
+
+        return ExtractedFrame(delimiter: openingDelimiter, data: Data(destuffed))
+    }
+
+    /// A whole Meshtastic LoRa packet the modem's second radio heard.
+    ///
+    /// Still encrypted: the modem holds no channel keys, so decrypting and
+    /// parsing happen in ModemMeshtasticLink.
+    private func handleMeshtasticFrame(_ frame: Data) {
+        guard frame.count >= 7 else { return }
+        let bytes = [UInt8](frame)
+
+        let dataLen = (Int(bytes[0]) << 8) | Int(bytes[1])
+        guard dataLen > 0, frame.count >= 6 + dataLen + 1 else { return }
+
+        let rssiInt = Int8(bitPattern: bytes[2])
+        let snrInt = Int8(bitPattern: bytes[4])
+        let rssi = Float(rssiInt) + (rssiInt < 0 ? -Float(bytes[3]) / 100 : Float(bytes[3]) / 100)
+        let snr = Float(snrInt) + (snrInt < 0 ? -Float(bytes[5]) / 100 : Float(bytes[5]) / 100)
+
+        let payload = Data(bytes[6..<(6 + dataLen)])
+        meshtastic.handleFrames([(rssi: rssi, snr: snr, data: payload)])
     }
     
     private func parseFrame(_ frame: Data) {

@@ -18,6 +18,7 @@
 		669A7BC8D3E1BBA461BC2285 /* MeshtasticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E89FCC7075A326778FC515D /* MeshtasticManager.swift */; };
 		FC3AB61505BF692EDC228973 /* MeshtasticTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91EB7AE7526F3D3B36944C96 /* MeshtasticTransport.swift */; };
 		EF6AC06B62C8F91740E3615C /* MeshtasticProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBED6CF57C282AF596057723 /* MeshtasticProtocol.swift */; };
+		02669B9900A955C2B67E1674 /* ModemMeshtasticLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A436A36FC149525AA1334870 /* ModemMeshtasticLink.swift */; };
 		7A049B6FE914847A35FEA830 /* MeshtasticProtobuf.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43643224DCFD34ED1C656F91 /* MeshtasticProtobuf.swift */; };
 		E5C79771F5E67F1FDB32598A /* PayloadConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C24779E7B82F5E381D5E9593 /* PayloadConsoleView.swift */; };
 		45C2F2464F5B495D3156A4D6 /* PayloadConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B56DC0A6603619B0B29BB01 /* PayloadConfigView.swift */; };
@@ -77,6 +78,7 @@
 		0E89FCC7075A326778FC515D /* MeshtasticManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshtasticManager.swift; sourceTree = "<group>"; };
 		91EB7AE7526F3D3B36944C96 /* MeshtasticTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshtasticTransport.swift; sourceTree = "<group>"; };
 		EBED6CF57C282AF596057723 /* MeshtasticProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshtasticProtocol.swift; sourceTree = "<group>"; };
+		A436A36FC149525AA1334870 /* ModemMeshtasticLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModemMeshtasticLink.swift; sourceTree = "<group>"; };
 		43643224DCFD34ED1C656F91 /* MeshtasticProtobuf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshtasticProtobuf.swift; sourceTree = "<group>"; };
 		C24779E7B82F5E381D5E9593 /* PayloadConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayloadConsoleView.swift; sourceTree = "<group>"; };
 		0B56DC0A6603619B0B29BB01 /* PayloadConfigView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayloadConfigView.swift; sourceTree = "<group>"; };
@@ -145,6 +147,7 @@
 				A5EAE665C070BA88864C22A1 /* PositionSourceView.swift */,
 				43643224DCFD34ED1C656F91 /* MeshtasticProtobuf.swift */,
 				EBED6CF57C282AF596057723 /* MeshtasticProtocol.swift */,
+				A436A36FC149525AA1334870 /* ModemMeshtasticLink.swift */,
 				91EB7AE7526F3D3B36944C96 /* MeshtasticTransport.swift */,
 				0E89FCC7075A326778FC515D /* MeshtasticManager.swift */,
 				ACA8D3DCE330A2ADC02EDAC8 /* MeshtasticView.swift */,
@@ -271,6 +274,7 @@
 				61F8D4042AF77E7859F80E67 /* PositionSourceView.swift in Sources */,
 				7A049B6FE914847A35FEA830 /* MeshtasticProtobuf.swift in Sources */,
 				EF6AC06B62C8F91740E3615C /* MeshtasticProtocol.swift in Sources */,
+				02669B9900A955C2B67E1674 /* ModemMeshtasticLink.swift in Sources */,
 				FC3AB61505BF692EDC228973 /* MeshtasticTransport.swift in Sources */,
 				669A7BC8D3E1BBA461BC2285 /* MeshtasticManager.swift in Sources */,
 				685AEA024BB52275BBC908CA /* MeshtasticView.swift in Sources */,

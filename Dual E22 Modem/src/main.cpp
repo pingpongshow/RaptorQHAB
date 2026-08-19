@@ -122,6 +122,13 @@ static bool configureRaptor() {
     // The payload appends its own CRC-32 inside the packet, so the hardware
     // CRC stays off and the check happens where the framing is understood.
     raptorRadio->setCRC(0);
+
+    // Whitening on the image slot, matching the payload. Mandatory, not an
+    // optimisation: a mismatch removes the link rather than degrading it. The
+    // Meshtastic slot below does not get this -- Meshtastic defines its own
+    // on-air format and changing it would make the balloon unreadable by every
+    // stock radio, which is the entire point of using Meshtastic.
+    raptorRadio->setWhitening(true, 0x01FF);
     raptorRadio->setPacketReceivedAction(onRaptorIrq);
 
     state = raptorRadio->startReceive();

@@ -618,11 +618,49 @@ first short sample suggested it had fixed the problem outright; a proper
 three-minute measurement showed it had not, which is the only reason that is
 not written here as a fix.
 
-**The whitening A/B test is still outstanding.** It was set up — both ends
-changed, modem reflashed — but the payload went off the network before it could
-be updated, and a whitening mismatch broke the link completely (`Fwd 0,
-NoRAPT 264`, which at least confirms the setting takes effect). Both ends were
-reverted and the link is back at 99.1%. The test needs the payload reachable.
+### Confirmed: it was whitening
+
+The A/B test, run over the USB gadget once the payload was reachable again:
+
+| | Packets | Bad CRC | Rate |
+|---|---|---|---|
+| Whitening off | 14951 | 137 | **0.916%** |
+| Whitening on | 16690 | **0** | **0.000%** |
+
+Same hardware, same modem firmware, back to back. Not "improved" — no CRC
+failures at all, and no rejected packets of any kind.
+
+Whitening is now on in the payload and in all eight firmware builds. **This is
+a wire-format setting: every modem must match the payload or the link does not
+work at all.** A mismatch does not degrade it — the sync word is not whitened,
+so packets arrive cleanly and then fail every content check. That is exactly
+what the failed first attempt looked like: `Fwd 0, NoRAPT 1102`.
+
+The Meshtastic slot on the dual-E22 is deliberately left alone. Meshtastic
+defines its own on-air format, and changing it would make the balloon
+unreadable by every stock radio, which is the whole point of using it.
+
+### Why the first attempt looked like a failure
+
+The first test showed the link dead with whitening set on both ends, which
+looked like the two implementations not interoperating. Reverting only the
+modem brought the link straight back — which meant the payload had never
+applied whitening at all.
+
+`radio.py` had **two** `SET_PACKET_PARAMS` call sites. One in
+`_set_fsk_packet_params()`, and one in `_update_payload_length()`, which the
+transmit path calls before every single packet, carrying its own hardcoded
+literals and a comment reading `# CRC-8 (must match _set_fsk_packet_params)`.
+A comment is not a mechanism. They did not match, and the transmit path
+overwrote the configured whitening bit microseconds after it was set — so the
+change reached the radio's configuration and never reached the air.
+
+There is one definition now, `_fsk_packet_params(payload_len)`, used by both.
+
+A second difference mattered once that was fixed: RadioLib writes the whitening
+seed explicitly (0x01FF, preserving the 7 MSBs of the register, per a datasheet
+note saying receive stops working otherwise), and the payload never wrote it at
+all. `_set_whitening_seed()` now does, the same way.
 
 ### SNR was never a measurement
 

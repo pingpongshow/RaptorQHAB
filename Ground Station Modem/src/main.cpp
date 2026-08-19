@@ -946,6 +946,12 @@ bool initializeRadio() {
     radio->variablePacketLengthMode(MAX_PACKET_SIZE);
     radio->setDataShaping(RF_DATA_SHAPING);
     radio->setCRC(0);
+    // Whitening, with the SX1262's default 0x01FF seed. This must match the
+    // payload exactly -- a mismatch does not degrade the link, it removes it
+    // (the sync word is not whitened, so packets arrive and then fail every
+    // content check). Measured on the bench: 0.916% bad CRC without it, 0.000%
+    // with it, over 16690 packets. See docs/REVIEW.md.
+    radio->setWhitening(true, 0x01FF);
     
     radio->setDio1Action(onPacketReceived);
     radio->startReceive();

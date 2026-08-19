@@ -658,44 +658,76 @@ class SX1262(LoRaModeMixin):
         
         return 0x06  # Default to narrowest
     
-    def _set_fsk_packet_params(self):
-        """Set FSK packet parameters"""
+    # The FSK packet parameters, in one place.
+    #
+    # There used to be two copies of this byte string: one here and one in
+    # _update_payload_length(), which the transmit path calls before every
+    # single packet. The second copy carried its own literals and a comment
+    # reading "must match _set_fsk_packet_params" -- a comment is not a
+    # mechanism, and they did not match. Changing whitening here had no effect
+    # whatever on transmitted packets, because the transmit path overwrote it
+    # microseconds later with its own hardcoded value. That cost a whole
+    # bench session before the link itself proved the setting was never
+    # applied.
+    FSK_PREAMBLE_DETECT_LEN = 0x04   # 16 bits
+    FSK_ADDR_COMP = 0x00             # no address filtering
+    FSK_PACKET_TYPE = 0x01           # variable length, so the length is on air
+    FSK_CRC_TYPE = 0x01              # 1-byte hardware CRC
+    # Whitening ON. This is a wire-format setting: every modem must match the
+    # payload exactly or the link does not work at all -- not "works worse",
+    # does not work.
+    #
+    # It is on because telemetry is 94% of the traffic and carries long runs of
+    # identical bytes -- battery, temperatures and the reserved field are all
+    # zero when no battery monitor is fitted, giving a median longest run of
+    # 9 bytes, about 72 bit periods with no transition for the receiver's clock
+    # recovery to lock to. Whitening XORs the payload with a PN sequence and
+    # gives it transitions regardless of content.
+    #
+    # Measured on the bench, same hardware, same modem firmware, back to back:
+    #
+    #     whitening off:  137 bad CRC in 14951 packets   (0.916%)
+    #     whitening on:     0 bad CRC in 16690 packets   (0.000%)
+    #
+    # The tell that it was a clock-recovery problem rather than RF noise: with
+    # whitening off, errors were ~450x rarer in the first four payload bytes
+    # than uniform noise would produce. They accumulated through the packet.
+    FSK_WHITENING = 0x01
+
+    def _fsk_packet_params(self, payload_len: int) -> bytes:
+        """Build the SetPacketParams payload for a given maximum length."""
         preamble_len = self.config.preamble_length
-        preamble_det_len = 0x04  # 16 bits preamble detector length
-        sync_word_len = len(self.config.sync_word) * 8  # in bits
-        addr_comp = 0x00  # No address filtering
-        
-        # PacketType from SX1262 datasheet Table 13-59:
-        # 0x00 = Fixed length packet (length known on both sides)
-        # 0x01 = Variable length packet (length byte prepended automatically)
-        # We use variable length so GetRxBufferStatus returns actual packet length
-        packet_type = 0x01  # Variable length packet
-        
-        payload_len = self.MAX_PACKET_SIZE  # Max payload length
-        
-        # CRC Type options from SX1262 datasheet Table 13-61:
-        # 0x00 = No CRC
-        # 0x01 = CRC computed on 1 byte
-        # 0x02 = CRC computed on 2 bytes (CRC-16)
-        # 0x04 = CRC_1_BYTE_INV (1 byte, result inverted)
-        # 0x06 = CRC_2_BYTE_INV (2 bytes CRC-16, result inverted)
-        crc_type = 0x01  # 1-byte CRC (simpler, less overhead)
-        whitening = 0x00  # No whitening
-        
-        params = bytes([
+        return bytes([
             (preamble_len >> 8) & 0xFF,
             preamble_len & 0xFF,
-            preamble_det_len,
-            sync_word_len,
-            addr_comp,
-            packet_type,
+            self.FSK_PREAMBLE_DETECT_LEN,
+            len(self.config.sync_word) * 8,
+            self.FSK_ADDR_COMP,
+            self.FSK_PACKET_TYPE,
             payload_len,
-            crc_type,
-            whitening
+            self.FSK_CRC_TYPE,
+            self.FSK_WHITENING,
         ])
+
+    def _set_fsk_packet_params(self):
+        """
+        Set FSK packet parameters.
+
+        Datasheet references for the values, which live on the class above:
+          Table 13-59 PacketType -- 0x00 fixed length, 0x01 variable length.
+            Variable length is what makes GetRxBufferStatus report the real
+            length of a received packet.
+          Table 13-61 CRCType -- 0x00 none, 0x01 one byte, 0x02 CRC-16,
+            0x04/0x06 the inverted forms.
+        """
+        self._spi_command(
+            SX1262Cmd.SET_PACKET_PARAMS,
+            self._fsk_packet_params(self.MAX_PACKET_SIZE),
+        )
         
-        self._spi_command(SX1262Cmd.SET_PACKET_PARAMS, params)
-        
+        if self.FSK_WHITENING:
+            self._set_whitening_seed(0x01FF)
+
         # Configure CRC polynomial and initial value registers
         # For CRC-8: Polynomial = 0x07, Initial = 0xFF (CCITT standard)
         # These registers must be set for CRC to work correctly
@@ -704,6 +736,28 @@ class SX1262(LoRaModeMixin):
         self._write_register(SX1262Reg.REG_CRC_INIT_MSB, bytes([0x00]))
         self._write_register(SX1262Reg.REG_CRC_INIT_LSB, bytes([0xFF]))  # Initial value
     
+    def _set_whitening_seed(self, seed: int = 0x01FF) -> None:
+        """
+        Set the 9-bit whitening seed, preserving the bits that must not change.
+
+        Both ends have to start their whitening LFSR in the same state or the
+        payload de-whitens to noise -- the sync word is not whitened, so the
+        symptom is a packet that is received cleanly and then fails every
+        content check. That is exactly what the bench showed: 1102 packets
+        received, 1102 rejected for a missing RAPT header, zero CRC failures.
+
+        The SX1262 datasheet (v1.2, p.65) says the 7 most significant bits of
+        the MSB register must be left alone, and RadioLib's comment adds that
+        writing them anyway stops receive working at all -- tested on hardware.
+        So this is a read-modify-write, not a blind write.
+        """
+        msb = self._read_register(SX1262Reg.REG_WHITENING_SEED_MSB, 1)
+        keep = (msb[0] & 0xFE) if msb else 0x00
+        self._write_register(
+            SX1262Reg.REG_WHITENING_SEED_MSB,
+            bytes([keep | ((seed >> 8) & 0x01), seed & 0xFF]),
+        )
+
     def _set_sync_word(self, sync_word: bytes):
         """Set sync word (up to 8 bytes)"""
         if len(sync_word) > 8:
@@ -851,24 +905,16 @@ class SX1262(LoRaModeMixin):
         return success
     
     def _update_payload_length(self, length: int):
-        """Update packet params with new payload length"""
-        preamble_len = self.config.preamble_length
-        preamble_det_len = 0x04
-        sync_word_len = len(self.config.sync_word) * 8
-        
-        params = bytes([
-            (preamble_len >> 8) & 0xFF,
-            preamble_len & 0xFF,
-            preamble_det_len,
-            sync_word_len,
-            0x00,  # No address filtering
-            0x01,  # Variable length packet (0x01 per datasheet Table 13-59)
-            length,
-            0x01,  # CRC-8 (must match _set_fsk_packet_params)
-            0x00   # No whitening
-        ])
-        
-        self._spi_command(SX1262Cmd.SET_PACKET_PARAMS, params)
+        """
+        Update packet params with new payload length.
+
+        Everything except the length comes from _fsk_packet_params, so this
+        cannot silently disagree with the configuration the radio was set up
+        with. It used to, and the disagreement was invisible.
+        """
+        self._spi_command(
+            SX1262Cmd.SET_PACKET_PARAMS, self._fsk_packet_params(length)
+        )
     
     def receive(self, timeout_ms: int = 0) -> Optional[bytes]:
         """
