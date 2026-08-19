@@ -118,7 +118,8 @@ recipe when you have neither and only the bytes matter.
 
 ### The apps
 
-Both ground stations have an **SD Card** tab. Point it at a mounted card, and
+All three ground stations — the macOS app, the Python desktop app and the web
+UI — have an **SD Card** tab. Point it at a mounted card, and
 it reports what is there and — before you copy anything — whether the sealed
 files can actually be opened. Sealed images are decrypted for preview without
 being written anywhere; **Import & decrypt** writes plaintext out.

@@ -11,6 +11,9 @@
 		61F8D4042AF77E7859F80E67 /* PositionSourceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5EAE665C070BA88864C22A1 /* PositionSourceView.swift */; };
 		F14C41EFD2F09669F518DC5C /* MeshtasticMQTTClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A06085F1B2547C353F6F9BD /* MeshtasticMQTTClient.swift */; };
 		E907FD5C8CEB06E25AE9220C /* PositionFusion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 051E883C07FC72EC4C9A6E84 /* PositionFusion.swift */; };
+		BA952D0B34D586BB46D18805 /* CardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD264D440CB3340B7476B91F /* CardView.swift */; };
+		FE38F35D5BF1AC8CE2F7F13A /* CardImportManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4414FEB2E156EB612A8688CD /* CardImportManager.swift */; };
+		9C4EB7344022FD8A3ED70B01 /* SealedBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0CE09DBE629DFF015131054 /* SealedBox.swift */; };
 		685AEA024BB52275BBC908CA /* MeshtasticView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA8D3DCE330A2ADC02EDAC8 /* MeshtasticView.swift */; };
 		669A7BC8D3E1BBA461BC2285 /* MeshtasticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E89FCC7075A326778FC515D /* MeshtasticManager.swift */; };
 		FC3AB61505BF692EDC228973 /* MeshtasticTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91EB7AE7526F3D3B36944C96 /* MeshtasticTransport.swift */; };
@@ -67,6 +70,9 @@
 		A5EAE665C070BA88864C22A1 /* PositionSourceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PositionSourceView.swift; sourceTree = "<group>"; };
 		8A06085F1B2547C353F6F9BD /* MeshtasticMQTTClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshtasticMQTTClient.swift; sourceTree = "<group>"; };
 		051E883C07FC72EC4C9A6E84 /* PositionFusion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PositionFusion.swift; sourceTree = "<group>"; };
+		FD264D440CB3340B7476B91F /* CardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardView.swift; sourceTree = "<group>"; };
+		4414FEB2E156EB612A8688CD /* CardImportManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardImportManager.swift; sourceTree = "<group>"; };
+		F0CE09DBE629DFF015131054 /* SealedBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SealedBox.swift; sourceTree = "<group>"; };
 		ACA8D3DCE330A2ADC02EDAC8 /* MeshtasticView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshtasticView.swift; sourceTree = "<group>"; };
 		0E89FCC7075A326778FC515D /* MeshtasticManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshtasticManager.swift; sourceTree = "<group>"; };
 		91EB7AE7526F3D3B36944C96 /* MeshtasticTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshtasticTransport.swift; sourceTree = "<group>"; };
@@ -143,6 +149,9 @@
 				0E89FCC7075A326778FC515D /* MeshtasticManager.swift */,
 				ACA8D3DCE330A2ADC02EDAC8 /* MeshtasticView.swift */,
 				051E883C07FC72EC4C9A6E84 /* PositionFusion.swift */,
+				FD264D440CB3340B7476B91F /* CardView.swift */,
+				4414FEB2E156EB612A8688CD /* CardImportManager.swift */,
+				F0CE09DBE629DFF015131054 /* SealedBox.swift */,
 				DB85264F6D9B63A2E97A4E39 /* LinkProtocol.swift */,
 				C99119A50E05E5D0A136AAA2 /* SerialDeviceDiscovery.swift */,
 				AF60A53971D34A692CCC320F /* RawSerialPort.swift */,
@@ -266,6 +275,9 @@
 				669A7BC8D3E1BBA461BC2285 /* MeshtasticManager.swift in Sources */,
 				685AEA024BB52275BBC908CA /* MeshtasticView.swift in Sources */,
 				E907FD5C8CEB06E25AE9220C /* PositionFusion.swift in Sources */,
+				BA952D0B34D586BB46D18805 /* CardView.swift in Sources */,
+				FE38F35D5BF1AC8CE2F7F13A /* CardImportManager.swift in Sources */,
+				9C4EB7344022FD8A3ED70B01 /* SealedBox.swift in Sources */,
 				A1DC93CED06BE4D7FEF36FD0 /* LinkProtocol.swift in Sources */,
 				DE86DAC9B3A39875784E63FF /* SerialDeviceDiscovery.swift in Sources */,
 				EE64196CB2A5753C635D6D14 /* RawSerialPort.swift in Sources */,

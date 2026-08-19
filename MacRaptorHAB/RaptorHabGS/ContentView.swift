@@ -82,6 +82,12 @@ struct ContentView: View {
                     }
                     .tag(9)
             }
+
+                CardView()
+                    .tabItem {
+                        Label("SD Card", systemImage: "sdcard")
+                    }
+                    .tag(10)
         }
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 300)
         .navigationTitle("RaptorHab Ground Station")
