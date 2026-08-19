@@ -52,6 +52,18 @@ final class ModemMeshtasticLink: ObservableObject {
     private let replyLock = NSCondition()
     private var pendingReply: String?
 
+    /// Transmits wait for the modem's verdict, so they must not run on the
+    /// thread the caller is on -- a SwiftUI button would freeze the interface
+    /// for the whole timeout. One queue, so two sends cannot interleave and
+    /// collect each other's replies.
+    private let txQueue = DispatchQueue(label: "raptorhab.modem.meshtastic.tx")
+
+    /// Counters are @Published, so they belong to the main thread; the frames
+    /// that drive them arrive on the serial read thread.
+    private func onMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread { work() } else { DispatchQueue.main.async(execute: work) }
+    }
+
     init(serial: SerialPortManager? = nil, callsign: String = "GROUND") {
         self.serial = serial
         self.nodeID = Self.nodeID(fromCallsign: callsign)
@@ -70,7 +82,9 @@ final class ModemMeshtasticLink: ObservableObject {
         guard let psk = MeshtasticCrypto.parsePSK(key) else {
             // A bad key must not be silently equivalent to no key: the operator
             // asked for that channel and would otherwise never find out.
-            lastError = "Channel \(name): key is not valid base64 or hex"
+            onMain { [weak self] in
+                self?.lastError = "Channel \(name): key is not valid base64 or hex"
+            }
             return false
         }
         // parsePSK gives the PSK as configured; expand turns Meshtastic's
@@ -95,11 +109,15 @@ final class ModemMeshtasticLink: ObservableObject {
     // MARK: - Receive
 
     /// Decode frames the modem forwarded on the Meshtastic delimiter.
+    /// Called on the serial read thread. Decoding happens there; the counters
+    /// and the callback hop to main, because both end up in the interface.
     func handleFrames(_ frames: [(rssi: Float, snr: Float, data: Data)]) {
-        for frame in frames {
-            heard += 1
+        var decodedCount = 0
+        var failedCount = 0
+        var decodedPackets: [MeshtasticPacket] = []
 
-            let keys = channels.map { $0.key }
+        let keys = channels.map { $0.key }
+        for frame in frames {
             guard let packet = MeshtasticProtocol.parsePacket(
                 frame.data,
                 channelKeys: keys,
@@ -109,34 +127,44 @@ final class ModemMeshtasticLink: ObservableObject {
                 // Heard, but not for us -- another channel, or another mesh.
                 // Counted rather than dropped silently: hearing traffic you
                 // cannot read still says the radio is working.
-                undecryptable += 1
+                failedCount += 1
                 continue
             }
+            decodedCount += 1
+            decodedPackets.append(packet)
+        }
 
-            decrypted += 1
-            onPacket?(packet)
+        let total = frames.count
+        onMain { [weak self] in
+            guard let self else { return }
+            self.heard += total
+            self.decrypted += decodedCount
+            self.undecryptable += failedCount
+            for packet in decodedPackets { self.onPacket?(packet) }
         }
     }
 
     // MARK: - Transmit
 
     /// Send a text message. Returns whether the modem confirmed it.
-    @discardableResult
     func sendText(_ text: String,
                   destination: UInt32 = MeshtasticHeader.broadcast,
                   overPrivateChannel: Bool = false,
                   hopLimit: UInt8 = 3,
-                  timeout: TimeInterval = 5.0) -> (sent: Bool, detail: String) {
+                  timeout: TimeInterval = 5.0,
+                  completion: ((Bool, String) -> Void)? = nil) {
 
         let channel: Channel
         if overPrivateChannel {
             guard let priv = privateChannel else {
-                return (false, "no private channel is configured")
+                completion?(false, "no private channel is configured")
+                return
             }
             channel = priv
         } else {
             guard let first = channels.first else {
-                return (false, "no channel is configured")
+                completion?(false, "no channel is configured")
+                return
             }
             channel = first
         }
@@ -150,7 +178,23 @@ final class ModemMeshtasticLink: ObservableObject {
             channelHash: MeshtasticCrypto.channelHash(name: channel.name, key: channel.key),
             hopLimit: hopLimit
         )
-        return sendRaw(packet, timeout: timeout)
+        sendRaw(packet, timeout: timeout, completion: completion)
+    }
+
+    /// The async form.
+    @discardableResult
+    func sendText(_ text: String,
+                  destination: UInt32 = MeshtasticHeader.broadcast,
+                  overPrivateChannel: Bool = false,
+                  hopLimit: UInt8 = 3,
+                  timeout: TimeInterval = 5.0) async -> (sent: Bool, detail: String) {
+        await withCheckedContinuation { continuation in
+            sendText(text, destination: destination,
+                     overPrivateChannel: overPrivateChannel,
+                     hopLimit: hopLimit, timeout: timeout) { ok, detail in
+                continuation.resume(returning: (ok, detail))
+            }
+        }
     }
 
     /// Send an uplink command to the balloon.
@@ -159,33 +203,70 @@ final class ModemMeshtasticLink: ObservableObject {
     /// them on the public channel because anyone can transmit there, so sending
     /// one publicly is a message the balloon reads and ignores. Hop limit zero:
     /// a ground station does not need the whole mesh relaying its commands.
-    @discardableResult
-    func sendCommand(_ command: String, timeout: TimeInterval = 5.0)
-        -> (sent: Bool, detail: String) {
+    func sendCommand(_ command: String, timeout: TimeInterval = 5.0,
+                     completion: ((Bool, String) -> Void)? = nil) {
         guard privateChannel != nil else {
-            return (false, "commands need a private channel; the balloon "
-                         + "refuses them on the public one because anyone can "
-                         + "transmit there")
+            completion?(false, "commands need a private channel; the balloon "
+                             + "refuses them on the public one because anyone "
+                             + "can transmit there")
+            return
         }
         let text = command.hasPrefix("!") ? command : "!" + command
-        return sendText(text, overPrivateChannel: true, hopLimit: 0, timeout: timeout)
+        sendText(text, overPrivateChannel: true, hopLimit: 0,
+                 timeout: timeout, completion: completion)
+    }
+
+    /// The async form.
+    @discardableResult
+    func sendCommand(_ command: String, timeout: TimeInterval = 5.0) async
+        -> (sent: Bool, detail: String) {
+        await withCheckedContinuation { continuation in
+            sendCommand(command, timeout: timeout) { ok, detail in
+                continuation.resume(returning: (ok, detail))
+            }
+        }
     }
 
     /// Hand an already-built packet to the modem and wait for its verdict.
     ///
-    /// Synchronous by design. An uplink to a balloon is not fire and forget: if
-    /// it did not leave the ground station the operator needs to see that now,
-    /// rather than wonder why nothing happened.
+    /// The wait is real -- an uplink to a balloon is not fire and forget, and if
+    /// it did not leave the ground station the operator needs to see that
+    /// rather than wonder why nothing happened. But it happens on `txQueue`,
+    /// not on the caller's thread: called straight from a SwiftUI button this
+    /// would otherwise freeze the interface for the whole timeout.
+    func sendRaw(_ packet: Data, timeout: TimeInterval = 5.0,
+                 completion: ((Bool, String) -> Void)? = nil) {
+        txQueue.async { [weak self] in
+            guard let self else { return }
+            let result = self.sendRawBlocking(packet, timeout: timeout)
+            if let completion {
+                DispatchQueue.main.async { completion(result.sent, result.detail) }
+            }
+        }
+    }
+
+    /// The async form, for callers that can await.
     @discardableResult
-    func sendRaw(_ packet: Data, timeout: TimeInterval = 5.0)
+    func sendRaw(_ packet: Data, timeout: TimeInterval = 5.0) async
+        -> (sent: Bool, detail: String) {
+        await withCheckedContinuation { continuation in
+            sendRaw(packet, timeout: timeout) { ok, detail in
+                continuation.resume(returning: (ok, detail))
+            }
+        }
+    }
+
+    /// Blocks until the modem answers or the timeout expires. Always called on
+    /// `txQueue`, never on the main thread.
+    private func sendRawBlocking(_ packet: Data, timeout: TimeInterval)
         -> (sent: Bool, detail: String) {
 
         guard let serial = serial, serial.isConnected else {
-            sendFailed += 1
+            bumpFailure(nil)
             return (false, "no modem connected")
         }
         guard packet.count <= 255 else {
-            sendFailed += 1
+            bumpFailure(nil)
             return (false, "packet is \(packet.count) bytes; the radio takes 255")
         }
 
@@ -196,7 +277,7 @@ final class ModemMeshtasticLink: ObservableObject {
         replyLock.unlock()
 
         guard serial.write("MTX:\(hex)\n") else {
-            sendFailed += 1
+            bumpFailure(nil)
             return (false, "write to the modem failed")
         }
 
@@ -209,16 +290,22 @@ final class ModemMeshtasticLink: ObservableObject {
         replyLock.unlock()
 
         guard let answer = reply else {
-            sendFailed += 1
+            bumpFailure(nil)
             return (false, "the modem did not answer within \(Int(timeout))s")
         }
         if answer.hasPrefix(Reply.ok) {
-            sent += 1
+            onMain { [weak self] in self?.sent += 1 }
             return (true, "sent")
         }
-        sendFailed += 1
-        lastError = answer
+        bumpFailure(answer)
         return (false, answer)
+    }
+
+    private func bumpFailure(_ detail: String?) {
+        onMain { [weak self] in
+            self?.sendFailed += 1
+            if let detail { self?.lastError = detail }
+        }
     }
 
     /// Feed the modem's text output in. Returns true if the line was ours.

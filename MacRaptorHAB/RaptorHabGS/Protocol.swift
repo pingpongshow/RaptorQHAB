@@ -184,6 +184,15 @@ struct TelemetryPayload {
     var rssi: Int8 = 0                  // dBm
     
     static func deserialize(from data: Data) -> TelemetryPayload? {
+        // Re-base before indexing. Everything below uses absolute indices --
+        // data[offset], subdata(in: offset..<...) -- which is only correct when
+        // startIndex is zero. Every caller today passes a Data built by
+        // subdata() or Data(ArraySlice), both of which re-base, so this is
+        // insurance rather than a fix. It is worth having because the failure
+        // mode is a crash on a received radio packet, and because nothing in
+        // the signature tells a future caller that a slice is unacceptable.
+        let data = Data(data)
+
         guard data.count >= RaptorProtocol.telemetryPayloadSize else { return nil }
         
         var payload = TelemetryPayload()
@@ -268,6 +277,15 @@ struct ImageMetaPayload {
     var timestamp: UInt32 = 0           // Unix timestamp
     
     static func deserialize(from data: Data) -> ImageMetaPayload? {
+        // Re-base before indexing. Everything below uses absolute indices --
+        // data[offset], subdata(in: offset..<...) -- which is only correct when
+        // startIndex is zero. Every caller today passes a Data built by
+        // subdata() or Data(ArraySlice), both of which re-base, so this is
+        // insurance rather than a fix. It is worth having because the failure
+        // mode is a crash on a received radio packet, and because nothing in
+        // the signature tells a future caller that a slice is unacceptable.
+        let data = Data(data)
+
         guard data.count >= RaptorProtocol.imageMetaPayloadSize else { return nil }
         
         var payload = ImageMetaPayload()
@@ -309,6 +327,15 @@ struct ImageDataPayload {
     var symbolData: Data = Data()       // Full raptorq serialized packet (4-byte header + data)
     
     static func deserialize(from data: Data) -> ImageDataPayload? {
+        // Re-base before indexing. Everything below uses absolute indices --
+        // data[offset], subdata(in: offset..<...) -- which is only correct when
+        // startIndex is zero. Every caller today passes a Data built by
+        // subdata() or Data(ArraySlice), both of which re-base, so this is
+        // insurance rather than a fix. It is worth having because the failure
+        // mode is a crash on a received radio packet, and because nothing in
+        // the signature tells a future caller that a slice is unacceptable.
+        let data = Data(data)
+
         // Format: imageId(2) + symbolId(4) + raptorqPacket(4 + 200) = 210 bytes
         guard data.count >= 10 else { return nil }
         
@@ -338,6 +365,15 @@ struct TextMessagePayload {
     var message: String = ""
     
     static func deserialize(from data: Data) -> TextMessagePayload? {
+        // Re-base before indexing. Everything below uses absolute indices --
+        // data[offset], subdata(in: offset..<...) -- which is only correct when
+        // startIndex is zero. Every caller today passes a Data built by
+        // subdata() or Data(ArraySlice), both of which re-base, so this is
+        // insurance rather than a fix. It is worth having because the failure
+        // mode is a crash on a received radio packet, and because nothing in
+        // the signature tells a future caller that a slice is unacceptable.
+        let data = Data(data)
+
         guard let message = String(data: data, encoding: .utf8) else { return nil }
         return TextMessagePayload(message: message)
     }

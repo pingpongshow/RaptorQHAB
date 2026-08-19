@@ -6,12 +6,18 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - GPS Signal Indicator
 
 struct GPSSignalIndicator: View {
     @ObservedObject var gpsManager = GPSManager.shared
     @State private var refreshTrigger = false
+
+    /// Drives the once-a-second refresh of the "receiving data" indicator,
+    /// which is a function of elapsed time rather than of new data arriving.
+    private let refreshTimer = Timer.publish(every: 1.0, on: .main, in: .common)
+        .autoconnect()
     
     var satellites: Int {
         gpsManager.currentPosition?.satellites ?? 0
@@ -66,11 +72,19 @@ struct GPSSignalIndicator: View {
             }
         }
         .help(statusTooltip)
-        .onAppear {
-            // Refresh periodically to update isReceivingData status
-            Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-                refreshTrigger.toggle()
-            }
+        // A Timer.publish tied to the view, not a Timer.scheduledTimer started
+        // in onAppear.
+        //
+        // The old version discarded the timer it created. The run loop keeps a
+        // strong reference, so it lived forever and kept firing after the view
+        // was gone -- and onAppear runs every time the view appears, so
+        // navigating away and back left another one running each time. They
+        // accumulated, all toggling the same @State at 1 Hz, and each toggle
+        // rebuilt the whole view through .id(). SwiftUI cancels an autoconnect
+        // publisher when the view goes away, which is the behaviour that was
+        // wanted here.
+        .onReceive(refreshTimer) { _ in
+            refreshTrigger.toggle()
         }
         .id(refreshTrigger) // Force refresh
     }

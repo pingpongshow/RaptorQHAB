@@ -95,7 +95,17 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         var service = IOIteratorNext(iterator)
         while service != 0 {
             if let pathCF = IORegistryEntryCreateCFProperty(service, kIOCalloutDeviceKey as CFString, kCFAllocatorDefault, 0) {
-                let path = pathCF.takeRetainedValue() as! String
+                // as?, not as!. This value comes from a driver's IORegistry
+                // entry, and a force cast on data the app does not control
+                // turns an odd device into a crash -- in code that runs at
+                // launch and on every port refresh. A device that does not
+                // describe its callout path as a string simply is not one we
+                // can open.
+                guard let path = pathCF.takeRetainedValue() as? String else {
+                    IOObjectRelease(service)
+                    service = IOIteratorNext(iterator)
+                    continue
+                }
                 // Filter for USB serial ports (typical names)
                 if path.contains("usbserial") || path.contains("usbmodem") || path.contains("cu.") {
                     ports.append(path)

@@ -707,3 +707,92 @@ whole point.
   `setCRC(0)`. The radio therefore does no error detection of its own and every
   corrupted packet reaches software, where the CRC-32 catches it. Harmless as
   it stands, and it is what makes the failures countable.
+
+---
+
+## macOS app review (2026-08)
+
+18,851 lines across 42 files. Six defects fixed, and several suspicions checked
+and dismissed — recorded below, because "I looked and it was fine" is worth as
+much here as a fix.
+
+### M1. Meshtastic decoding ran on the serial read thread
+
+`SerialPortManager.readLoop()` runs on a dedicated `Thread`, and the Meshtastic
+link I added the previous day mutated `@Published` counters and invoked its
+packet callback straight from it. SwiftUI requires main-thread mutation; off it,
+the behaviour is undefined and the main-thread checker flags it.
+
+Decoding stays on the read thread — it is real work and does not belong on the
+main queue — and only the counters and the callback hop.
+
+### M2. Transmitting froze the interface for up to five seconds
+
+`sendRaw` blocked its caller waiting for the modem's `MTX_OK`/`MTX_ERR`. Called
+from a SwiftUI button, that is the whole timeout with a frozen window. The wait
+was the right design; doing it on the caller's thread was not. It now runs on
+its own serial queue, with completion-handler and `async` forms, so two sends
+also cannot interleave and collect each other's replies.
+
+### M3. A timer per view appearance, never cancelled
+
+`GPSSettingsView.onAppear` created a repeating `Timer.scheduledTimer` and
+discarded it. The run loop keeps a strong reference, so it lived forever and
+kept firing after the view was gone — and `onAppear` runs *every* time the view
+appears, so navigating away and back left another one running each time. They
+accumulated, all toggling the same `@State` at 1 Hz, and each toggle rebuilt the
+whole view through `.id()`.
+
+Replaced with a `Timer.publish(...).autoconnect()` bound to the view, which
+SwiftUI cancels when the view goes away.
+
+### M4. Surveying an SD card blocked the interface
+
+`CardImportManager.read()` is on a `@MainActor` class and asks the filesystem
+for each file's size and modification date — **one stat syscall per file**. The
+recovered card in this project held 710 images, over USB. Every one of those
+was blocking the UI.
+
+The walk touches no instance state, so it moved out wholesale to a
+`nonisolated static func` run from a detached task; the key comparison stays on
+the main actor because it needs the loaded private key. `busy` was already
+wired to the UI, so the progress indicator now actually means something.
+
+### M5. A force cast on data from a device driver
+
+`IORegistryEntryCreateCFProperty(...).takeRetainedValue() as! String` in port
+enumeration — which runs at launch and on every refresh. A device that does not
+describe its callout path as a string would crash the app rather than be
+skipped. Now `as?`.
+
+### M6. Payload deserializers assumed a zero-based `Data`
+
+`TelemetryPayload.deserialize` and its three siblings index with `data[offset]`
+and `subdata(in: offset..<...)`, both of which use **absolute** indices. Hand
+any of them a `Data` slice and they read the wrong bytes or trap.
+
+Every caller today passes a `Data` built by `subdata()` or `Data(ArraySlice)`,
+both of which re-base, so this is latent rather than live. Fixed anyway: one
+`let data = Data(data)` per function. The failure mode is a crash on a received
+radio packet, and nothing in the signature warns a future caller.
+
+### Checked and found fine
+
+- **22 unaligned `load(as:)` calls.** `withUnsafeBytes { $0.load(as: UInt32.self) }`
+  on a `Data` is a known Swift trap — `load` requires alignment the pointer may
+  not have. Tested it: 66,000 parses at every offset, including slice-derived
+  buffers, produced **zero** mismatches. `subdata(in:)` copies into a fresh
+  allocation and arm64 tolerates unaligned access anyway. Technically undefined,
+  demonstrably harmless here, and not worth churning 22 call sites over.
+- **257 `@Published` writes with no visible main-queue hop.** Almost all are in
+  classes marked `@MainActor`, where the compiler guarantees isolation. The raw
+  `Thread` code — `SerialPortManager` — hops correctly on every one. The only
+  real offender was M1, which I had written myself.
+- **`FlightGraphsView` dividing by `data.count`.** Guarded by a
+  `guard data.count >= 2` early return two blocks above.
+- **`PositionFusion.trackCoordinates` indexing by a computed stride.** The
+  guard that gets there forces stride > 1, which keeps the maximum index inside
+  the array.
+- **sqlite in `OfflineMapManager`.** Three prepares, three finalises, one open,
+  one close.
+- **No `try!`, no `fatalError`,** and the published history arrays are bounded.

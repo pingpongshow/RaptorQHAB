@@ -127,8 +127,31 @@ final class CardImportManager: ObservableObject {
 
     // MARK: - Surveying
 
+    /// Survey a card. The filesystem walk runs off the main actor.
+    ///
+    /// It used to run here, on the main actor, and it asks the filesystem for
+    /// each file's size and modification date -- one stat per file. A recovered
+    /// card in this project held 710 images, over USB, and every one of those
+    /// syscalls was blocking the interface. The walk itself touches no instance
+    /// state, so it moves out wholesale; the key comparison stays here because
+    /// it needs the loaded private key.
     func read(_ root: URL) {
         loadKey()
+        busy = true
+
+        Task.detached(priority: .userInitiated) {
+            var result = Self.walk(root)
+            await MainActor.run {
+                self.checkKey(&result)
+                self.survey = result
+                self.busy = false
+            }
+        }
+    }
+
+    /// The filesystem half of a survey. Nothing here touches the manager, which
+    /// is what lets it run anywhere.
+    nonisolated static func walk(_ root: URL) -> CardSurvey {
         let manager = FileManager.default
         var result = CardSurvey(root: root)
 
@@ -142,8 +165,7 @@ final class CardImportManager: ObservableObject {
                     "No payload data under \(root.path). On a Raspberry Pi card the "
                     + "images and logs live on the ext4 root partition, not the FAT32 "
                     + "boot partition.")
-                survey = result
-                return
+                return result
             }
         }
         result.stateRoot = state
@@ -195,8 +217,7 @@ final class CardImportManager: ObservableObject {
             result.payloadPublicKey = object["recording_public_key"] as? String
         }
 
-        checkKey(&result)
-        survey = result
+        return result
     }
 
     private func checkKey(_ result: inout CardSurvey) {
