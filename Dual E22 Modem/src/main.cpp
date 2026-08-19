@@ -280,10 +280,22 @@ static void handleCommand(const String& line) {
             Serial.printf("CFG_ERR:%.1f MHz is outside this board's 850-930 MHz hardware\n", f);
             return;
         }
+        // Keep what is working. Reporting the failure is not enough on its
+        // own: without the rollback the slot stays dead, configured with the
+        // settings that just killed it, until someone sends another CFG.
+        RaptorConfig previous = raptorCfg;
         raptorCfg = { f, br, dev, bw, (uint16_t)pre };
         raptorReady = configureRaptor();
-        if (raptorReady) Serial.printf("CFG_OK:%.1f,%.1f,%.1f,%.1f,%d\n", f, br, dev, bw, pre);
-        else             Serial.println("CFG_ERR:radio");
+        if (raptorReady) {
+            Serial.printf("CFG_OK:%.1f,%.1f,%.1f,%.1f,%d\n", f, br, dev, bw, pre);
+        } else {
+            raptorCfg = previous;
+            raptorReady = configureRaptor();
+            Serial.println(raptorReady
+                ? "CFG_ERR:radio refused the settings; the previous ones are back"
+                : "CFG_ERR:radio refused the settings and would not restore the old "
+                  "ones; the image slot is deaf until reset");
+        }
         return;
     }
 
@@ -304,10 +316,19 @@ static void handleCommand(const String& line) {
                           pwr, SX1262_MAX_DBM);
             pwr = SX1262_MAX_DBM;
         }
+        MeshConfig previous = meshCfg;
         meshCfg = { f, bw, (uint8_t)sf, (uint8_t)cr, meshCfg.syncWord, (int8_t)pwr };
         meshReady = configureMesh();
-        if (meshReady) Serial.printf("MCFG_OK:%.4f,%.0f,%d,%d,%d\n", f, bw, sf, cr, pwr);
-        else           Serial.println("MCFG_ERR:radio");
+        if (meshReady) {
+            Serial.printf("MCFG_OK:%.4f,%.0f,%d,%d,%d\n", f, bw, sf, cr, pwr);
+        } else {
+            meshCfg = previous;
+            meshReady = configureMesh();
+            Serial.println(meshReady
+                ? "MCFG_ERR:radio refused the settings; the previous ones are back"
+                : "MCFG_ERR:radio refused the settings and would not restore the old "
+                  "ones; the Meshtastic slot is deaf until reset");
+        }
         return;
     }
 
