@@ -252,30 +252,43 @@ def _check_key(survey: CardSurvey, key_path: Optional[Path]) -> None:
 
 
 def load_private_key(path: Optional[Path] = None) -> Optional[bytes]:
-    """Load the X25519 private key, accepting hex or base64 as written."""
+    """
+    Load the X25519 private key, however it happens to be stored.
+
+    Raw bytes are tried first because that is what recording_key.py writes.
+    Reading as text first was the original order, and it threw
+    UnicodeDecodeError on every genuine key -- a ValueError, not an OSError, so
+    it escaped the handler and took the whole card survey down with it.
+    """
     path = Path(path or DEFAULT_KEY_PATH)
     if not path.is_file():
         return None
+
     try:
-        text = path.read_text().strip()
+        raw = path.read_bytes()
     except OSError:
         return None
 
+    if len(raw) == 32:
+        return raw
+
     import base64
     import binascii
-    for decoder in (lambda t: binascii.unhexlify(t), lambda t: base64.b64decode(t)):
+
+    try:
+        text = raw.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
+
+    for decoder in (binascii.unhexlify, base64.b64decode):
         try:
-            raw = decoder(text)
-            if len(raw) == 32:
-                return raw
+            decoded = decoder(text)
+            if len(decoded) == 32:
+                return decoded
         except Exception:
             continue
-    # Some keys are stored as raw bytes.
-    try:
-        raw = path.read_bytes()
-        return raw if len(raw) == 32 else None
-    except OSError:
-        return None
+    return None
+
 
 
 @dataclass

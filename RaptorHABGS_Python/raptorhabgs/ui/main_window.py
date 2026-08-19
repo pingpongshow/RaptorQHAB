@@ -24,6 +24,7 @@ from .settings_dialogs import SettingsDialog
 from .payload_tab import PayloadConfigTab, PayloadConsoleTab
 from .mesh_tab import MeshtasticTab, PositionSourcesTab
 from .graphs_tab import GraphsTab, PacketsTab
+from .card_tab import CardTab
 from .extra_settings import OfflineMapsPanel, AudioAlertsPanel
 from ..core.payload_link import PayloadLink
 from ..core.meshtastic_manager import MeshtasticManager
@@ -114,6 +115,7 @@ class MainWindow(QMainWindow):
         self.graphs_tab = GraphsTab(
             lambda: getattr(self.ground_station, "telemetry_history", []))
         self.packets_tab = PacketsTab()
+        self.card_tab = CardTab()
         self.maps_panel = OfflineMapsPanel(self.offline_maps)
         self.alerts_panel = AudioAlertsPanel(self.audio_alerts)
         self._wire_alerts()
@@ -129,6 +131,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.sources_tab, "🛰️ Position Sources")
         self.tabs.addTab(self.graphs_tab, "📈 Graphs")
         self.tabs.addTab(self.packets_tab, "📦 Packets")
+        self.tabs.addTab(self.card_tab, "💾 SD Card")
         self.tabs.addTab(self.maps_panel, "🗺️ Offline Maps")
         self.tabs.addTab(self.alerts_panel, "🔔 Alerts")
         

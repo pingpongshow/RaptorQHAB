@@ -30,6 +30,9 @@ from ..core.position_fusion import PositionFusion, PositionSource
 from ..core.meshtastic import channel_hash as meshtastic_channel_hash
 from ..core.offline_maps import OfflineMapManager
 from ..core.audio_alerts import AudioAlertManager, AlertType
+from ..core.sd_import import (
+    candidate_cards, survey_card, import_files, load_private_key, read_image,
+    read_telemetry, DEFAULT_KEY_PATH)
 
 # Reduce Flask/Werkzeug logging noise
 log = logging.getLogger('werkzeug')
@@ -90,6 +93,10 @@ class WebServer:
         # where nobody is looking at this browser tab.
         self.offline_maps = OfflineMapManager(get_data_directory() / "tiles.mbtiles")
         self.audio_alerts = AudioAlertManager()
+
+        # A recovered card holds every image at full quality, not just the
+        # handful that fit in the airtime budget.
+        self.card_survey = None
         
         # Apply config
         self.mission_manager.auto_record_enabled = self.config.auto_record
@@ -379,6 +386,83 @@ class WebServer:
     
 
 
+
+
+        # ---- recovered SD card ---------------------------------------------
+
+        @self.app.route('/api/card/scan')
+        def card_scan():
+            return jsonify({"cards": candidate_cards(),
+                            "key_path": str(DEFAULT_KEY_PATH),
+                            "have_key": load_private_key() is not None})
+
+        @self.app.route('/api/card/survey', methods=['POST'])
+        def card_survey_route():
+            data = request.get_json(silent=True) or {}
+            root = data.get("path")
+            if not root:
+                return jsonify({"ok": False, "error": "no path given"}), 400
+            key = data.get("key_path")
+            try:
+                survey = survey_card(root, key_path=key or None)
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+            self.card_survey = survey
+            result = survey.as_dict()
+            result["files"] = {
+                "images": [f.as_dict() for f in survey.images[:2000]],
+                "telemetry": [f.as_dict() for f in survey.telemetry],
+                "logs": [f.as_dict() for f in survey.logs],
+            }
+            return jsonify({"ok": True, "survey": result})
+
+        @self.app.route('/api/card/thumb')
+        def card_thumb():
+            """One image, unsealed on the fly, without importing anything."""
+            name = request.args.get("name")
+            if not self.card_survey or not name:
+                return Response(status=404)
+            entry = next((f for f in self.card_survey.images if f.name == name), None)
+            if entry is None:
+                return Response(status=404)
+            data = read_image(entry, load_private_key())
+            if data is None:
+                return Response(status=409)     # sealed and we hold no key
+            return Response(data, mimetype="image/webp",
+                            headers={"Cache-Control": "max-age=300"})
+
+        @self.app.route('/api/card/telemetry')
+        def card_telemetry():
+            name = request.args.get("name")
+            if not self.card_survey or not name:
+                return jsonify({"ok": False, "error": "no card surveyed"}), 404
+            entry = next((f for f in self.card_survey.telemetry if f.name == name), None)
+            if entry is None:
+                return jsonify({"ok": False, "error": "not found"}), 404
+            rows = read_telemetry(entry, load_private_key())
+            return jsonify({"ok": True, "rows": rows[:2000], "count": len(rows)})
+
+        @self.app.route('/api/card/import', methods=['POST'])
+        def card_import():
+            if not self.card_survey:
+                return jsonify({"ok": False, "error": "survey a card first"}), 400
+            data = request.get_json(silent=True) or {}
+            kinds = set(data.get("kinds") or ["images", "telemetry", "logs"])
+            output = data.get("output") or str(
+                get_data_directory() / "recovered" /
+                (self.card_survey.callsign or "payload"))
+
+            selected = []
+            if "images" in kinds:    selected += self.card_survey.images
+            if "telemetry" in kinds: selected += self.card_survey.telemetry
+            if "logs" in kinds:      selected += self.card_survey.logs
+            if not selected:
+                return jsonify({"ok": False, "error": "nothing selected"}), 400
+
+            result = import_files(selected, output,
+                                  private_key=load_private_key(),
+                                  overwrite=bool(data.get("overwrite")))
+            return jsonify({"ok": True, "result": result.as_dict()})
 
         # ---- offline maps and audio alerts ---------------------------------
 

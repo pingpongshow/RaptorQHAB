@@ -450,6 +450,7 @@
         <button class="main-tab" onclick="switchMainTab('sources')">🛰️ Position Sources</button>
         <button class="main-tab" onclick="switchMainTab('graphs')">📈 Graphs</button>
         <button class="main-tab" onclick="switchMainTab('packets')">📦 Packets</button>
+        <button class="main-tab" onclick="switchMainTab('card')">💾 SD Card</button>
     </nav>
     
     <!-- Tracking Tab -->
@@ -792,7 +793,40 @@
     </div>
 
 
-            <div class="modal-overlay" id="settingsModal">
+
+    <!-- Recovered SD card: the full-quality record the radio never had time to send -->
+    <div class="tab-page" id="page-card">
+        <div style="padding:16px;">
+            <div class="panel" style="margin-bottom:12px;">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <select id="cardPath" style="min-width:340px;"></select>
+                    <button class="btn" onclick="cardScan()">Rescan</button>
+                    <button class="btn btn-primary" onclick="cardSurvey()">Read card</button>
+                </div>
+                <div id="cardKeyState" class="muted" style="margin-top:8px;"></div>
+            </div>
+
+            <div class="panel" id="cardSummary" style="margin-bottom:12px;">
+                <span class="muted">Insert a payload card and press Read card.</span>
+            </div>
+
+            <div class="panel" style="margin-bottom:12px;">
+                <label><input type="checkbox" id="cardWantImages" checked> Images</label>
+                <label><input type="checkbox" id="cardWantTelemetry" checked> Telemetry</label>
+                <label><input type="checkbox" id="cardWantLogs" checked> Logs</label>
+                <button class="btn btn-primary" onclick="cardImport()">Import &amp; decrypt</button>
+                <span id="cardImportState" class="muted"></span>
+            </div>
+
+            <div class="panel">
+                <h3>Images <span id="cardImageCount" class="muted"></span></h3>
+                <div id="cardImages" style="display:flex;flex-wrap:wrap;gap:8px;max-height:55vh;overflow:auto;"></div>
+            </div>
+        </div>
+    </div>
+
+
+                <div class="modal-overlay" id="settingsModal">
         
 <div class="modal">
             <div class="modal-header">
@@ -2124,6 +2158,110 @@
             document.getElementById('gpsSettingsStatus').textContent = 'Disconnected';
         }
 
+
+        // ===================== recovered SD card =====================
+        let cardFiles = {images: [], telemetry: [], logs: []};
+
+        async function cardScan() {
+            const r = await fetch('/api/card/scan').then(r => r.json());
+            const sel = document.getElementById('cardPath');
+            sel.innerHTML = '';
+            r.cards.forEach(c => {
+                const o = document.createElement('option');
+                o.value = c.path;
+                o.textContent = `${c.path} — ${c.detail}`;
+                o.disabled = (c.kind === 'boot-only');
+                sel.appendChild(o);
+            });
+            if (!r.cards.length) {
+                const o = document.createElement('option');
+                o.textContent = 'No payload card found';
+                sel.appendChild(o);
+            }
+            document.getElementById('cardKeyState').textContent = r.have_key
+                ? `Recording key loaded from ${r.key_path}`
+                : `No recording key at ${r.key_path} — sealed files cannot be opened`;
+        }
+
+        async function cardSurvey() {
+            const path = document.getElementById('cardPath').value;
+            if (!path) return;
+            const r = await fetch('/api/card/survey', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({path})
+            }).then(r => r.json());
+            if (!r.ok) { alert('Could not read the card: ' + r.error); return; }
+
+            const s = r.survey;
+            cardFiles = s.files;
+
+            // Readability first. Copying gigabytes only to find none of it can
+            // be opened is a waste of everyone's evening.
+            const verdict = s.sealed === 0
+                ? '<span style="color:#7fd67f">nothing is sealed; all readable</span>'
+                : (s.readable
+                    ? `<span style="color:#7fd67f">${s.sealed} sealed file(s), and the key matches</span>`
+                    : `<span style="color:#e88">${s.sealed} sealed file(s) that CANNOT be opened</span>`);
+
+            document.getElementById('cardSummary').innerHTML = `
+                <div><b>${s.callsign || 'unknown payload'}</b> — ${s.images} images,
+                     ${s.telemetry} telemetry logs, ${s.logs} log(s),
+                     ${(s.total_bytes/1e6).toFixed(1)} MB</div>
+                <div style="margin-top:4px;">${verdict}</div>
+                ${s.payload_public_key ? `<div class="muted" style="font-size:11px;margin-top:4px;">
+                     sealed to ${s.payload_public_key}</div>` : ''}
+                ${(s.notes||[]).map(n => `<div class="muted" style="margin-top:6px;">${n}</div>`).join('')}`;
+
+            renderCardImages(s.readable);
+        }
+
+        function renderCardImages(readable) {
+            const host = document.getElementById('cardImages');
+            const images = cardFiles.images || [];
+            document.getElementById('cardImageCount').textContent =
+                `(${images.length}${images.length > 200 ? ', showing first 200' : ''})`;
+            if (!images.length) { host.innerHTML = '<span class="muted">No images.</span>'; return; }
+            host.innerHTML = images.slice(0, 200).map(f => {
+                const openable = !f.sealed || readable;
+                return `<div style="width:150px;">
+                    ${openable
+                        ? `<img src="/api/card/thumb?name=${encodeURIComponent(f.name)}"
+                                style="width:150px;height:112px;object-fit:cover;border-radius:4px;"
+                                loading="lazy">`
+                        : `<div style="width:150px;height:112px;background:#222;border-radius:4px;
+                                display:flex;align-items:center;justify-content:center;">🔒</div>`}
+                    <div class="muted" style="font-size:10px;word-break:break-all;">
+                        ${f.sealed ? '🔒 ' : ''}${f.name}</div>
+                </div>`;
+            }).join('');
+        }
+
+        async function cardImport() {
+            const kinds = [];
+            if (document.getElementById('cardWantImages').checked)    kinds.push('images');
+            if (document.getElementById('cardWantTelemetry').checked) kinds.push('telemetry');
+            if (document.getElementById('cardWantLogs').checked)      kinds.push('logs');
+            if (!kinds.length) { alert('Nothing selected.'); return; }
+
+            document.getElementById('cardImportState').textContent = 'importing...';
+            const r = await fetch('/api/card/import', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({kinds})
+            }).then(r => r.json());
+
+            if (!r.ok) {
+                document.getElementById('cardImportState').textContent = 'failed: ' + r.error;
+                return;
+            }
+            const x = r.result;
+            document.getElementById('cardImportState').textContent =
+                `${x.decrypted} decrypted, ${x.copied} copied, ${x.skipped} already there, ` +
+                `${x.failed} failed → ${x.output_dir}`;
+            if (x.errors && x.errors.length) {
+                alert('Some files could not be recovered:\n\n' + x.errors.join('\n'));
+            }
+        }
+
         function switchMainTab(tab) {
             document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
@@ -2135,6 +2273,7 @@
             if (tab === 'sources') { loadSources(); }
             if (tab === 'graphs')  { drawGraphs(); }
             if (tab === 'packets') { loadPackets(); }
+            if (tab === 'card')    { cardScan(); }
             
             // Resize maps when tab becomes visible
             setTimeout(() => {
