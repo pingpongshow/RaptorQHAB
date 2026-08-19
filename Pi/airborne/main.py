@@ -375,6 +375,8 @@ class RaptorHabAirborne:
             landed_altitude_m=self.config.zone_landed_altitude_m,
             landed_vertical_rate_mps=self.config.zone_landed_vertical_rate_mps,
             landed_arm_altitude_m=self.config.zone_landed_arm_altitude_m,
+            launch_settle_sec=self.config.zone_launch_settle_sec,
+            launch_settle_max_drift_m=self.config.zone_launch_settle_max_drift_m,
             landed_dwell_sec=(
                 self.config.zone_landed_dwell_sec
                 if self.config.zone_landed_enabled

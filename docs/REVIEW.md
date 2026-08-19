@@ -430,6 +430,52 @@ word, same `'>BHB'` header, same CRC — and silently dropped `build_packet()`'s
 `MAX_PAYLOAD_SIZE` check. `build_packet()` already accepts raw bytes, so the
 duplicate had no reason to exist. Deleted.
 
+### D10 — The launch reference was taken from the worst fix of the flight
+
+Found only once the GPS antenna went on, which is the point of testing with one.
+
+`ZoneManager._capture_launch_point()` fired on the very first fix with
+`fix_type >= 2`. That fix is the least accurate one a receiver will produce: it
+has just met the minimum satellite count and its altitude solution is still
+converging. Measured on the bench, stationary on a desk throughout:
+
+```
+first 3D fix:    202.0 m MSL,  6 satellites
+two minutes on:  172.9 m MSL, 10 satellites
+```
+
+29 metres of drift without the payload moving. Every AGL figure this class
+produces is measured against the launch altitude, so that error propagates into
+the landed-altitude threshold, the cruise altitude override, and the arming
+height for landing detection. The payload was reporting **−37 m AGL** while
+sitting on a bench.
+
+The reference is now provisional at first — nothing waits on it, and the zone
+logic works immediately — and refined over `zone_launch_settle_sec` (default
+180 s) while the payload is still on the pad. Two details:
+
+- **The median of the *later* half of the samples, not all of them.** A receiver
+  acquiring satellites produces a converging series, not noise scattered about a
+  true value, so the median of the whole window sits in the middle of the
+  convergence. Better than the first fix, still wrong. The later half is closer
+  to converged and still a median, so one wild sample cannot drag it.
+- **Refinement stops the moment the payload moves** more than
+  `zone_launch_settle_max_drift_m` (default 50 m). Movement means it launched,
+  and refining then would drag the reference along with the balloon. It
+  finalises on whatever was gathered while stationary, which still beats the
+  first fix.
+
+Measured against the real bench series:
+
+| Settling window | Launch altitude | AGL error |
+|---|---|---|
+| 0 s (previous behaviour) | 202.0 m | 29.1 m |
+| 90 s | 186.3 m | 13.4 m |
+| **180 s (new default)** | **173.3 m** | **0.4 m** |
+
+An operator who typed in launch coordinates is never second-guessed; refinement
+only ever touches a point the payload captured itself.
+
 ### Noted, not changed
 
 - **Negative altitudes clamp to zero.** `TelemetryPayload` serialises altitude as
@@ -442,9 +488,64 @@ duplicate had no reason to exist. Deleted.
   clock with everything else rather than deleted, since it is harmless and
   someone may want it.
 
-### Verification
+### Verification on hardware
 
-710 tests pass, 28 of them new. **Not yet run against hardware** — the Pi was
-powered down when these landed. What wants checking on the bench: that the GPS
-reports `fix_type` 2 rather than 3 with a real antenna and a partial fix, and
-that a flight leaves exactly one telemetry file on the card.
+All of it was re-run against the real payload — Pi Zero 2 W, L76K with antenna,
+Waveshare HF HAT.
+
+**The clock step is real, and it was measured on this boot.** No RTC
+(`timedatectl` reports `RTC time: n/a`), and `systemd-timesyncd` stepped the
+clock 44.6 s into the boot:
+
+```
+wall clock at first kernel line : 12:17:59
+wall clock at NTP sync          : 12:21:52
+apparent elapsed (wall)         : 233 s
+actual elapsed (monotonic)      : 44.6 s
+>>> clock stepped FORWARD by      188 s
+```
+
+188 s against a 60 s watchdog timeout. A `TX timeout or failed` warning appears
+in the same second as the sync — the SX1262 TX-done wait tripped by that same
+step, on the old code, live. Whether the old watchdog would actually have
+rebooted is a race: it checks once a second, and the main loop pets far more
+often than that, so most of the time the payload wins. The window where it does
+not is the pause cycle, which pets every 15 s. Worth stating plainly rather than
+claiming a guaranteed reboot — but the step is three times the timeout, and the
+race is one the payload should not be running at all.
+
+**The 2D/3D fix, caught live.** The payload's own telemetry across the antenna
+being connected:
+
+```
+ #   fix_type      sats  altitude    latitude
+ 1   1 = FIX_2D      6     202.0   51.5011077
+ 2   2 = FIX_3D      6     201.4   51.5011052   <-- CHANGED
+...
+85   2 = FIX_3D     10     173.5   51.5011877
+```
+
+Row 1 is exactly the case: a 2D solution carrying an altitude. Under the old
+code it was labelled `FIX_3D` and would have opened the region switch, the zone
+change and the beacon. The same real sentences replayed through both trees:
+
+```
+OLD (installed)  receiver reports 2D -> fix_type=FIX_3D  gates opened: region switch + zone change + beacon
+NEW (reviewed)   receiver reports 2D -> fix_type=FIX_2D  gates opened: none
+```
+
+The launch point was correctly captured from the first *3D* fix, not the 2D row.
+
+**The real receiver sends two GSA sentences per position cycle** (GPS and
+GLONASS), which is the multi-constellation case the fix has to get right, and
+its GSA carries 19 fields — NMEA 4.10 appends a system ID after VDOP. Both
+handled: `parts[2]` for the mode and `parts[15..17]` for the DOPs land correctly
+on the real sentence.
+
+**Sealed telemetry** writes one file on the Pi, and 11 records (header plus ten
+rows) decrypt correctly with the matching private key.
+
+**The payload runs.** Camera, radio, GPS, fountain encoder, zone scheduling; no
+watchdog trips and no restarts across the test.
+
+739 tests pass, 36 of them new.

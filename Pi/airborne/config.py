@@ -178,6 +178,14 @@ class Config:
     zone_landed_vertical_rate_mps: float = 0.5
     zone_landed_dwell_sec: int = 120
     zone_landed_arm_altitude_m: int = 2000
+
+    # The first 3D fix a receiver produces is the worst one it will produce.
+    # Measured on the bench: 202 m at 6 satellites, 173 m at 10 satellites two
+    # minutes later, without moving. Every AGL figure is measured against the
+    # launch altitude, so the reference is refined over this window while the
+    # payload is still on the pad. Zero disables it.
+    zone_launch_settle_sec: int = 180
+    zone_launch_settle_max_drift_m: int = 50
     zone_landed_mesh_percent: float = 5.0
     zone_landed_beacon_interval_sec: int = 60
 

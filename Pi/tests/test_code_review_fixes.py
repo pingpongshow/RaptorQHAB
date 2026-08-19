@@ -396,3 +396,133 @@ def test_command_replay_window(last, seq, duplicate, label):
     handler._last_cmd_seq = {PacketType.CMD_PING: last}
 
     assert handler._is_duplicate(PacketType.CMD_PING, seq) is duplicate, label
+
+
+# --------------------------------------------------------------------------
+# Launch reference taken from the worst fix the receiver produces
+# --------------------------------------------------------------------------
+
+def zone_manager(**kwargs):
+    from airborne.zone_manager import ZoneManager
+
+    defaults = dict(launch_latitude=0.0, launch_longitude=0.0, radius_m=8000.0)
+    defaults.update(kwargs)
+    return ZoneManager(**defaults)
+
+
+# Measured on the bench with a real L76K and antenna, stationary throughout.
+# Altitude MSL as the satellite count climbed from 6 to 10, then holding once
+# converged -- which is what the receiver does for as long as it is left alone.
+BENCH_ALTITUDES = [
+    202.0, 201.4, 200.5, 199.5, 198.4, 195.2, 191.0, 186.3,
+    182.1, 179.0, 176.4, 174.8, 173.9, 173.5, 172.9,
+] + [173.0, 172.8, 173.1, 172.9, 173.2, 172.7, 173.0, 172.9]
+
+
+def test_launch_altitude_is_not_taken_from_the_first_fix():
+    """
+    The defect: _capture_launch_point fired on the very first 3D fix, which is
+    the least accurate one a receiver produces. Every AGL figure is measured
+    against it, so the convergence error is baked into the whole flight.
+
+    Replays real bench data: 202 m at 6 satellites settling to 173 m at 10,
+    without the payload moving an inch.
+    """
+    manager = zone_manager(launch_settle_sec=180.0)
+
+    for index, altitude in enumerate(BENCH_ALTITUDES):
+        manager.update(
+            latitude=51.5011077,
+            longitude=-0.1087385,
+            altitude_m=altitude,
+            fix_type=2,
+            now=1000.0 + index * 10.0,
+        )
+
+    assert manager.launch_altitude_m is not None
+    error = abs(manager.launch_altitude_m - BENCH_ALTITUDES[0])
+    assert error > 10.0, "still pinned to the first fix"
+    assert min(BENCH_ALTITUDES) <= manager.launch_altitude_m <= max(BENCH_ALTITUDES)
+
+
+def test_settled_reference_beats_the_first_fix_on_real_data():
+    """The refinement has to actually be closer to the truth, not just different."""
+    settled_truth = BENCH_ALTITUDES[-1]
+
+    manager = zone_manager(launch_settle_sec=180.0)
+    for index, altitude in enumerate(BENCH_ALTITUDES):
+        manager.update(
+            latitude=51.5011077, longitude=-0.1087385, altitude_m=altitude,
+            fix_type=2, now=1000.0 + index * 10.0,
+        )
+
+    first_fix_error = abs(BENCH_ALTITUDES[0] - settled_truth)
+    settled_error = abs(manager.launch_altitude_m - settled_truth)
+    assert settled_error < first_fix_error
+
+
+def test_refinement_stops_once_the_payload_moves():
+    """
+    Movement means it launched. Refining then would drag the launch reference
+    along with the balloon, which is far worse than a slightly wrong one.
+    """
+    manager = zone_manager(launch_settle_sec=600.0, launch_settle_max_drift_m=50.0)
+
+    manager.update(latitude=51.50110, longitude=-0.10873, altitude_m=200.0,
+                   fix_type=2, now=1000.0)
+    captured_lat = manager.launch_latitude
+
+    # Half a kilometre downrange, climbing.
+    manager.update(latitude=51.50560, longitude=-0.10873, altitude_m=800.0,
+                   fix_type=2, now=1030.0)
+    manager.update(latitude=51.51000, longitude=-0.10873, altitude_m=1600.0,
+                   fix_type=2, now=1060.0)
+
+    assert manager.launch_latitude == captured_lat
+    assert manager._launch_settled
+
+
+def test_configured_launch_point_is_never_refined():
+    """An operator who typed in coordinates meant them."""
+    manager = zone_manager(launch_latitude=51.5, launch_longitude=-0.1,
+                           launch_altitude_m=25.0, launch_settle_sec=90.0)
+
+    for index in range(15):
+        manager.update(latitude=51.5, longitude=-0.1, altitude_m=200.0 + index,
+                       fix_type=2, now=1000.0 + index * 10.0)
+
+    assert manager.launch_latitude == 51.5
+    assert manager.launch_altitude_m == 25.0
+
+
+def test_settling_can_be_disabled():
+    """Zero restores the previous behaviour exactly."""
+    manager = zone_manager(launch_settle_sec=0.0)
+
+    for index, altitude in enumerate(BENCH_ALTITUDES):
+        manager.update(latitude=51.5011077, longitude=-0.1087385,
+                       altitude_m=altitude, fix_type=2, now=1000.0 + index * 10.0)
+
+    assert manager.launch_altitude_m == BENCH_ALTITUDES[0]
+
+
+def test_zone_logic_works_during_the_settling_window():
+    """The provisional point is used immediately; nothing waits on settling."""
+    manager = zone_manager(launch_settle_sec=90.0)
+    state = manager.update(latitude=51.50110, longitude=-0.10873,
+                           altitude_m=200.0, fix_type=2, now=1000.0)
+
+    assert state.zone.value == "launch"
+    assert state.distance_from_launch_m == pytest.approx(0.0, abs=1.0)
+
+
+def test_a_two_d_fix_does_not_capture_the_launch_point():
+    """Ties the two fixes together: D1 is what keeps a 2D altitude out of here."""
+    from common.constants import FixType
+
+    manager = zone_manager(launch_settle_sec=90.0)
+    manager.update(latitude=51.50110, longitude=-0.10873, altitude_m=202.0,
+                   fix_type=int(FixType.FIX_2D), now=1000.0)
+
+    assert not manager._launch_point_captured
+    assert manager.launch_altitude_m is None

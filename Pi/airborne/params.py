@@ -812,6 +812,24 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         apply=Apply.LIVE, minimum=100, maximum=20000, unit="m",
     ),
     _spec(
+        "zone_launch_settle_sec", Kind.INT, "Zone Launch",
+        "How long the auto-captured launch point keeps being refined while "
+        "the payload sits on the pad. The first 3D fix a receiver produces is "
+        "the worst one it will produce -- measured on the bench, 202 m at six "
+        "satellites and 173 m at ten, two minutes later, without moving. "
+        "Every AGL figure is measured against this reference, so taking it "
+        "from the first fix carries that error through the whole flight. "
+        "Zero disables the refinement.",
+        apply=Apply.RESTART, minimum=0, maximum=1800, unit="s",
+    ),
+    _spec(
+        "zone_launch_settle_max_drift_m", Kind.INT, "Zone Launch",
+        "Stop refining the launch point once the payload has moved this far "
+        "from it. Movement means it has launched, and refining then would "
+        "drag the reference along with the balloon.",
+        apply=Apply.RESTART, minimum=5, maximum=1000, unit="m",
+    ),
+    _spec(
         "zone_landed_mesh_percent", Kind.FLOAT, "Zone Landed",
         "Share of airtime spent on Meshtastic after landing. Keep it low: on "
         "the ground the battery has to outlast the drive to the site.",

@@ -32,7 +32,8 @@ import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Deque, Optional, Tuple
+from statistics import median
+from typing import Deque, List, Optional, Tuple
 from collections import deque
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,8 @@ class ZoneManager:
         landed_arm_altitude_m: float = 2000.0,
         altitude_window_sec: float = 120.0,
         auto_capture_launch_point: bool = True,
+        launch_settle_sec: float = 90.0,
+        launch_settle_max_drift_m: float = 50.0,
     ):
         """
         Args:
@@ -126,6 +129,19 @@ class ZoneManager:
                 rate estimate.
             auto_capture_launch_point: Capture the launch point from the first
                 3D fix if none was configured.
+            launch_settle_sec: How long to keep refining an auto-captured
+                launch point while the payload is still sitting on the pad.
+                The first 3D fix a receiver produces is the worst one it will
+                produce -- measured on the bench, the altitude moved 28 m over
+                two minutes while stationary as the satellite count went from
+                6 to 10. Since every AGL figure in this class is measured
+                against that reference, taking it from the first fix bakes the
+                convergence error into the whole flight. Zero disables the
+                refinement.
+            launch_settle_max_drift_m: Abandon refinement if the payload moves
+                this far from the provisional point. Movement means it has
+                launched, and refining then would drag the reference along
+                with it.
         """
         self.launch_latitude = launch_latitude
         self.launch_longitude = launch_longitude
@@ -139,10 +155,19 @@ class ZoneManager:
         self.landed_arm_altitude_m = landed_arm_altitude_m
         self.altitude_window_sec = altitude_window_sec
         self.auto_capture_launch_point = auto_capture_launch_point
+        self.launch_settle_sec = max(0.0, launch_settle_sec)
+        self.launch_settle_max_drift_m = launch_settle_max_drift_m
 
         self._launch_point_captured = not (
             launch_latitude == 0.0 and launch_longitude == 0.0
         )
+
+        # Refinement state. Only ever runs for a point this class captured
+        # itself: an operator who typed in coordinates meant them.
+        self._launch_altitude_auto = launch_altitude_m is None
+        self._launch_settled = self._launch_point_captured
+        self._launch_capture_at: Optional[float] = None
+        self._launch_samples: List[Tuple[float, float, Optional[float]]] = []
 
         self._state = ZoneState(
             zone=Zone.UNKNOWN,
@@ -207,7 +232,9 @@ class ZoneManager:
             return self._state
 
         if not self._launch_point_captured:
-            self._capture_launch_point(latitude, longitude, altitude_m)
+            self._capture_launch_point(now, latitude, longitude, altitude_m)
+        elif not self._launch_settled:
+            self._refine_launch_point(now, latitude, longitude, altitude_m)
 
         if altitude_m is not None:
             self._altitude_history.append((now, altitude_m))
@@ -371,21 +398,126 @@ class ZoneManager:
     # -- helpers -----------------------------------------------------------
 
     def _capture_launch_point(
-        self, latitude: float, longitude: float, altitude_m: Optional[float]
+        self,
+        now: float,
+        latitude: float,
+        longitude: float,
+        altitude_m: Optional[float],
     ) -> None:
+        """
+        Take a provisional launch point from the first 3D fix.
+
+        Provisional, not final. The reference is used immediately so nothing
+        waits on it, and then refined over the settling window while the
+        payload is still on the pad -- see _refine_launch_point.
+        """
         if not self.auto_capture_launch_point:
             return
 
         self.launch_latitude = latitude
         self.launch_longitude = longitude
-        if self.launch_altitude_m is None:
+        if self._launch_altitude_auto:
             self.launch_altitude_m = altitude_m
         self._launch_point_captured = True
+
+        self._launch_capture_at = now
+        self._launch_samples = [(latitude, longitude, altitude_m)]
+        self._launch_settled = self.launch_settle_sec <= 0
 
         logger.info(
             f"Launch point captured from first fix: "
             f"{latitude:.5f}, {longitude:.5f} at "
             f"{'unknown' if altitude_m is None else f'{altitude_m:.0f} m'} MSL"
+            + ("" if self._launch_settled
+               else f"; refining for {self.launch_settle_sec:.0f} s")
+        )
+
+    def _refine_launch_point(
+        self,
+        now: float,
+        latitude: float,
+        longitude: float,
+        altitude_m: Optional[float],
+    ) -> None:
+        """
+        Improve the launch reference while the payload is still on the pad.
+
+        A receiver's first 3D fix is its worst. On the bench this one reported
+        202 m with 6 satellites and 173 m with 10, two minutes later, without
+        moving. Every AGL figure this class produces is measured against the
+        launch altitude, so a reference taken from that first fix carries its
+        error for the entire flight -- into the landed-altitude threshold, the
+        cruise override, and the arming height for landing detection.
+
+        Taking the median of the settling window instead of the first sample
+        costs nothing and is robust to the outliers that make the first fix bad
+        in the first place.
+        """
+        if self._launch_capture_at is None:
+            self._launch_settled = True
+            return
+
+        drift = haversine_m(
+            self.launch_latitude, self.launch_longitude, latitude, longitude
+        )
+        if drift > self.launch_settle_max_drift_m:
+            # It moved. That is a launch, not a settling receiver, and
+            # refining past this point would drag the reference along with the
+            # balloon. Finalise on what was gathered while it was still
+            # stationary, which is better than the first fix even if the
+            # window did not run its full length.
+            self._finalise_launch_point(
+                f"payload moved {drift:.0f} m before the window closed"
+            )
+            return
+
+        self._launch_samples.append((latitude, longitude, altitude_m))
+
+        if now - self._launch_capture_at < self.launch_settle_sec:
+            return
+
+        self._finalise_launch_point(f"settled over {self.launch_settle_sec:.0f} s")
+
+    def _finalise_launch_point(self, reason: str) -> None:
+        """
+        Commit the refined launch point.
+
+        Uses the median of the *later* half of the samples rather than all of
+        them. A receiver acquiring satellites produces a converging series, not
+        a noisy one scattered about a true value, so the median of the whole
+        window sits in the middle of the convergence -- better than the first
+        fix, but still short of where the receiver ends up. The later half is
+        both closer to converged and still a median, so a single wild sample
+        cannot drag it.
+        """
+        self._launch_settled = True
+
+        samples = self._launch_samples
+        if not samples:
+            return
+
+        # At least two samples, and never more than the later half.
+        tail = samples[len(samples) // 2:] if len(samples) > 2 else samples
+        previous_alt = self.launch_altitude_m
+
+        self.launch_latitude = median(s[0] for s in tail)
+        self.launch_longitude = median(s[1] for s in tail)
+
+        altitudes = [s[2] for s in tail if s[2] is not None]
+        if self._launch_altitude_auto and altitudes:
+            self.launch_altitude_m = median(altitudes)
+
+        moved = (
+            None if previous_alt is None or self.launch_altitude_m is None
+            else self.launch_altitude_m - previous_alt
+        )
+        logger.info(
+            f"Launch point {reason} ({len(samples)} fixes, "
+            f"{len(tail)} used): {self.launch_latitude:.5f}, "
+            f"{self.launch_longitude:.5f} at "
+            f"{'unknown' if self.launch_altitude_m is None else f'{self.launch_altitude_m:.0f} m'}"
+            f" MSL"
+            + ("" if moved is None else f" ({moved:+.0f} m vs the first fix)")
         )
 
     def _altitude_agl(self, altitude_m: Optional[float]) -> Optional[float]:
