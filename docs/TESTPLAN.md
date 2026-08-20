@@ -120,6 +120,42 @@ connects, `ssh raptorhab.local` connects.*
 
 ---
 
+## Forcing flight scenarios on the bench
+
+Any zone or condition can be forced without leaving the desk, using
+`payload/tools/flightsim.py` **on the payload**. It feeds synthetic NMEA
+through a pseudo-terminal, so the whole real pipeline runs — the parser, the
+GSA/GGA fix-type logic, the zone manager, launch detection, flight-state
+persistence, the WiFi cutoff, and the airtime schedules keyed off them.
+Nothing is stubbed; the payload cannot tell it from a receiver.
+
+```bash
+sudo python3 /opt/raptorhab/tools/flightsim.py run flight --speedup 2
+sudo python3 /opt/raptorhab/tools/flightsim.py restore     # always finish here
+```
+
+Scenarios: `pad`, `launch`, `cruise`, `descent`, `landed`, `gps-loss`, `2d`
+(a fix the payload must refuse), `flight` (the whole arc).
+
+Know before running an ascent:
+
+- **Launch detection is real here.** The payload records a launch and — with
+  `wifi_off_after_launch` set — turns WiFi off as it climbs through the
+  cutoff altitude. Use the USB cable; `restore` unblocks WiFi, points the
+  payload back at the real receiver, and clears the simulated flight state.
+- **Compressed timelines squeeze the launch-point settling window.** The
+  180 s refinement can overlap the simulated ascent, inflating the launch
+  altitude reference; AGL then reads low (even negative on the ground).
+  Cosmetic for zone testing, but keep it in mind when reading AGL numbers.
+
+*Verified 2026-08-20 on the payload: pad → launch → cruise (schedule flipped
+to 5/5/90, repeater and mesh-log eligibility live) → descent (hysteresis
+back through launch) → LANDED after the 120 s dwell. Landing detection armed
+at 2122 m AGL; WiFi cutoff fired at 681 m AGL and USB access survived;
+`restore` returned the payload to the real receiver with a clean state.*
+
+---
+
 ## Arm B — manual, run by you
 
 The order is deliberate: it is the order in which a mistake becomes expensive.

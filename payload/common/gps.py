@@ -378,7 +378,24 @@ class GPS:
         try:
             if len(parts) < 15:
                 return
-            
+
+            # An explicit "no fix": quality 0, empty position fields. This
+            # used to fall through the empty-latitude return below, leaving
+            # fix_type and position_valid frozen at whatever they were --
+            # a payload that lost GPS entirely kept reporting the 3D fix it
+            # no longer had. Losing the fix is a report, not an absence of
+            # one. The last known coordinates are kept (they are still the
+            # best guess for recovery); only the validity changes.
+            quality = int(parts[6]) if parts[6] else 0
+            if quality == 0:
+                with self._data_lock:
+                    self._data.fix_type = FixType.NONE
+                    self._data.position_valid = False
+                    self._data.satellites = int(parts[7]) if parts[7] else 0
+                    self._data.last_update = time.monotonic()
+                self._notify_callbacks()
+                return
+
             # Parse latitude
             if parts[2] and parts[3]:
                 lat = float(parts[2][:2]) + float(parts[2][2:]) / 60
