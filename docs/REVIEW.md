@@ -920,3 +920,89 @@ whole `payload/` tree to `/opt/raptorhab`, excluding only `.venv`, `__pycache__`
 from the bench Pi because it was written after that Pi was last installed, not
 because the installer skips it. The loop has been removed — a second mechanism
 doing the same job is a thing to keep in sync for no gain.
+
+---
+
+## Ground station link failure — the modem sends, the app hears nothing
+
+Found on hardware: the T190 reported **27,289 packets forwarded** (22,856
+telemetry, 4,433 image, 3 CRC errors, 100.0% success) while the macOS app
+showed **64 packets received, 0 images**, and then "signal lost" with the
+modem still connected and still forwarding.
+
+Three faults, all in the framing layer, compounding.
+
+### G1. Status text was split off by scanning the binary stream for newlines **[FIXED]**
+`SerialPortManager.processReceivedData` called `extractTextLines()` on the raw
+buffer before any frame parsing. It deleted everything up to and including
+each `0x0A`.
+
+`0x0A` is an ordinary data byte inside a frame and the modem does not escape
+it. A 240-byte image frame contains one about **61%** of the time; a 57-byte
+telemetry frame about **20%**. Worse, the scan removed everything *before* the
+newline too, so one poisoned frame took its neighbours with it.
+
+This is why **no images arrived at all** while telemetry trickled through:
+image frames are four times the size, so they are far likelier to contain the
+byte that destroyed them.
+
+Measured on a 4,000-frame stream of real packets: **4,000 recovered with the
+newline pass removed, 0 with it in place.**
+
+Fix: the frame scan is what separates the two streams. Bytes inside a frame
+are frame bytes; whatever falls outside one is text.
+
+### G2. A one-byte slip silently killed the link for good **[FIXED]**
+Frames are delimited at both ends:
+
+```
+0x7E <frame> 0x7E   0x7E <frame> 0x7E
+```
+
+A scanner that loses one byte pairs a *closing* delimiter with the next
+frame's *opening* one. It then extracts the two-byte gap as an empty frame,
+lands on frame data with no opening delimiter, discards to the next delimiter
+— and repeats, forever. There is no self-correction: every subsequent frame is
+dropped in silence.
+
+Measured: starting the parser one byte early took **4,000 valid frames to 0**.
+
+That is the "signal lost": G1 corrupts the stream, the parser flips parity,
+and the app never receives another packet even though the modem keeps sending.
+
+Fix: validate a candidate against its own length field *and* checksum **before
+consuming any of it**. The modem XORs every byte it sends into the checksum,
+so a whole valid frame XORs to zero. A candidate that fails costs exactly one
+byte, so a false start can no longer swallow the real frames inside it.
+
+### G3. `0x7B` was honoured as a frame start on a modem that never escapes it **[FIXED]**
+The dual-radio board carries Meshtastic on a second delimiter, `0x7B`, and
+escapes that byte inside every frame. The single-radio firmware did not — it
+has one radio and never opens a `0x7B` frame. But both parsers watch for both
+delimiters, so a raw `0x7B` in image data (about **58%** of image packets) was
+a frame start waiting to be mistaken for one, reachable whenever the parser
+was already off alignment.
+
+Fix: the single-radio firmware now escapes `0x7B` as well, so one wire format
+covers every board and the parser needs no knowledge of which it is talking
+to. G2's validation makes the case safe regardless, so an app built from this
+commit recovers the link **without reflashing the modem**.
+
+### What changed
+- `groundstation/macos/RaptorHabGS/FrameScanner.swift` — new. The framing now
+  lives in a dependency-free type that can be tested directly; the bug it
+  replaced discarded every frame in silence, which is precisely the failure a
+  unit test catches and a hardware session does not.
+- `groundstation/macos/RaptorHabGS/SerialPortManager.swift` — delegates to it.
+- `groundstation/python/raptorhabgs/core/protocol.py` — same validate-before-
+  consume fix. The Python GS never had G1.
+- `firmware/gs-modem/src/main.cpp` — escapes `0x7B`.
+
+### Tests
+- `payload/tests/test_frame_resync.py` — 13 tests over real telemetry and
+  image packets: newlines inside frames, image frames specifically, recovery
+  from a one-byte slip and from five different starting offsets, a dropped
+  mid-stream fragment, interleaved status text, and 200 KB of noise yielding
+  nothing. Seven fail against the previous code.
+- `payload/tests/test_swift_parity.py` — four more that compile and run the
+  real `FrameScanner.swift` against streams Python builds.

@@ -1163,10 +1163,19 @@ void forwardPacket(uint8_t* data, int len, float rssi, float snr) {
         checksum ^= data[i];
     }
     
+    // 0x7B is the dual-radio modem's second frame delimiter. This board has
+    // one radio and never opens a 0x7B frame, but it must still escape the
+    // byte: a ground station that watches for both delimiters would otherwise
+    // read a raw 0x7B in image data as the start of a frame. Escaping it here
+    // keeps one wire format across every board, so the parser needs no
+    // knowledge of which one it is talking to.
     auto writeStuffed = [](uint8_t b) {
         if (b == 0x7E) {
             Serial.write(0x7D);
             Serial.write(0x5E);
+        } else if (b == 0x7B) {
+            Serial.write(0x7D);
+            Serial.write(0x5B);
         } else if (b == 0x7D) {
             Serial.write(0x7D);
             Serial.write(0x5D);

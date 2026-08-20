@@ -74,6 +74,10 @@ def snr_is_measured(snr: float) -> bool:
 # has been stashed rather than returned. Distinct from None, which means "no
 # complete frame yet" and stops the extraction loop.
 _MESHTASTIC_FRAME = object()
+
+# A candidate frame start that did not validate. The buffer has been advanced
+# past one byte and the caller should scan again.
+_RESYNC = object()
 ESCAPE_BYTE = 0x7D
 
 # Protocol constants
@@ -498,6 +502,9 @@ class FrameExtractor:
         # decrypt: a borrowed board never carries them.
         self._meshtastic: List[Tuple[float, float, bytes]] = []
         self.meshtastic_frames = 0
+        # Candidate frame starts rejected. Climbing steadily means the stream
+        # is being corrupted upstream.
+        self.resyncs = 0
 
     def take_meshtastic(self) -> List[Tuple[float, float, bytes]]:
         """Whole Meshtastic LoRa packets heard since the last call."""
@@ -522,7 +529,7 @@ class FrameExtractor:
             frame = self._extract_frame()
             if frame is None:
                 break
-            if frame is _MESHTASTIC_FRAME:
+            if frame is _MESHTASTIC_FRAME or frame is _RESYNC:
                 continue
             frames.append(frame)
         
@@ -549,18 +556,19 @@ class FrameExtractor:
         # Remove data before frame start
         if start_idx > 0:
             del self.buffer[:start_idx]
+            return _RESYNC
 
         delimiter = self.buffer[0]
-        
-        # Need at least a few bytes to check
-        if len(self.buffer) < 2:
+
+        # Start delimiter + header + a byte of data + checksum + end delimiter
+        if len(self.buffer) < 10:
             return None
-        
-        # Find end delimiter - scan for 0x7E that's NOT part of escape sequence
-        # In properly stuffed data, 0x7E only appears as delimiter
+
+        # Find end delimiter - scan for a delimiter that's NOT part of an
+        # escape sequence. In properly stuffed data it only appears as one.
         end_offset = None
         i = 1  # Start after start delimiter
-        
+
         while i < len(self.buffer):
             # A frame ends on the same delimiter it began with. The other
             # stream's delimiter is escaped inside a frame, so it cannot
@@ -573,23 +581,32 @@ class FrameExtractor:
                 i += 2  # Skip escape byte and following byte
             else:
                 i += 1
-        
+
         if end_offset is None:
-            # No end delimiter yet - need more data
             if len(self.buffer) > 2000:
-                print(f"[FrameExtractor] Buffer too large ({len(self.buffer)}), clearing")
-                self.buffer.clear()
+                # No closing delimiter within any plausible frame length, so
+                # this opening byte was payload. Step over it; clearing the
+                # buffer would take the real frames with it.
+                del self.buffer[:1]
+                self.resyncs += 1
+                return _RESYNC
             return None
-        
-        # Extract stuffed frame (excluding delimiters)
-        stuffed_data = bytes(self.buffer[1:end_offset])
-        
+
+        # De-stuff before consuming anything. Frames are delimited at both
+        # ends, so a scanner that loses a byte can pair a closing delimiter
+        # with the next frame's opening one and stay wrong forever, silently
+        # discarding everything that follows. Validating first means a false
+        # start costs one byte instead of the frames inside it.
+        destuffed = self._destuff(bytes(self.buffer[1:end_offset]))
+
+        if not self._frame_is_valid(destuffed):
+            del self.buffer[:1]
+            self.resyncs += 1
+            return _RESYNC
+
         # Remove frame from buffer (including both delimiters)
         del self.buffer[:end_offset + 1]
-        
-        # De-stuff the data (HDLC-style)
-        destuffed = self._destuff(stuffed_data)
-        
+
         if delimiter == MESHTASTIC_DELIMITER:
             parsed = self._parse_frame(destuffed, require_sync=False)
             if parsed is not None:
@@ -597,13 +614,29 @@ class FrameExtractor:
                 self.meshtastic_frames += 1
             return _MESHTASTIC_FRAME
 
-        if destuffed is None or len(destuffed) < 8:
-            print(f"[FrameExtractor] Frame too short after de-stuffing: {len(destuffed) if destuffed else 0}")
-            return None
-        
         # Parse the de-stuffed frame
         return self._parse_frame(destuffed)
     
+    @staticmethod
+    def _frame_is_valid(destuffed) -> bool:
+        """Is this candidate a real frame, before any of it is consumed?
+
+        The modem XORs every byte it sends into the checksum, so a complete
+        valid frame XORs to zero. That is what makes resynchronisation
+        trustworthy: a false start has to satisfy the length field and then
+        hit 1 chance in 256 to be accepted.
+        """
+        # len(2) + rssi(2) + snr(2) + data(1+) + checksum(1)
+        if destuffed is None or len(destuffed) < 8:
+            return False
+        data_len = (destuffed[0] << 8) | destuffed[1]
+        if not 0 < data_len <= 255 or len(destuffed) != 7 + data_len:
+            return False
+        parity = 0
+        for byte in destuffed:
+            parity ^= byte
+        return parity == 0
+
     def _destuff(self, data: bytes) -> Optional[bytearray]:
         """Remove HDLC byte stuffing."""
         destuffed = bytearray()

@@ -41,6 +41,9 @@ struct Results: Encodable {
     var aesCTR: [String] = []
     var channelHashes: [String: Int] = [:]
     var meshPackets: [String] = []
+    /// One entry per modem stream fed to FrameScanner: the payloads it
+    /// recovered, and the status lines it separated out.
+    var scannerRuns: [[String: [String]]] = []
 }
 
 var results = Results()
@@ -145,6 +148,34 @@ let packet = MeshtasticProtocol.buildPacket(
     packetID: 0x11223344
 )
 results.meshPackets.append(hex(packet))
+
+// --- Modem framing --------------------------------------------------------
+//
+// The scanner separates frames from status text on a stream that carries
+// both, and has to survive losing a byte. Frames are delimited at both ends,
+// so a scanner that slips can pair a closing delimiter with the next frame's
+// opening one and discard every frame after it in silence -- which is exactly
+// what happened on the live link. Python builds the streams; the real Swift
+// scanner is what runs here.
+
+for streamHex in (ProcessInfo.processInfo.environment["MODEM_STREAMS"] ?? "")
+        .split(separator: ",", omittingEmptySubsequences: false) {
+    let scanner = FrameScanner()
+    let stream = data(hex: String(streamHex))
+    var payloads: [String] = []
+    var lines: [String] = []
+
+    // 64 bytes at a time, the way USB reads actually arrive.
+    var offset = 0
+    while offset < stream.count {
+        let end = min(offset + 64, stream.count)
+        let out = scanner.feed(stream.subdata(in: offset..<end))
+        for frame in out.frames { payloads.append(hex(frame.payload)) }
+        lines.append(contentsOf: out.textLines)
+        offset = end
+    }
+    results.scannerRuns.append(["payloads": payloads, "text": lines])
+}
 
 // --- Output ---------------------------------------------------------------
 

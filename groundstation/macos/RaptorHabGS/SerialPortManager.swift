@@ -71,8 +71,7 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
     private var fileDescriptor: Int32 = -1
     private var readThread: Thread?
     private var shouldRun = false
-    private var rxBuffer = Data()
-    private let bufferLock = NSLock()  // Thread safety for rxBuffer
+    private let bufferLock = NSLock()  // Serialises access to the scanner
     
     // MARK: - Debug
     
@@ -234,7 +233,7 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         
         // Clear buffer with lock
         bufferLock.lock()
-        rxBuffer.removeAll()
+        scanner.reset()
         bufferLock.unlock()
         
         // Clear config state
@@ -420,226 +419,33 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
      * [0x7E][LEN_HI][LEN_LO][RSSI_INT][RSSI_FRAC][SNR_INT][SNR_FRAC][DATA...][CHECKSUM][0x7E]
      */
     
-    private var textLineBuffer = ""
-    
+    /// Splits the modem's stream into frames and status lines. Kept in its own
+    /// dependency-free type so the framing can be tested directly -- the bug
+    /// it replaced discarded every frame in silence.
+    private let scanner = FrameScanner()
+
     private func processReceivedData(_ data: Data) {
         bufferLock.lock()
-        rxBuffer.append(data)
+        let out = scanner.feed(data)
         bufferLock.unlock()
-        
-        // First, check for text lines (modem status messages)
-        extractTextLines()
-        
-        // Process complete frames. The two streams are kept apart: a
-        // Meshtastic packet handed to parseFrame would be read as an image
-        // symbol, since everything downstream assumes RAPTOR.
-        while let extracted = extractFrame() {
-            if extracted.isMeshtastic {
-                handleMeshtasticFrame(extracted.data)
-                continue
-            }
-            DispatchQueue.main.async { [weak self] in
-                self?.framesExtracted += 1
-            }
-            parseFrame(extracted.data)
-        }
-        
-        // Prevent buffer from growing too large
-        bufferLock.lock()
-        if rxBuffer.count > 10000 {
-            debugLog("Buffer overflow, clearing")
-            rxBuffer.removeAll()
-        }
-        bufferLock.unlock()
-    }
-    
-    /// Extract and process text lines from the buffer (for modem status/config messages)
-    private func extractTextLines() {
-        var linesToProcess: [String] = []
-        
-        bufferLock.lock()
-        
-        // Look for newlines in the buffer and collect text lines
-        while let newlineIndex = rxBuffer.firstIndex(of: 0x0A) {  // '\n'
-            // Safety check
-            let countToRemove = newlineIndex + 1
-            guard countToRemove <= rxBuffer.count else {
-                debugLog("Warning: Invalid newline index \(newlineIndex), buffer size \(rxBuffer.count)")
-                break
-            }
-            
-            let lineData = rxBuffer.prefix(upTo: newlineIndex)
-            rxBuffer.removeFirst(countToRemove)  // Remove line including newline
-            
-            // Convert to string
-            if let lineStr = String(data: Data(lineData), encoding: .utf8) {
-                let trimmed = lineStr.trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                // Check if this looks like a text line (not a binary frame)
-                // Text lines start with '[' or 'CFG' and don't start with frame delimiter
-                if !trimmed.isEmpty && lineData.first != Self.frameDelimiter {
-                    if trimmed.hasPrefix("[") || trimmed.hasPrefix("CFG") || 
-                       trimmed.hasPrefix("RaptorHab") || trimmed.hasPrefix("Heltec") ||
-                       trimmed.hasPrefix("=") {
-                        linesToProcess.append(trimmed)
-                    }
+
+        for frame in out.frames {
+            // The two streams are kept apart: a Meshtastic packet handed to
+            // parseFrame would be read as an image symbol, since everything
+            // downstream assumes RAPTOR.
+            if frame.isMeshtastic {
+                handleMeshtasticFrame(frame.data)
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.framesExtracted += 1
                 }
+                parseFrame(frame.data)
             }
         }
-        
-        bufferLock.unlock()
-        
-        // Process collected lines outside the lock to avoid race conditions
-        for line in linesToProcess {
+
+        for line in out.textLines {
             processTextLine(line)
         }
-    }
-    
-    /// A frame plus the stream it arrived on, so the caller can route it.
-    struct ExtractedFrame {
-        let delimiter: UInt8
-        let data: Data
-        var isMeshtastic: Bool { delimiter == SerialPortManager.meshtasticDelimiter }
-    }
-
-    private func extractFrame() -> ExtractedFrame? {
-        bufferLock.lock()
-        defer { bufferLock.unlock() }
-        
-        // Need at least start delimiter + some data + end delimiter
-        guard rxBuffer.count >= 10 else { return nil }
-        
-        let bytes = [UInt8](rxBuffer)
-        
-        // Find the start of either stream, whichever comes first.
-        var startOffset = -1
-        for i in 0..<bytes.count {
-            if bytes[i] == Self.frameDelimiter || bytes[i] == Self.meshtasticDelimiter {
-                startOffset = i
-                break
-            }
-        }
-        
-        guard startOffset >= 0 else { return nil }
-        
-        // Remove any data before start delimiter
-        if startOffset > 0 {
-            rxBuffer.removeFirst(startOffset)
-            return nil  // Re-call to start fresh
-        }
-        
-        // Find end delimiter - scan for 0x7E that's NOT part of escape sequence
-        // In properly stuffed data, 0x7E only appears as delimiter
-        // 0x7D 0x5E = escaped 0x7E data byte
-        // 0x7D 0x5B = escaped 0x7B data byte (dual-radio modem)
-        // 0x7D 0x5D = escaped 0x7D data byte
-        let openingDelimiter = bytes[startOffset]
-        var endOffset: Int? = nil
-        var i = 1
-        while i < bytes.count {
-            // A frame ends on the same delimiter it began with. The other
-            // stream's delimiter is escaped inside a frame, so it cannot
-            // appear here unescaped.
-            if bytes[i] == openingDelimiter {
-                endOffset = i
-                break
-            }
-            // Skip escape sequences
-            if bytes[i] == 0x7D && i + 1 < bytes.count {
-                i += 2  // Skip escape byte and following byte
-            } else {
-                i += 1
-            }
-        }
-        
-        guard let frameEnd = endOffset else {
-            // No end delimiter yet
-            if rxBuffer.count > 2000 {
-                debugLog("Buffer too large (\(rxBuffer.count)), clearing")
-                rxBuffer.removeAll()
-            }
-            return nil
-        }
-        
-        // Extract stuffed frame (excluding delimiters)
-        let stuffedData = Array(bytes[1..<frameEnd])
-        
-        // Remove frame from buffer (including both delimiters)
-        rxBuffer.removeFirst(frameEnd + 1)
-        
-        // De-stuff the data (HDLC-style)
-        var destuffed = [UInt8]()
-        destuffed.reserveCapacity(stuffedData.count)
-        
-        i = 0
-        while i < stuffedData.count {
-            if stuffedData[i] == 0x7D && i + 1 < stuffedData.count {
-                let nextByte = stuffedData[i + 1]
-                if nextByte == 0x5B {
-                    // 0x7B is a second frame delimiter on the dual-radio
-                    // modem, which carries Meshtastic traffic alongside
-                    // RAPTOR, so it escapes 0x7B inside every frame -- RAPTOR
-                    // frames included. Without this mapping the de-stuffer
-                    // desynchronises on the unknown escape and the frame fails
-                    // its checksum. A 210-byte image packet contains a 0x7B
-                    // about 56% of the time; measured, 45% of image packets
-                    // survived instead of 100%. A single-radio modem never
-                    // emits this sequence, so accepting it costs it nothing.
-                    destuffed.append(0x7B)
-                    i += 2
-                } else if nextByte == 0x5E {
-                    destuffed.append(0x7E)
-                    i += 2
-                } else if nextByte == 0x5D {
-                    destuffed.append(0x7D)
-                    i += 2
-                } else {
-                    // Invalid escape - just pass through
-                    debugLog("Invalid escape sequence: 7D \(String(format: "%02X", nextByte))")
-                    destuffed.append(stuffedData[i])
-                    i += 1
-                }
-            } else {
-                destuffed.append(stuffedData[i])
-                i += 1
-            }
-        }
-        
-        // Debug: show stuffed vs destuffed size
-        if stuffedData.count != destuffed.count {
-            debugLog("De-stuffed: \(stuffedData.count) -> \(destuffed.count) bytes")
-        }
-        
-        // Validate minimum frame size: len(2) + rssi(2) + snr(2) + data(1+) + checksum(1) = 8+
-        guard destuffed.count >= 8 else {
-            debugLog("Frame too short after de-stuffing: \(destuffed.count)")
-            return nil
-        }
-        
-        // Validate length field
-        let lenHi = Int(destuffed[0])
-        let lenLo = Int(destuffed[1])
-        let dataLen = (lenHi << 8) | lenLo
-        
-        guard dataLen > 0 && dataLen <= 255 else {
-            debugLog("Invalid frame length: \(dataLen)")
-            return nil
-        }
-        
-        // Expected: len(2) + rssi(2) + snr(2) + data(dataLen) + checksum(1) 
-        let expectedSize = 2 + 2 + 2 + dataLen + 1
-        guard destuffed.count >= expectedSize else {
-            debugLog("Frame size mismatch: got \(destuffed.count), expected \(expectedSize) (dataLen=\(dataLen))")
-            return nil
-        }
-        
-        // Trim any extra bytes (shouldn't happen, but be safe)
-        if destuffed.count > expectedSize {
-            debugLog("Trimming \(destuffed.count - expectedSize) extra bytes")
-            destuffed = Array(destuffed.prefix(expectedSize))
-        }
-
-        return ExtractedFrame(delimiter: openingDelimiter, data: Data(destuffed))
     }
 
     /// A whole Meshtastic LoRa packet the modem's second radio heard.

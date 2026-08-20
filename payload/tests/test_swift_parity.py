@@ -38,6 +38,7 @@ PARITY_MAIN = REPO_ROOT / "groundstation/macos" / "Tests" / "main.swift"
 # Only the files the parity checks actually touch. Compiling the whole app
 # would drag in SwiftUI views and CoreBluetooth for no benefit.
 NEEDED_SOURCES = [
+    "FrameScanner.swift",
     "LinkProtocol.swift",
     "MeshtasticProtobuf.swift",
     "MeshtasticProtocol.swift",
@@ -57,6 +58,26 @@ requires_swift = pytest.mark.skipif(
     not _swift_available(),
     reason="swiftc or the macOS app sources are not available here",
 )
+
+
+def modem_streams():
+    """Streams for the Swift frame scanner, in the order main.swift reads them.
+
+    Built here so both halves agree on the wire format, and so the awkward
+    cases are explicit: a frame full of newlines, a one-byte slip, status text
+    mixed in with frames, and pure noise.
+    """
+    from tests.test_frame_resync import frame, telemetry, image, mixed_stream
+
+    clean, packets = mixed_stream(count=30, seed=2)
+    # Status text arrives between frames, never inside one -- the modem
+    # finishes a frame before it prints.
+    framed = [frame(p) for p in packets]
+    text = (b"[READY] Listening for packets...\r\n" + b"".join(framed[:5])
+            + b"\n[RADIO] Reconfiguring for new settings...\r\n"
+            + b"".join(framed[5:]))
+    noise = bytes((i * 37 + 11) % 256 for i in range(4000))
+    return [clean, clean[len(frame(packets[0])) - 1:], text, noise]
 
 
 @pytest.fixture(scope="module")
@@ -132,7 +153,11 @@ enum MeshtasticManager {
         encode_frame(Channel.CONSOLE, b"RH" * 40),
     ])
 
-    environment = dict(os.environ, PYTHON_FRAMES=python_frames.hex())
+    environment = dict(
+        os.environ,
+        PYTHON_FRAMES=python_frames.hex(),
+        MODEM_STREAMS=",".join(s.hex() for s in modem_streams()),
+    )
     run_result = subprocess.run(
         [str(binary)], capture_output=True, text=True, timeout=120, env=environment
     )
@@ -278,3 +303,44 @@ def _data_envelope(portnum: int, payload: bytes) -> bytes:
     writer.enum(1, portnum, force=True)
     writer.bytes(2, payload, force=True)
     return writer.to_bytes()
+
+
+# --- Modem framing --------------------------------------------------------
+
+
+def _expected_payloads():
+    from tests.test_frame_resync import mixed_stream
+    _, packets = mixed_stream(count=30, seed=2)
+    return [p.hex() for p in packets]
+
+
+@requires_swift
+def test_swift_scanner_recovers_every_frame(swift_results):
+    """A clean stream: every packet Python framed comes back byte for byte."""
+    assert swift_results["scannerRuns"][0]["payloads"] == _expected_payloads()
+
+
+@requires_swift
+def test_swift_scanner_survives_a_one_byte_slip(swift_results):
+    """Frames are delimited at both ends, so a slip flips delimiter parity.
+    Without recovery the scanner discards everything from here on."""
+    payloads = swift_results["scannerRuns"][1]["payloads"]
+    expected = _expected_payloads()
+    assert len(payloads) >= len(expected) - 2
+    assert payloads == expected[len(expected) - len(payloads):]
+
+
+@requires_swift
+def test_swift_scanner_separates_status_text_from_frames(swift_results):
+    """0x0A is an ordinary byte inside a frame. Splitting the stream on
+    newlines to find status lines deletes frame bytes -- it took a modem
+    forwarding 27,000 packets down to 64 received."""
+    run = swift_results["scannerRuns"][2]
+    assert run["payloads"] == _expected_payloads()
+    assert run["text"] == ["[READY] Listening for packets...",
+                           "[RADIO] Reconfiguring for new settings..."]
+
+
+@requires_swift
+def test_swift_scanner_invents_nothing_from_noise(swift_results):
+    assert swift_results["scannerRuns"][3]["payloads"] == []
