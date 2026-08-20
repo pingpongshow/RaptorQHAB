@@ -372,31 +372,42 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
     
     private func readLoop() {
         debugLog("Read loop started")
-        
-        let bufferSize = 1024
+
+        // The payload transmits around 100 packets a second, roughly 24 kB/s
+        // over USB. Reading 1 KB and then sleeping unconditionally capped this
+        // loop at 51 kB/s and slept even while bytes were queued, so a burst
+        // overflowed the tty buffer -- and losing bytes mid-frame is what
+        // desynchronises the parser. Read large, and only wait when the port
+        // is genuinely idle.
+        let bufferSize = 16384
         let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
         defer { buffer.deallocate() }
-        
+
         while shouldRun && !Thread.current.isCancelled {
             // Check if file descriptor is still valid
-            guard fileDescriptor >= 0 else {
+            let descriptor = fileDescriptor
+            guard descriptor >= 0 else {
                 debugLog("File descriptor invalid, exiting read loop")
                 break
             }
-            
-            let bytesRead = read(fileDescriptor, buffer, bufferSize)
-            
+
+            let bytesRead = read(descriptor, buffer, bufferSize)
+
             if bytesRead > 0 {
                 let data = Data(bytes: buffer, count: bytesRead)
-                
+
                 DispatchQueue.main.async { [weak self] in
                     self?.bytesReceived += bytesRead
                 }
-                
-                // Process received data
+
                 processReceivedData(data)
-                
-            } else if bytesRead < 0 {
+
+                // More may already be queued behind this read; go straight
+                // back for it rather than sleeping through the next burst.
+                continue
+            }
+
+            if bytesRead < 0 {
                 let err = errno
                 if err != EAGAIN && err != EWOULDBLOCK && err != EINTR {
                     let error = String(cString: strerror(err))
@@ -404,11 +415,14 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
                     break
                 }
             }
-            
-            // Small delay to prevent busy loop (20ms = 50 reads/sec max)
-            Thread.sleep(forTimeInterval: 0.02)
+
+            // Nothing waiting. Block in poll() instead of a fixed sleep, so a
+            // packet arriving one millisecond from now is picked up then and
+            // not up to 20 ms later.
+            var pollFD = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+            _ = poll(&pollFD, 1, 20)
         }
-        
+
         debugLog("Read loop ended")
     }
     

@@ -81,13 +81,13 @@ struct ContentView: View {
                         Label("Console", systemImage: "terminal")
                     }
                     .tag(9)
-            }
 
                 CardView()
                     .tabItem {
                         Label("SD Card", systemImage: "sdcard")
                     }
                     .tag(10)
+            }
         }
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 300)
         .navigationTitle("RaptorHab Ground Station")
@@ -254,8 +254,12 @@ struct SidebarView: View {
                         )
                         StatusRow(
                             title: "SNR",
-                            value: String(format: "%.1f dB", groundStation.serialSNR),
-                            color: groundStation.serialSNR > 0 ? .green : .orange
+                            value: FrameScanner.snrIsMeasured(groundStation.serialSNR)
+                                ? String(format: "%.1f dB", groundStation.serialSNR)
+                                : "n/a",
+                            color: FrameScanner.snrIsMeasured(groundStation.serialSNR)
+                                ? (groundStation.serialSNR > 0 ? .green : .orange)
+                                : .secondary
                         )
                     }
                 }

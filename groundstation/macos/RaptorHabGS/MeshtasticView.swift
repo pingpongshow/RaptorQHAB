@@ -20,18 +20,25 @@ struct MeshtasticView: View {
             connectionBar
             Divider()
 
-            TabView(selection: $selectedTab) {
-                MeshNodeListView()
-                    .tabItem { Label("Nodes", systemImage: "list.bullet") }
-                    .tag(0)
+            // A segmented control rather than a nested TabView. On macOS a
+            // TabView inside a TabView page takes over the window's tab
+            // strip, so opening this tab made every other tab disappear.
+            Picker("", selection: $selectedTab) {
+                Text("Nodes").tag(0)
+                Text("Messages").tag(1)
+                Text("Channels").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
 
-                MeshMessagesView()
-                    .tabItem { Label("Messages", systemImage: "bubble.left.and.bubble.right") }
-                    .tag(1)
+            Divider()
 
-                MeshChannelsView()
-                    .tabItem { Label("Channels", systemImage: "key") }
-                    .tag(2)
+            switch selectedTab {
+            case 1: MeshMessagesView()
+            case 2: MeshChannelsView()
+            default: MeshNodeListView()
             }
         }
         .onAppear { mesh.refreshSerialDevices() }

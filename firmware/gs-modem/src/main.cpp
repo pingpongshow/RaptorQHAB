@@ -131,6 +131,10 @@ Adafruit_ST7789* tft = nullptr;
 volatile bool packetReceived = false;
 uint32_t packetsTotal = 0;
 uint32_t packetsForwarded = 0;
+// Frames the USB host was not draining fast enough to accept. Counted and
+// shown rather than dropped in silence -- a link that is quietly losing
+// frames looks identical to one that is idle.
+uint32_t usbDropped = 0;
 uint32_t packetsRejectedNoRapt = 0;
 uint32_t packetsRejectedCrc = 0;
 uint32_t packetsRadioError = 0;
@@ -189,13 +193,14 @@ void IRAM_ATTR onPacketReceived() {
 // ============================================================================
 
 void handlePacket();
-void forwardPacket(uint8_t* data, int len, float rssi, float snr);
+bool forwardPacket(uint8_t* data, int len, float rssi, float snr);
 void sendStats();
 bool waitForConfiguration();
 bool loadConfiguration();
 void saveConfiguration();
 void handleUsbCommands();
 bool initializeRadio();
+bool configureRadio();
 void initDisplay();
 void drawStaticUI();
 void updateDisplay();
@@ -403,6 +408,14 @@ void updateStatsDisplay() {
     tft->print("OUT:");
     tft->setTextColor(COLOR_GOOD);
     tft->print("USB");
+
+    // Frames the host would not take. Shown because a link quietly losing
+    // frames looks exactly like an idle one.
+    tft->setCursor(215, 159);
+    tft->setTextColor(COLOR_LABEL);
+    tft->print("DROP:");
+    tft->setTextColor(usbDropped > 0 ? COLOR_BAD : COLOR_VALUE);
+    tft->printf("%lu", usbDropped);
 
     prevPacketsForwarded = packetsForwarded;
     prevPacketsTotal = packetsTotal;
@@ -765,7 +778,7 @@ void handleUsbCommands() {
                 // the modem was then left deaf, having already answered CFG_OK.
                 // This is the same failure the ground station spent a long time
                 // chasing the last time it went silent.
-                if (initializeRadio()) {
+                if (configureRadio()) {
                     saveConfiguration();
                     Serial.printf("CFG_OK:%.1f,%.1f,%.1f,%.1f,%d\n",
                                   rfFrequency, rfBitrate, rfDeviation,
@@ -775,7 +788,7 @@ void handleUsbCommands() {
                     rfDeviation = prevDev;  rfRxBandwidth = prevBw;
                     rfPreambleLen = prevPre;
 
-                    if (initializeRadio()) {
+                    if (configureRadio()) {
                         Serial.println("CFG_ERR:Radio refused the settings; "
                                        "the previous ones are back");
                     } else {
@@ -913,14 +926,15 @@ bool parseConfigCommand(const String& cmd) {
 // Radio Initialization
 // ============================================================================
 
-bool initializeRadio() {
-    Serial.println("[RADIO] Initializing SX1262...");
-    
-    spi = new SPIClass(FSPI);
-    spi->begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS);
-    
-    Module* mod = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY, *spi);
-    radio = new SX1262(mod);
+// Configure (or reconfigure) the radio that initializeRadio() constructed.
+// Safe to call while running -- beginFSK resets the chip -- and it always
+// leaves the radio listening. This is deliberately separate from
+// construction: the runtime CFG: path used to call initializeRadio(), which
+// built a second SPIClass on the same live bus and orphaned the object the
+// interrupt was attached to. The radio then sat in standby forever -- the
+// modem froze the moment the app sent its configuration, every time it was
+// reconfigured outside the boot window.
+bool configureRadio() {
 
 #ifdef RF_SWITCH_RX_PIN
     // Boards with an external antenna switch rather than one driven from DIO2.
@@ -960,12 +974,33 @@ bool initializeRadio() {
     return true;
 }
 
+bool initializeRadio() {
+    Serial.println("[RADIO] Initializing SX1262...");
+
+    // Construction happens exactly once. Reconfiguration goes through
+    // configureRadio(), which reuses these objects.
+    if (spi == nullptr) {
+        spi = new SPIClass(FSPI);
+        spi->begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS);
+
+        Module* mod = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY, *spi);
+        radio = new SX1262(mod);
+    }
+
+    return configureRadio();
+}
+
 // ============================================================================
 // Setup
 // ============================================================================
 
 void setup() {
     Serial.begin(SERIAL_BAUD);
+    // Never block the main loop on a host that has stopped reading. The radio
+    // is serviced from the same loop, so a stalled write makes the modem deaf
+    // as well as silent. Dropping is the right failure here: the ground
+    // station reconstructs images from any sufficient subset of packets.
+    Serial.setTxTimeoutMs(0);
     delay(1000);
 
     Serial.println("\n========================================");
@@ -1135,8 +1170,9 @@ void handlePacket() {
     }
     
     // Valid packet - forward via USB
-    forwardPacket(packet, packetLen, lastRssi, lastSnr);
-    packetsForwarded++;
+    if (forwardPacket(packet, packetLen, lastRssi, lastSnr)) {
+        packetsForwarded++;
+    }
     
     // Track by size
     if (packetLen < 100) {
@@ -1150,57 +1186,65 @@ void handlePacket() {
 // USB Packet Forwarding
 // ============================================================================
 
-void forwardPacket(uint8_t* data, int len, float rssi, float snr) {
+bool forwardPacket(uint8_t* data, int len, float rssi, float snr) {
+    // Serial here is the ESP32-S3's hardware USB-Serial-JTAG (HWCDC). Its
+    // write() waits on the TX ring buffer, so writing a frame one byte at a
+    // time -- about 240 calls -- lets a host that has stopped reading stall
+    // this function for as long as it takes every one of those calls to time
+    // out. The radio is serviced from the same loop, so the whole modem goes
+    // deaf: received-packet counters freeze and the display stops updating,
+    // which is exactly what happened when the ground station app was closed
+    // mid-stream. The frame is now built in memory and handed over in a
+    // single write, with the TX timeout set to zero in setup() so a host that
+    // is not draining costs us dropped bytes rather than a wedged modem.
+    if (len <= 0 || len > 255) return false;
+
     uint8_t lenHi = (len >> 8) & 0xFF;
     uint8_t lenLo = len & 0xFF;
     int8_t rssiInt = (int8_t)rssi;
     uint8_t rssiFrac = (uint8_t)(abs(rssi - rssiInt) * 100);
     int8_t snrInt = (int8_t)snr;
     uint8_t snrFrac = (uint8_t)(abs(snr - snrInt) * 100);
-    
+
     uint8_t checksum = lenHi ^ lenLo ^ (uint8_t)rssiInt ^ rssiFrac ^ (uint8_t)snrInt ^ snrFrac;
     for (int i = 0; i < len; i++) {
         checksum ^= data[i];
     }
-    
+
+    // Worst case every byte needs escaping: 2 delimiters + 2 * (6 header +
+    // 255 data + 1 checksum).
+    static uint8_t frame[2 + 2 * (6 + 255 + 1)];
+    size_t n = 0;
+
     // 0x7B is the dual-radio modem's second frame delimiter. This board has
     // one radio and never opens a 0x7B frame, but it must still escape the
     // byte: a ground station that watches for both delimiters would otherwise
     // read a raw 0x7B in image data as the start of a frame. Escaping it here
     // keeps one wire format across every board, so the parser needs no
     // knowledge of which one it is talking to.
-    auto writeStuffed = [](uint8_t b) {
-        if (b == 0x7E) {
-            Serial.write(0x7D);
-            Serial.write(0x5E);
-        } else if (b == 0x7B) {
-            Serial.write(0x7D);
-            Serial.write(0x5B);
-        } else if (b == 0x7D) {
-            Serial.write(0x7D);
-            Serial.write(0x5D);
-        } else {
-            Serial.write(b);
-        }
+    auto stuff = [&](uint8_t b) {
+        if (b == 0x7E)      { frame[n++] = 0x7D; frame[n++] = 0x5E; }
+        else if (b == 0x7B) { frame[n++] = 0x7D; frame[n++] = 0x5B; }
+        else if (b == 0x7D) { frame[n++] = 0x7D; frame[n++] = 0x5D; }
+        else                { frame[n++] = b; }
     };
-    
-    Serial.flush();
-    delayMicroseconds(100);
-    
-    Serial.write(FRAME_DELIMITER);
-    
-    writeStuffed(lenHi);
-    writeStuffed(lenLo);
-    writeStuffed((uint8_t)rssiInt);
-    writeStuffed(rssiFrac);
-    writeStuffed((uint8_t)snrInt);
-    writeStuffed(snrFrac);
-    
-    for (int i = 0; i < len; i++) {
-        writeStuffed(data[i]);
+
+    frame[n++] = FRAME_DELIMITER;
+    stuff(lenHi);
+    stuff(lenLo);
+    stuff((uint8_t)rssiInt);
+    stuff(rssiFrac);
+    stuff((uint8_t)snrInt);
+    stuff(snrFrac);
+    for (int i = 0; i < len; i++) stuff(data[i]);
+    stuff(checksum);
+    frame[n++] = FRAME_DELIMITER;
+
+    // A partial frame is worse than no frame: it desynchronises the ground
+    // station's parser. Send it whole or not at all.
+    if (Serial.write(frame, n) != n) {
+        usbDropped++;
+        return false;
     }
-    
-    writeStuffed(checksum);
-    Serial.write(FRAME_DELIMITER);
-    Serial.flush();
+    return true;
 }

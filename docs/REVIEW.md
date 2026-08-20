@@ -1006,3 +1006,44 @@ commit recovers the link **without reflashing the modem**.
   nothing. Seven fail against the previous code.
 - `payload/tests/test_swift_parity.py` — four more that compile and run the
   real `FrameScanner.swift` against streams Python builds.
+
+### G4. Runtime `CFG:` froze the modem — the radio was rebuilt on a live bus **[FIXED]**
+Reconfiguration called `initializeRadio()`, which constructs the SPI bus and
+radio objects. Fine at boot; at runtime it built a **second** `SPIClass` on
+the same live bus and orphaned the object the DIO1 interrupt was attached to,
+leaving the radio in standby forever. The app sends `CFG:` on every connect,
+so the modem froze the moment the app attached — unless that connect happened
+to land in the boot-time configuration window, which is why the first
+connection of a session sometimes survived and reconnects never did. RX
+counters flat, nothing forwarded, only a power cycle recovered it.
+
+Fix: construction (`initializeRadio`, once) is now separate from
+configuration (`configureRadio`, re-runnable, always leaves the radio
+listening). Verified against the T190: `CFG:` sent mid-stream twice, answered
+`CFG_OK` both times, ~500 frames per 4 s before, during, and after.
+
+### G5. A stalled USB host wedged the whole modem **[FIXED]**
+`forwardPacket` wrote each frame one byte at a time — ~240 `Serial.write()`
+calls plus two blocking `flush()`es — into the ESP32-S3's hardware USB CDC,
+whose writes wait on the TX ring buffer. A host that stopped draining stalled
+the loop that also services the radio: the modem went deaf as well as silent.
+Frames are now built in memory and handed over in one write with the TX
+timeout at zero. A slow host costs dropped frames — counted, and shown on the
+display as `DROP:` — never a wedged modem. RaptorQ makes dropping the right
+failure: the ground station reconstructs from any sufficient subset.
+`FWD` now counts only frames actually accepted by USB, so `RATE` is truthful.
+
+### G6. App UI: nested TabView and a stray SD Card pane **[FIXED]**
+Opening the Meshtastic tab made every other tab vanish: `MeshtasticView`
+wrapped its Nodes/Messages/Channels sections in a nested `TabView`, and on
+macOS the inner one takes over the window's tab strip. Replaced with a
+segmented control. Separately, `CardView` sat *outside* the `TabView` block —
+a brace in the wrong place — so the SD-card pane rendered below every tab
+instead of being the tab it was meant to be.
+
+### G7. Read loop capped at half the payload's peak rate **[FIXED]**
+The app read 1 KB then slept 20 ms unconditionally — a 51 kB/s ceiling, and
+it slept even with bytes queued. The payload peaks near 100 packets/s. Now
+16 KB reads, back-to-back while data is waiting, `poll()` when idle. The app
+also displayed the GFSK SNR sentinel (−128, "not measured") as a red reading;
+it now shows `n/a` like the modem and the Python GS.

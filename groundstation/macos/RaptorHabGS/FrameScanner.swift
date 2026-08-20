@@ -37,6 +37,18 @@ final class FrameScanner {
 
     static let escape: UInt8 = 0x7D
 
+    /// GFSK has no signal-to-noise measurement -- the SX1262 reports SNR only
+    /// for LoRa. Modems send this in the SNR field rather than a number that
+    /// looks like a reading. Older firmware sent -20, which was RadioLib's
+    /// RADIOLIB_ERR_WRONG_MODEM printed as decibels; both mean "not measured".
+    static let snrNotAvailable: Float = -128.0
+    private static let legacySNRError: Float = -20.0
+
+    /// Whether an SNR field carries a real measurement.
+    static func snrIsMeasured(_ snr: Float) -> Bool {
+        snr > snrNotAvailable + 1.0 && snr != legacySNRError
+    }
+
     /// Longest run of bytes that could still be one frame. A 210-byte image
     /// packet frames to about 240 bytes, or roughly 480 if every byte needed
     /// escaping, so anything beyond this is not a frame that started here.
