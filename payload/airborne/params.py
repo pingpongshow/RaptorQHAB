@@ -444,6 +444,17 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         apply=Apply.RESTART, minimum=0.0, maximum=5.0, unit="s", advanced=True,
     ),
     _spec(
+        "camera_tuning", Kind.STRING, "Camera",
+        "How the image is rendered. 'standard' is the sensor's normal tuning "
+        "-- on a NoIR module (no infrared-cut filter, undetectable in "
+        "software) every image comes out purple, because infrared leaks into "
+        "all three colour channels and drags white balance to magenta. "
+        "'noir' uses greyworld white balance for natural colour on such a "
+        "module. 'alternate' swaps every photo: one infrared render, one "
+        "natural, same schedule.",
+        apply=Apply.RESTART, choices=("standard", "noir", "alternate"),
+    ),
+    _spec(
         "camera_warmup_frames", Kind.INT, "Power",
         "Frames discarded after a restart. Not for exposure convergence, which "
         "survives the restart, but for scene change: the camera cannot adapt "

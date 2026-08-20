@@ -358,6 +358,7 @@ class RaptorHabAirborne:
             release_when_idle=self.config.camera_release_when_idle,
             warmup_sec=self.config.camera_warmup_sec,
             warmup_frames=self.config.camera_warmup_frames,
+            tuning_mode=self.config.camera_tuning,
         )
         self._camera.init()
         

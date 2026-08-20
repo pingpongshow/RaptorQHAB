@@ -82,6 +82,13 @@ class Config:
     # open, idle camera keeps the SoC about 2 C warmer, and releasing costs
     # about 160 ms per capture against an interval of tens of seconds.
     # Auto-exposure survives the restart, so no settling sleep is needed.
+    # A NoIR module (no IR-cut filter) reports the same sensor as the normal
+    # one and cannot be detected, so the render is configured. "standard" is
+    # the sensor's normal tuning -- on a NoIR every image comes out purple,
+    # because infrared leaks into all three colour channels and drags white
+    # balance to magenta. "noir" loads the greyworld tuning for natural
+    # colour. "alternate" swaps per photo: one infrared render, one natural.
+    camera_tuning: str = "standard"
     camera_release_when_idle: bool = False
     camera_warmup_sec: float = 0.0
     camera_warmup_frames: int = 1

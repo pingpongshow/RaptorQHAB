@@ -386,13 +386,6 @@ void updateStatsDisplay() {
     tft->setTextColor(packetsRejectedCrc + packetsRejectedNoRapt > 0 ? COLOR_BAD : COLOR_VALUE);
     tft->printf("%lu", packetsRejectedCrc + packetsRejectedNoRapt);
     
-    // Success rate
-    float rate = usbOffered > 0 ? (100.0f * packetsForwarded / usbOffered) : 100.0f;
-    tft->setTextColor(COLOR_LABEL);
-    tft->setCursor(210, 147);
-    tft->print("RATE:");
-    tft->setTextColor(rate > 90 ? COLOR_GOOD : (rate > 70 ? COLOR_WARN : COLOR_BAD));
-    tft->printf("%.1f%%", rate);
     
     // Stats row 2 - packet sizes
     tft->setTextColor(COLOR_LABEL);
@@ -414,13 +407,6 @@ void updateStatsDisplay() {
     tft->setTextColor(COLOR_GOOD);
     tft->print("USB");
 
-    // Frames the host would not take. Shown because a link quietly losing
-    // frames looks exactly like an idle one.
-    tft->setCursor(215, 159);
-    tft->setTextColor(COLOR_LABEL);
-    tft->print("DROP:");
-    tft->setTextColor(usbDropped > 0 ? COLOR_BAD : COLOR_VALUE);
-    tft->printf("%lu", usbDropped);
 
     prevPacketsForwarded = packetsForwarded;
     prevPacketsTotal = packetsTotal;
@@ -1117,9 +1103,9 @@ void sendStats() {
 
     char statsBuf[256];
     snprintf(statsBuf, sizeof(statsBuf),
-        "\n[STATS] Total:%lu Fwd:%lu NoRAPT:%lu BadCRC:%lu Err:%lu Rate:%.1f%% Batt:%s\n",
+        "\n[STATS] Total:%lu Fwd:%lu NoRAPT:%lu BadCRC:%lu Err:%lu Rate:%.1f%% Drop:%lu Batt:%s\n",
         packetsTotal, packetsForwarded, packetsRejectedNoRapt, packetsRejectedCrc,
-        packetsRadioError, rate, battBuf);
+        packetsRadioError, rate, usbDropped, battBuf);
     Serial.print(statsBuf);
 }
 

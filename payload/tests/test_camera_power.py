@@ -139,3 +139,50 @@ class TestLifecycle:
             cam.release()
         assert cam._camera.starts == 5
         assert cam._camera.stops == 5
+
+
+# --- Tuning variants ---------------------------------------------------------
+#
+# A NoIR camera reports the same sensor ID as the filtered one, so the purple
+# cast cannot be auto-detected; the parameter has to exist and flow through.
+# Alternate mode swaps the render per photo without touching the schedule.
+
+def test_noir_tuning_file_names_follow_the_sensor():
+    from airborne.camera import Camera
+    assert Camera.noir_tuning_file("imx219") == "imx219_noir.json"
+    assert Camera.noir_tuning_file("ov5647") == "ov5647_noir.json"
+
+
+def test_tuning_defaults_to_standard(tmp_path):
+    from airborne.config import Config
+    assert Config.__dataclass_fields__["camera_tuning"].default == "standard"
+    from airborne.camera import Camera
+    cam = Camera(simulate=True, storage_path=str(tmp_path))
+    assert cam.tuning_mode == "standard"
+    assert cam.desired_variant(0) == "standard"
+    assert cam.desired_variant(7) == "standard"
+
+
+def test_noir_mode_always_uses_the_noir_tuning(tmp_path):
+    from airborne.camera import Camera
+    cam = Camera(simulate=True, tuning_mode="noir", storage_path=str(tmp_path))
+    assert [cam.desired_variant(i) for i in range(4)] == ["noir"] * 4
+
+
+def test_alternate_mode_swaps_every_photo_starting_with_infrared(tmp_path):
+    from airborne.camera import Camera
+    cam = Camera(simulate=True, tuning_mode="alternate", storage_path=str(tmp_path))
+    assert [cam.desired_variant(i) for i in range(6)] == [
+        "standard", "noir", "standard", "noir", "standard", "noir"]
+
+
+def test_an_unknown_mode_falls_back_to_standard(tmp_path):
+    from airborne.camera import Camera
+    assert Camera(simulate=True, tuning_mode="sepia", storage_path=str(tmp_path)).tuning_mode == "standard"
+
+
+def test_tuning_param_is_exposed_over_usb_with_choices():
+    from airborne.params import PARAM_SPECS
+    spec = next(s for s in PARAM_SPECS if s.name == "camera_tuning")
+    assert spec.category == "Camera"
+    assert set(spec.choices) == {"standard", "noir", "alternate"}

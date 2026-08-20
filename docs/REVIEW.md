@@ -1047,3 +1047,41 @@ it slept even with bytes queued. The payload peaks near 100 packets/s. Now
 16 KB reads, back-to-back while data is waiting, `poll()` when idle. The app
 also displayed the GFSK SNR sentinel (−128, "not measured") as a red reading;
 it now shows `n/a` like the modem and the Python GS.
+
+### G8. Display: USB statistics read as radio problems **[FIXED]**
+`RATE` and `DROP` on the modem screen described the USB side — frames the
+attached host accepted — but sat beside RSSI and packet counts, where they
+read as Pi-to-ground-station link quality. Removed from the display; both
+remain in the serial `[STATS]` line, which is where diagnosis happens.
+
+### G9. NoIR camera: purple images, and a tuning that silently did not load **[FIXED]**
+The payload's camera is a NoIR (no infrared-cut filter), which reports the
+same sensor ID as the filtered IMX219 and cannot be detected in software.
+Under the standard tuning, infrared leaks into all three colour channels and
+drags auto white balance to magenta — measured gains (1.11, 2.51), the
+purple cast on every image.
+
+Three findings stacked underneath:
+
+1. **libcamera's camera manager is a process singleton** that reads the
+   tuning environment exactly once. A second `Picamera2` constructed with a
+   different tuning silently keeps the first one's — so per-photo tuning
+   swaps are impossible, and even a *first* construction is poisoned if
+   `global_camera_info()` ran earlier, because that call creates the
+   manager. The payload shipped purple "natural" frames with `variant=noir`
+   in the log. The sensor is now identified in a subprocess, keeping this
+   process's manager unborn until the tuning is chosen.
+2. **`AwbEnable: True` does not undo manual `ColourGains`** — the documented
+   release is gains of zero. Verified on the bench: without it, AWB never
+   resumes.
+3. **AWB takes seconds to reconverge after release**, so the release happens
+   immediately after the infrared capture, not before the natural one. The
+   half-minute between captures does the converging invisibly.
+
+`camera_tuning` (standard | noir | alternate) selects the render. Alternate
+mode takes one infrared frame and one colour-balanced frame in turns — same
+schedule, a control change per photo instead of a camera rebuild. The
+infrared render uses fixed gains (1.1, 2.5), the values the purple cast was
+made of, so infrared frames are rendered identically and comparably.
+Verified on the payload: per-capture metadata shows gains alternating
+between the manual pair and greyworld's converged point.

@@ -74,6 +74,7 @@ class Camera:
         release_when_idle: bool = False,
         warmup_sec: float = 0.0,
         warmup_frames: int = 1,
+        tuning_mode: str = "standard",
     ):
         """
         Initialize camera
@@ -105,6 +106,13 @@ class Camera:
         self._camera: Optional[Picamera2] = None
         self._image_counter: int = 0
         self.release_when_idle = release_when_idle
+        # "standard": the sensor's normal tuning. "noir": greyworld white
+        # balance, for a module with no IR-cut filter. "alternate": swap per
+        # photo -- one frame keeps the infrared look, the next is balanced to
+        # natural colour. Same hardware sees both; only the processing turns.
+        self.tuning_mode = tuning_mode if tuning_mode in ("standard", "noir", "alternate") else "standard"
+        self._active_variant: Optional[str] = None
+        self._capture_index = 0
         self.warmup_sec = warmup_sec
         self.warmup_frames = max(0, warmup_frames)
 
@@ -149,22 +157,8 @@ class Camera:
             return False
         
         try:
-            self._camera = Picamera2()
-            
-            # Configure for still image capture
-            config = self._camera.create_still_configuration(
-                main={"size": self.resolution, "format": "RGB888"},
-                buffer_count=2
-            )
-            self._camera.configure(config)
-            
-            # Apply initial camera settings
-            self._apply_camera_settings()
-            
-            # Start camera
-            self._camera.start()
-            self._streaming = True
-            time.sleep(0.5)  # Allow auto-exposure to settle
+            if not self._open_camera(self.desired_variant(self._capture_index)):
+                return False
 
             if self.release_when_idle:
                 # Nothing will be captured for a while; do not sit streaming
@@ -255,6 +249,162 @@ class Camera:
     @property
     def streaming(self) -> bool:
         return self._streaming
+
+
+    @staticmethod
+    def noir_tuning_file(sensor_model: str) -> str:
+        """Tuning file for a sensor with no IR-cut filter.
+
+        A NoIR camera reports the same sensor ID as the filtered one, so this
+        cannot be detected -- it has to be configured. Without it, infrared
+        leaking into all three colour channels drags auto white balance
+        towards magenta and every image comes out purple. The _noir tunings
+        use greyworld white balance, which ignores the sensor's calibrated
+        illuminant tables (wrong for a filterless sensor) and simply balances
+        the scene.
+        """
+        return f"{sensor_model}_noir.json"
+
+    def _noir_tuning(self):
+        """Load the NoIR tuning for whatever sensor is attached, or None.
+
+        The sensor is identified in a subprocess, deliberately. Asking
+        libcamera in this process -- global_camera_info() -- creates its
+        process-wide camera manager, and the manager reads the tuning
+        environment exactly once, at creation. Ask first and the tuning
+        passed to Picamera2() afterwards is silently ignored: the camera
+        runs the standard tuning while every flag says otherwise. That is
+        not hypothetical; it is how this payload shipped purple "natural"
+        frames with 'variant=noir' in the log.
+        """
+        try:
+            import subprocess
+            import sys as _sys
+            probe = subprocess.run(
+                [_sys.executable, "-c",
+                 "from picamera2 import Picamera2;"
+                 "info = Picamera2.global_camera_info();"
+                 "print(info[0]['Model'] if info else '')"],
+                capture_output=True, text=True, timeout=30,
+            )
+            model = probe.stdout.strip().splitlines()[-1] if probe.stdout.strip() else ""
+            if not model:
+                logger.warning("No camera model detected; using standard tuning")
+                return None
+            return Picamera2.load_tuning_file(self.noir_tuning_file(model))
+        except Exception as exc:  # missing tuning file, no camera, ...
+            logger.warning("NoIR tuning unavailable (%s); using standard", exc)
+            return None
+
+
+    def desired_variant(self, capture_index: int) -> str:
+        """Which tuning the given capture should use.
+
+        Alternation starts with the infrared look ("standard" tuning on a
+        filterless sensor) and swaps every photo. Scheduling is untouched:
+        the same captures happen at the same times, they just take turns.
+        """
+        if self.tuning_mode == "noir":
+            return "noir"
+        if self.tuning_mode == "alternate":
+            return "standard" if capture_index % 2 == 0 else "noir"
+        return "standard"
+
+    # The white-balance gains behind the infrared render. Measured from what
+    # the standard tuning's AWB converges to on a filterless sensor: red near
+    # unity, blue pushed hard, which is exactly the purple cast. Fixed gains
+    # rather than live AWB so every infrared frame is rendered identically --
+    # a consistent false-colour is what makes frames comparable.
+    IR_RENDER_GAINS = (1.1, 2.5)
+
+    def _open_camera(self, variant: str) -> bool:
+        """Create and start the camera, then apply the starting render.
+
+        Any mode that ever wants natural colour from a filterless sensor
+        needs the greyworld tuning loaded here: libcamera's camera manager
+        is a process singleton, so a second Picamera2 constructed with a
+        different tuning silently keeps the first one's. The tuning is
+        therefore chosen by mode, once, and the per-photo variants differ
+        only in white-balance controls.
+        """
+        tuning = None
+        if self.tuning_mode in ("noir", "alternate"):
+            tuning = self._noir_tuning()
+            if tuning is None and self.tuning_mode == "noir":
+                variant = "standard"
+
+        self._camera = Picamera2(tuning=tuning) if tuning else Picamera2()
+
+        config = self._camera.create_still_configuration(
+            main={"size": self.resolution, "format": "RGB888"},
+            buffer_count=2
+        )
+        self._camera.configure(config)
+        self._apply_camera_settings()
+        self._camera.start()
+        self._streaming = True
+        self._active_variant = variant
+        time.sleep(0.5)  # Allow auto-exposure to settle
+        if self.tuning_mode == "alternate":
+            self._apply_variant(variant)
+        return True
+
+    def _apply_variant(self, variant: str) -> None:
+        """Switch the render on the live camera.
+
+        A control change, not a camera rebuild: with the greyworld tuning
+        loaded, natural colour is AWB, and the infrared look is fixed gains.
+        Two subtleties, both measured on the bench:
+
+        - AwbEnable alone does not undo manual gains; the documented release
+          is ColourGains of zero, after which the algorithm runs again.
+        - AWB takes seconds to reconverge after release, so the release
+          happens right after the infrared capture (_release_to_awb), not
+          before the natural one. The minutes between captures do the
+          converging, and the natural frame needs no settling at all.
+        """
+        if self._camera is None:
+            return
+        try:
+            if variant == "noir":
+                # Normally already released by _release_to_awb; this is the
+                # fallback path (first capture, or an interrupted sequence).
+                self._camera.set_controls({
+                    "AwbEnable": True,
+                    "ColourGains": (0.0, 0.0),
+                })
+                time.sleep(1.2)  # reconvergence margin
+            else:
+                self._camera.set_controls({
+                    "AwbEnable": False,
+                    "ColourGains": self.IR_RENDER_GAINS,
+                })
+                # Fixed gains land within a few frames.
+                time.sleep(0.4)
+            self._active_variant = variant
+        except Exception as exc:
+            logger.warning("Could not switch render to %s: %s", variant, exc)
+
+    def _release_to_awb(self) -> None:
+        """Hand white balance back to AWB immediately after an infrared frame.
+
+        Zero gains are the documented release. Done here so the idle time
+        between captures -- half a minute in flight -- is when reconvergence
+        happens, invisibly. If the camera is released between captures the
+        pipeline cannot converge while stopped; the warm-up frames after
+        restart absorb most of that, and a slightly warm first natural frame
+        is the accepted cost of the power saving.
+        """
+        if self._camera is None:
+            return
+        try:
+            self._camera.set_controls({
+                "AwbEnable": True,
+                "ColourGains": (0.0, 0.0),
+            })
+            self._active_variant = "noir"
+        except Exception as exc:
+            logger.warning("Could not release white balance to AWB: %s", exc)
 
     def _apply_camera_settings(self):
         """Apply current image adjustment settings to camera"""
@@ -411,6 +561,19 @@ class Camera:
             logger.error("Camera not initialized")
             return None
 
+        # Which look this photo gets. In alternate mode every capture flips
+        # between the infrared render and the colour-balanced one; rebuilding
+        # the camera is only needed when the variant actually changes.
+        if not self.simulate:
+            variant = self.desired_variant(self._capture_index)
+            self._capture_index += 1
+            if self._active_variant is None:
+                # A camera that was opened without going through
+                # _open_camera. Adopt it as-is rather than disturb it.
+                self._active_variant = variant
+            elif variant != self._active_variant:
+                self._apply_variant(variant)
+
         # Bring the sensor up if it was released after the last capture. This
         # is deliberately inside capture() rather than left to the caller: a
         # capture that silently returned a frame from a stopped pipeline would
@@ -425,7 +588,13 @@ class Camera:
             
             # Capture burst and select sharpest
             image = self._capture_burst()
-            
+
+            # An infrared frame leaves manual gains behind; hand white
+            # balance straight back so AWB reconverges during the idle time
+            # before the next (natural) capture instead of delaying it.
+            if self.tuning_mode == "alternate" and self._active_variant == "standard":
+                self._release_to_awb()
+
             if image is None:
                 return None
             
