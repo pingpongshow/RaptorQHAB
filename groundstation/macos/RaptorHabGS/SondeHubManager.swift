@@ -48,6 +48,17 @@ struct SondeHubConfig: Codable {
     var uploadInterval: Double = 5.0
     var includeComment: Bool = false
     var comment: String = ""
+
+    /// Shown on the SondeHub map beside the station. Empty fields make a
+    /// receiver look abandoned; filling them is how other chasers know what
+    /// they are looking at and whether to trust its coverage.
+    var uploaderRadio: String = ""
+    var uploaderAntenna: String = ""
+    var contactEmail: String = ""
+    /// A station in a chase car moves. SondeHub treats mobile listeners
+    /// differently on the map, and a car reporting as a fixed site drags a
+    /// trail of stale positions behind it.
+    var mobile: Bool = false
     
     var isValid: Bool {
         enabled && !uploaderCallsign.isEmpty && !payloadCallsign.isEmpty
@@ -65,6 +76,12 @@ class SondeHubManager: ObservableObject {
         didSet { saveConfig() }
     }
     
+    /// Re-announce the station this often. An hour is well inside the
+    /// window SondeHub ages listeners out at, and costs one small request.
+    static let stationUploadInterval: TimeInterval = 3600
+
+    private var lastStationUpload: Date?
+
     // UI State
     @Published var showSettings = false
     
@@ -263,10 +280,10 @@ class SondeHubManager: ObservableObject {
             "software_version": "1.0",
             "uploader_callsign": config.uploaderCallsign,
             "uploader_position": [pos.latitude, pos.longitude, alt],
-            "uploader_radio": "",
-            "uploader_antenna": "",
-            "uploader_contact_email": "",
-            "mobile": false
+            "uploader_radio": config.uploaderRadio,
+            "uploader_antenna": config.uploaderAntenna,
+            "uploader_contact_email": config.contactEmail,
+            "mobile": config.mobile
         ]
         
         guard let jsonData = try? JSONSerialization.data(withJSONObject: position) else { return }
@@ -278,9 +295,39 @@ class SondeHubManager: ObservableObject {
         request.setValue(formatRFC2822Date(), forHTTPHeaderField: "Date")
         request.httpBody = jsonData
         
-        URLSession.shared.dataTask(with: request) { _, _, _ in
-            // Station position upload - fire and forget
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+            guard let self = self else { return }
+            if let error = error {
+                self.updateStatus("Station position failed: \(error.localizedDescription)",
+                                  isError: true)
+                return
+            }
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if (200...299).contains(code) {
+                self.lastStationUpload = Date()
+                self.updateStatus("Station position uploaded", isError: false)
+            } else {
+                // Worth surfacing rather than swallowing: a station that
+                // silently fails to register looks identical to one nobody
+                // is listening to, and the difference matters when you are
+                // relying on other receivers to hear your balloon.
+                self.updateStatus("Station position rejected (HTTP \(code))",
+                                  isError: true)
+            }
         }.resume()
+    }
+
+    /// Register the station if it has never been, or if it is due again.
+    ///
+    /// SondeHub expects listeners to re-announce themselves; a station that
+    /// registered once and went quiet ages off the map. Called from the same
+    /// telemetry path as everything else, so it needs no timer of its own.
+    func uploadStationPositionIfDue() {
+        guard config.isValid, groundStationPosition != nil else { return }
+        let due = lastStationUpload.map {
+            Date().timeIntervalSince($0) > Self.stationUploadInterval
+        } ?? true
+        if due { uploadStationPosition() }
     }
     
     // MARK: - Image Upload

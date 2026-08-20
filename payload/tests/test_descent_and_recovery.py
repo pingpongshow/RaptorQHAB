@@ -252,3 +252,33 @@ def test_the_backstop_does_not_defeat_the_altitude_threshold():
     window = src[idx:idx + 800]
     assert "altitude_agl_m is None" in window, \
         "the zone backstop must require a missing altitude"
+
+
+def test_the_ground_stations_agree_about_the_summary():
+    """Both ends of a wire protocol drifting apart is the bug that never
+    fails loudly: the payload keeps sending and the app keeps ignoring."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..",
+                                    "groundstation", "python"))
+    from raptorhabgs.core.protocol import (
+        FlightSummaryPayload as GroundSummary, PacketType as GroundType)
+    from common.constants import PacketType as AirType
+
+    assert int(AirType.FLIGHT_SUMMARY) == int(GroundType.FLIGHT_SUMMARY)
+
+    air = FlightSummaryPayload(
+        max_altitude_m=31234.5, max_altitude_time=1787200000,
+        max_ascent_rate_mps=5.4, max_descent_rate_mps=28.7,
+        distance_travelled_m=142000, min_cpu_temp_c=-31.5,
+        max_cpu_temp_c=42.1, packets_sent=650000, images_captured=231,
+        flight_time_sec=9000, zone=3)
+    ground = GroundSummary.deserialize(air.serialize())
+
+    assert ground is not None
+    assert abs(ground.max_altitude_m - 31234.5) < 0.1
+    assert abs(ground.max_descent_rate_mps - 28.7) < 0.1
+    assert abs(ground.min_cpu_temp_c - (-31.5)) < 0.1
+    assert ground.distance_travelled_m == 142000
+    assert ground.packets_sent == 650000
+    assert ground.images_captured == 231
+    assert ground.flight_time_sec == 9000
+    assert ground.zone_name == "descent"

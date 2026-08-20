@@ -93,6 +93,10 @@ enum PacketType: UInt8 {
     case imageMeta = 0x01
     case imageData = 0x02
     case textMessage = 0x03
+    /// The whole flight in 30 bytes: apogee and when, peak rates, distance,
+    /// temperature extremes. Sent every few minutes, so one received late in
+    /// a flight carries the story even if everything else was missed.
+    case flightSummary = 0x04
     case commandAck = 0x10
     
     // Ground -> Air
@@ -109,6 +113,7 @@ enum PacketType: UInt8 {
         case .imageMeta: return "ImageMeta"
         case .imageData: return "ImageData"
         case .textMessage: return "Text"
+        case .flightSummary: return "FlightSummary"
         case .commandAck: return "CmdAck"
         case .cmdPing: return "CmdPing"
         case .cmdSetParam: return "CmdSetParam"
@@ -564,5 +569,51 @@ struct ReceivedPacket {
     var textMessage: TextMessagePayload? {
         guard type == .textMessage else { return nil }
         return TextMessagePayload.deserialize(from: payload)
+    }
+}
+
+
+/// Flight-scale summary (Type 0x04), 30 bytes.
+struct FlightSummary {
+    let maxAltitude: Double          // metres MSL
+    let maxAltitudeTime: Date
+    let maxAscentRate: Double        // m/s
+    let maxDescentRate: Double       // m/s, positive
+    let distanceTravelled: Double    // metres
+    let minCPUTemp: Double
+    let maxCPUTemp: Double
+    let packetsSent: UInt32
+    let imagesCaptured: UInt16
+    let flightTime: TimeInterval
+    let zone: UInt16
+
+    static let zoneNames = ["unknown", "launch", "cruise", "descent", "landed"]
+    var zoneName: String {
+        Int(zone) < Self.zoneNames.count ? Self.zoneNames[Int(zone)] : "?"
+    }
+
+    static func parse(_ data: Data) -> FlightSummary? {
+        guard data.count >= 30 else { return nil }
+        let b = [UInt8](data)
+        func u32(_ i: Int) -> UInt32 {
+            (UInt32(b[i]) << 24) | (UInt32(b[i+1]) << 16)
+                | (UInt32(b[i+2]) << 8) | UInt32(b[i+3])
+        }
+        func i16(_ i: Int) -> Int16 { Int16(bitPattern: (UInt16(b[i]) << 8) | UInt16(b[i+1])) }
+        func u16(_ i: Int) -> UInt16 { (UInt16(b[i]) << 8) | UInt16(b[i+1]) }
+
+        return FlightSummary(
+            maxAltitude: Double(u32(0)) / 10.0,
+            maxAltitudeTime: Date(timeIntervalSince1970: TimeInterval(u32(4))),
+            maxAscentRate: Double(i16(8)) / 10.0,
+            maxDescentRate: Double(i16(10)) / 10.0,
+            distanceTravelled: Double(u32(12)),
+            minCPUTemp: Double(i16(16)) / 10.0,
+            maxCPUTemp: Double(i16(18)) / 10.0,
+            packetsSent: u32(20),
+            imagesCaptured: u16(24),
+            flightTime: TimeInterval(u16(26)) * 60,
+            zone: u16(28)
+        )
     }
 }

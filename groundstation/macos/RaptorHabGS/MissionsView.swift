@@ -242,6 +242,7 @@ struct MissionDetailView: View {
     @State private var showDeleteImagesConfirm = false
     @State private var showDeleteTelemetryConfirm = false
     @State private var isExporting = false
+    @State private var showReplay = false
     
     // Check if this is the currently recording mission
     private var isActiveMission: Bool {
@@ -298,6 +299,16 @@ struct MissionDetailView: View {
                 .buttonStyle(.borderless)
                 .help("Open mission folder")
                 
+                Button {
+                    showReplay = true
+                } label: {
+                    Image(systemName: "play.rectangle")
+                }
+                .buttonStyle(.borderless)
+                .disabled(telemetry.isEmpty)
+                .help("Replay this flight: scrub the map, imagery and "
+                      + "telemetry against one time cursor")
+
                 Menu {
                     Button("Export Mission...") {
                         exportMission()
@@ -336,6 +347,9 @@ struct MissionDetailView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .sheet(isPresented: $showReplay) {
+            MissionReplayView(mission: mission, telemetry: telemetry, images: images)
         }
         .onAppear {
             loadData()

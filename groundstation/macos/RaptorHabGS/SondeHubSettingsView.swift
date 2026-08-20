@@ -47,6 +47,27 @@ struct SondeHubSettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .help("Payload identifier (e.g., RAPTORQ-1)")
                 }
+
+                // Shown beside the station on the SondeHub map. Optional, but
+                // an empty receiver looks abandoned to anyone deciding whether
+                // its coverage means anything.
+                Section("Station") {
+                    TextField("Radio", text: $sondeHub.config.uploaderRadio)
+                        .textFieldStyle(.roundedBorder)
+                        .help("e.g. SX1262 ground station modem")
+
+                    TextField("Antenna", text: $sondeHub.config.uploaderAntenna)
+                        .textFieldStyle(.roundedBorder)
+                        .help("e.g. 1/4 wave ground plane at 10 m")
+
+                    TextField("Contact e-mail", text: $sondeHub.config.contactEmail)
+                        .textFieldStyle(.roundedBorder)
+                        .help("Optional. Shown to other chasers who want to reach you.")
+
+                    Toggle("Mobile station (chase car)", isOn: $sondeHub.config.mobile)
+                        .help("A car reporting as a fixed site drags a trail of "
+                              + "stale positions across the map.")
+                }
                 
                 // Upload Options
                 Section("Upload Options") {

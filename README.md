@@ -118,7 +118,13 @@ during setup never mistakes itself for a landed one.
 |---|---|---|---|---|
 | Launch | 98% | 1% | 1% | 10 min |
 | Cruise | 5% | 5% | 90% | 5 min |
+| Descent | 15% | 20% | 65% | 45 s |
 | Landed | 0% | 5% | 95% | 1 min |
+
+Descent is the half hour that decides whether the payload is found — the
+landing prediction converges then, and the balloon drops below the horizon of
+everything that was hearing it. It is the one zone where the mesh beacon is
+worth more than the pictures.
 
 Percentages are of **airtime, not packets** — a GFSK image packet lasts a
 couple of milliseconds and a LongFast beacon several hundred, so only airtime

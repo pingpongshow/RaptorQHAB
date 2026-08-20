@@ -13,6 +13,7 @@ struct ContentView: View {
     @EnvironmentObject var groundStation: GroundStationManager
     @ObservedObject var missionManager = MissionManager.shared
     @State private var selectedTab = 0
+    @State private var showChase = false
     
     var body: some View {
         NavigationSplitView {
@@ -91,6 +92,11 @@ struct ContentView: View {
         }
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 300)
         .navigationTitle("RaptorHab Ground Station")
+        .sheet(isPresented: $showChase) {
+            ChaseView()
+                .environmentObject(groundStation)
+                .frame(minWidth: 620, minHeight: 700)
+        }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 // Start/Stop button
@@ -111,6 +117,15 @@ struct ContentView: View {
                     )
                 }
                 .tint(groundStation.isReceiving ? .red : .green)
+
+                // Chase mode: the view for the passenger seat.
+                Button {
+                    showChase = true
+                } label: {
+                    Label("Chase", systemImage: "car.fill")
+                }
+                .help("Full-screen bearing, distance and ETA to the predicted "
+                      + "landing point")
 
                 // Settings
                 Button {
@@ -319,6 +334,10 @@ struct SidebarView: View {
                 Self.lastThrottledUpdate = now
 
                 // Upload to SondeHub (has its own rate limiting)
+                // Register the station before its telemetry: a listener
+                // SondeHub has never heard of is not shown as covering the
+                // area its uploads come from.
+                SondeHubManager.shared.uploadStationPositionIfDue()
                 SondeHubManager.shared.uploadTelemetry(
                     telem,
                     rssi: groundStation.serialRSSI,

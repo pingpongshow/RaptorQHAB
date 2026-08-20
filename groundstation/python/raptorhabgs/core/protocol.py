@@ -85,6 +85,7 @@ ESCAPE_BYTE = 0x7D
 HEADER_SIZE = 8  # sync(4) + type(1) + seq(2) + flags(1)
 CRC_SIZE = 4
 TELEMETRY_PAYLOAD_SIZE = 36
+FLIGHT_SUMMARY_PAYLOAD_SIZE = 30
 IMAGE_META_PAYLOAD_SIZE = 22
 FOUNTAIN_SYMBOL_SIZE = 200
 
@@ -335,6 +336,54 @@ class TextMessagePayload:
             return None
 
 
+@dataclass
+class FlightSummaryPayload:
+    """The whole flight in 30 bytes (Type 0x04).
+
+    Telemetry says where the balloon is now; this says what the flight has
+    been. One of these received late -- or relayed off the mesh by a stranger
+    -- carries the story even when every other packet was missed.
+    """
+    max_altitude_m: float = 0.0
+    max_altitude_time: int = 0
+    max_ascent_rate_mps: float = 0.0
+    max_descent_rate_mps: float = 0.0
+    distance_travelled_m: float = 0.0
+    min_cpu_temp_c: float = 0.0
+    max_cpu_temp_c: float = 0.0
+    packets_sent: int = 0
+    images_captured: int = 0
+    flight_time_sec: int = 0
+    zone: int = 0
+
+    ZONE_NAMES = ("unknown", "launch", "cruise", "descent", "landed")
+
+    @property
+    def zone_name(self) -> str:
+        return self.ZONE_NAMES[self.zone] if self.zone < len(self.ZONE_NAMES) else "?"
+
+    @classmethod
+    def deserialize(cls, data: bytes):
+        if len(data) < FLIGHT_SUMMARY_PAYLOAD_SIZE:
+            return None
+        (alt, t, asc, desc, dist, tmin, tmax,
+         pkts, imgs, mins, zone) = struct.unpack(
+            ">IIhhIhhIHHH", data[:FLIGHT_SUMMARY_PAYLOAD_SIZE])
+        return cls(
+            max_altitude_m=alt / 10.0,
+            max_altitude_time=t,
+            max_ascent_rate_mps=asc / 10.0,
+            max_descent_rate_mps=desc / 10.0,
+            distance_travelled_m=float(dist),
+            min_cpu_temp_c=tmin / 10.0,
+            max_cpu_temp_c=tmax / 10.0,
+            packets_sent=pkts,
+            images_captured=imgs,
+            flight_time_sec=mins * 60,
+            zone=zone,
+        )
+
+
 class CRC32:
     """CRC-32 implementation (IEEE 802.3 polynomial)."""
     
@@ -396,6 +445,7 @@ class PacketParser:
     FIXED_PAYLOAD_SIZES = {
         PacketType.TELEMETRY: TELEMETRY_PAYLOAD_SIZE,      # 36 bytes - fixed
         PacketType.IMAGE_META: IMAGE_META_PAYLOAD_SIZE,    # 22 bytes - fixed
+        PacketType.FLIGHT_SUMMARY: FLIGHT_SUMMARY_PAYLOAD_SIZE,  # 30 - fixed
         PacketType.COMMAND_ACK: 4,                          # 4 bytes - fixed
     }
     
