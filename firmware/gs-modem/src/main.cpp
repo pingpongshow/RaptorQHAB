@@ -135,6 +135,11 @@ uint32_t packetsForwarded = 0;
 // shown rather than dropped in silence -- a link that is quietly losing
 // frames looks identical to one that is idle.
 uint32_t usbDropped = 0;
+// Frames offered to an attached USB host -- the denominator that makes the
+// success rate honest. Radio totals keep climbing while the modem sits
+// unattended, so dividing by them punishes the rate for time nobody was
+// listening.
+uint32_t usbOffered = 0;
 uint32_t packetsRejectedNoRapt = 0;
 uint32_t packetsRejectedCrc = 0;
 uint32_t packetsRadioError = 0;
@@ -382,7 +387,7 @@ void updateStatsDisplay() {
     tft->printf("%lu", packetsRejectedCrc + packetsRejectedNoRapt);
     
     // Success rate
-    float rate = packetsTotal > 0 ? (100.0f * packetsForwarded / packetsTotal) : 0.0f;
+    float rate = usbOffered > 0 ? (100.0f * packetsForwarded / usbOffered) : 100.0f;
     tft->setTextColor(COLOR_LABEL);
     tft->setCursor(210, 147);
     tft->print("RATE:");
@@ -995,6 +1000,11 @@ bool initializeRadio() {
 // ============================================================================
 
 void setup() {
+    // The hardware CDC TX ring defaults to 256 bytes -- smaller than one
+    // stuffed image frame -- so at any real packet rate most writes found the
+    // ring already holding a frame and dropped. Size it to ride out a burst:
+    // 16 KB is under a second of traffic at the payload's peak rate.
+    Serial.setTxBufferSize(16384);
     Serial.begin(SERIAL_BAUD);
     // Never block the main loop on a host that has stopped reading. The radio
     // is serviced from the same loop, so a stalled write makes the modem deaf
@@ -1096,7 +1106,7 @@ void sendStats() {
     if (millis() - lastStatsTime < 10000) return;
     lastStatsTime = millis();
 
-    float rate = packetsTotal > 0 ? (100.0 * packetsForwarded / packetsTotal) : 0.0;
+    float rate = usbOffered > 0 ? (100.0 * packetsForwarded / usbOffered) : 100.0;
 
     char battBuf[24];
     if (isnan(batteryVoltage) || batteryVoltage <= 0.0f) {
@@ -1240,8 +1250,22 @@ bool forwardPacket(uint8_t* data, int len, float rssi, float snr) {
     stuff(checksum);
     frame[n++] = FRAME_DELIMITER;
 
-    // A partial frame is worse than no frame: it desynchronises the ground
-    // station's parser. Send it whole or not at all.
+    // No host attached means nobody to send to -- not a failure, so it
+    // neither counts as forwarded nor as dropped. Otherwise DROP climbs and
+    // RATE sinks the whole time the modem sits unattended, and the numbers
+    // read as a fault where there is none.
+    if (!HWCDC::isConnected()) {
+        return false;
+    }
+    usbOffered++;
+
+    // A partial frame is worse than no frame: with the TX timeout at zero a
+    // full ring makes write() return short, and the fragment it did queue is
+    // garbage on the wire. Check space first and send whole or not at all.
+    if (Serial.availableForWrite() < (int)n) {
+        usbDropped++;
+        return false;
+    }
     if (Serial.write(frame, n) != n) {
         usbDropped++;
         return false;
