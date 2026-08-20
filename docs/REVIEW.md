@@ -1148,3 +1148,45 @@ Narrowed to `except Exception`.
   greyworld's legitimate answer for a scene with little light to estimate
   from — bench-verified against four release recipes, all of which resume
   AWB identically. Daylight converges fast and firmly.
+
+---
+
+## Review pass: macOS app + Python ground station
+
+### G11. macOS: disconnect closed the descriptor under a live read thread **[FIXED]**
+`disconnect()` slept 100 ms and hoped the read loop had noticed. A loop
+sitting in `poll()` had not — and macOS reuses descriptor numbers, so a
+quick reconnect could hand the *new* port the *old* number, leaving two
+threads feeding one frame scanner and one of them reading a descriptor it
+no longer owned. The loop now signals a semaphore as it exits and
+disconnect joins on it (bounded by the poll timeout) before closing.
+Verified: 12 rapid open/read/close cycles against the live modem, frames
+intact in every one.
+
+### G12. macOS: the configuration handshake was a data race **[FIXED]**
+`configResponseBuffer` and `configConfirmedConfig` were written by the
+read thread and polled by the configuration thread with no
+synchronisation — a Swift `String` torn between threads is a crash, and
+this pair is exercised on every connect. Both now sit behind a lock, and
+the buffer is bounded (it previously grew with every status line the
+modem ever printed).
+
+### G13. Python: configure_modem reported success without asking **[FIXED]**
+It wrote the command, set `is_configured = True`, and returned — the
+comment said "assume success after sending". A modem that refused the
+settings, or a port that was not a RaptorHAB modem at all, was reported
+as configured. It now waits (with timeout) for `CFG_OK`/`CFG_ERR`, and a
+refusal surfaces the modem's own message. Four regression tests, one of
+which fails against the old code by construction.
+
+### G14. Python: binary debris could reach the text-line handler **[FIXED]**
+The text extractor decoded the whole raw stream — frames included — and
+split on newlines, so a `0x0A` inside a binary frame produced a garbage
+"line" that went to the prefix matchers. Lines are now required to be
+short and printable before processing, and the accumulator is bounded.
+A persistent read-loop exception also spun at full speed emitting errors;
+it now backs off half a second.
+
+### Also
+Bare `except:` narrowed to `except Exception` in the Python serial and
+GPS managers (a bare except swallows `SystemExit`).

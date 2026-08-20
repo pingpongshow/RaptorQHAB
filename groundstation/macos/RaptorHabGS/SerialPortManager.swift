@@ -72,6 +72,9 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
     private var readThread: Thread?
     private var shouldRun = false
     private let bufferLock = NSLock()  // Serialises access to the scanner
+    /// Signalled by readLoop as it exits, so disconnect() can join it before
+    /// closing the file descriptor out from under it.
+    private var readLoopExited = DispatchSemaphore(value: 0)
     
     // MARK: - Debug
     
@@ -197,6 +200,7 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         
         // Start read thread
         shouldRun = true
+        readLoopExited = DispatchSemaphore(value: 0)
         readThread = Thread { [weak self] in
             self?.readLoop()
         }
@@ -219,11 +223,15 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         
         // Signal read thread to stop
         shouldRun = false
-        
-        // Wait briefly for thread to exit
-        Thread.sleep(forTimeInterval: 0.1)
-        
         readThread?.cancel()
+
+        // Wait for the loop to actually exit before closing the descriptor.
+        // A fixed sleep is a guess, not a join: close a descriptor the loop
+        // is still polling and a quick reconnect can hand the same number to
+        // the new port -- two threads then feed one scanner, and the old one
+        // reads a descriptor it no longer owns. The loop signals this
+        // semaphore on its way out; the poll() timeout bounds the wait.
+        _ = readLoopExited.wait(timeout: .now() + 2.0)
         readThread = nil
         
         if fileDescriptor >= 0 {
@@ -281,6 +289,10 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
     
     @Published var isConfigured = false
     @Published var configurationError: String?
+    /// Written by the read thread, polled by the configuration thread --
+    /// every access goes through configLock. A Swift String torn between
+    /// two threads is a crash, not a glitch.
+    private let configLock = NSLock()
     private var configResponseBuffer = ""
     private var configConfirmedConfig: ModemConfig?
     var onConfigResponse: ((String) -> Void)?
@@ -290,8 +302,10 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
     func configureModem(_ config: ModemConfig, timeout: TimeInterval = 5.0, maxRetries: Int = 3) -> ModemConfig? {
         debugLog("Configuring modem: \(config.configCommand.trimmingCharacters(in: .newlines))")
         
+        configLock.lock()
         configResponseBuffer = ""
         configConfirmedConfig = nil
+        configLock.unlock()
         
         for attempt in 1...maxRetries {
             debugLog("Configuration attempt \(attempt)/\(maxRetries)")
@@ -306,7 +320,11 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
             let startTime = Date()
             while Date().timeIntervalSince(startTime) < timeout {
                 // Check if we got a valid confirmation
-                if let confirmed = configConfirmedConfig {
+                configLock.lock()
+                let confirmed = configConfirmedConfig
+                let responseSoFar = configResponseBuffer
+                configLock.unlock()
+                if let confirmed = confirmed {
                     DispatchQueue.main.async {
                         self.isConfigured = true
                         self.configurationError = nil
@@ -316,15 +334,17 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
                 }
                 
                 // Check for error response
-                if configResponseBuffer.contains("CFG_ERR:") {
-                    let errorMsg = configResponseBuffer
+                if responseSoFar.contains("CFG_ERR:") {
+                    let errorMsg = responseSoFar
                         .components(separatedBy: "CFG_ERR:").last?
                         .components(separatedBy: "\n").first ?? "Unknown error"
                     debugLog("Configuration error: \(errorMsg)")
                     DispatchQueue.main.async {
                         self.configurationError = errorMsg
                     }
+                    configLock.lock()
                     configResponseBuffer = ""
+                    configLock.unlock()
                     break  // Try again
                 }
                 
@@ -355,14 +375,20 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
 
         debugLog("Modem text: \(line)")
         
+        configLock.lock()
         configResponseBuffer += line + "\n"
-        
+        // The modem prints status forever; only the configuration exchange
+        // reads this, so keep the tail rather than growing without bound.
+        if configResponseBuffer.count > 4096 {
+            configResponseBuffer = String(configResponseBuffer.suffix(1024))
+        }
         // Check for configuration confirmation
         if line.hasPrefix("CFG_OK:") {
             if let confirmed = ModemConfig.parseConfirmation(line) {
                 configConfirmedConfig = confirmed
             }
         }
+        configLock.unlock()
         
         // Call callback if set
         onConfigResponse?(line)
@@ -424,6 +450,7 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
         }
 
         debugLog("Read loop ended")
+        readLoopExited.signal()
     }
     
     // MARK: - Frame Parsing

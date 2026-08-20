@@ -102,7 +102,7 @@ class GPSManager(QObject):
         if self.serial:
             try:
                 self.serial.close()
-            except:
+            except Exception:
                 pass
             self.serial = None
         

@@ -59,6 +59,9 @@ class SerialManager(QObject):
         
         self._read_thread: Optional[Thread] = None
         self._stop_event = Event()
+        # Set by the read thread when the modem answers CFG_OK or CFG_ERR,
+        # releasing configure_modem() from its wait.
+        self._config_ack = Event()
         
         self._frame_extractor = FrameExtractor()
 
@@ -138,7 +141,7 @@ class SerialManager(QObject):
         if self.serial:
             try:
                 self.serial.close()
-            except:
+            except Exception:
                 pass
             self.serial = None
         
@@ -163,16 +166,22 @@ class SerialManager(QObject):
             return False
         
         try:
-            # Send configuration command
+            # Send configuration command and wait for the modem's verdict.
+            # This used to assume success after sending, which reported a
+            # configured modem even when the radio refused the settings --
+            # the same silent failure the modem firmware itself once had.
+            self._config_ack.clear()
+            self.is_configured = False
             cmd = config.config_command
             self.serial.write(cmd.encode("utf-8"))
             self.serial.flush()
-            
-            # Wait for acknowledgment (handled in read loop)
-            # For now, assume success after sending
-            self.is_configured = True
-            return True
-            
+
+            if self._config_ack.wait(timeout):
+                return self.is_configured
+
+            self.error.emit("Modem did not answer the configuration command")
+            return False
+
         except Exception as e:
             self.error.emit(f"Configuration failed: {e}")
             return False
@@ -211,6 +220,9 @@ class SerialManager(QObject):
             except Exception as e:
                 if not self._stop_event.is_set():
                     self.error.emit(f"Read error: {e}")
+                    # A persistent fault would otherwise spin this loop at
+                    # full speed, emitting errors as fast as the UI can draw.
+                    self._stop_event.wait(0.5)
     
     def _process_data(self, data: bytes):
         """Process received data."""
@@ -255,17 +267,24 @@ class SerialManager(QObject):
         """Extract text lines from data (for modem status messages)."""
         try:
             text = data.decode("utf-8", errors="ignore")
-        except:
+        except Exception:
             return
         
         self._text_buffer += text
-        
+
+        # The raw stream carries binary frames as well as status text, and a
+        # 0x0A inside a frame splits as a "line" here. Real modem lines are
+        # short and printable; anything else is frame debris and is dropped
+        # before it can reach a prefix match.
+        if len(self._text_buffer) > 4096:
+            self._text_buffer = self._text_buffer[-1024:]
+
         # Process complete lines
         while "\n" in self._text_buffer:
             line, self._text_buffer = self._text_buffer.split("\n", 1)
             line = line.strip()
-            
-            if line:
+
+            if line and len(line) <= 256 and line.isprintable():
                 self._process_text_line(line)
     
     def _process_text_line(self, line: str):
@@ -278,6 +297,11 @@ class SerialManager(QObject):
         # Configuration acknowledgment
         if line.startswith("CFG_OK:") or line.startswith("CFG_ACK:"):
             self.is_configured = True
+            self._config_ack.set()
+        elif line.startswith("CFG_ERR:"):
+            self.is_configured = False
+            self.error.emit(f"Modem refused configuration: {line[8:]}")
+            self._config_ack.set()
             self.config_response.emit(line)
         elif line.startswith("CFG_ERR:"):
             self.is_configured = False
