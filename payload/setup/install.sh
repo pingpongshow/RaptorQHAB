@@ -198,7 +198,7 @@ apt-get update -qq
 
 # picamera2 and its libcamera stack come from apt, never pip -- the pip build
 # does not link against the system libcamera and will not see the sensor.
-REQUIRED_PACKAGES="python3 python3-venv python3-pip python3-dev git build-essential rsync"
+REQUIRED_PACKAGES="python3 python3-venv python3-pip python3-dev git build-essential rsync python3-serial python3-spidev"
 
 # Optional: nice to have, but their names drift between Debian releases and
 # none of them is load-bearing. libatlas-base-dev, for instance, was dropped
@@ -290,11 +290,23 @@ say "Building the Python environment"
 
 # --system-site-packages is required: picamera2 and libcamera are apt-installed
 # C extensions that cannot be pip-installed into an isolated venv.
-if [[ ! -x "$VENV/bin/python" ]]; then
-    python3 -m venv --system-site-packages "$VENV"
-    ok "virtualenv created"
-else
+# A venv can exist but be broken. An install interrupted partway -- a dropped
+# SSH session, a power loss on a Zero -- leaves zero-byte files and a pip that
+# silently does nothing, so every later "pip install" is a no-op that ships a
+# payload with empty modules. Trusting "the venv exists" is exactly how that
+# corruption survives a re-run. Verify it actually works, and rebuild if not.
+venv_ok() {
+    [[ -x "$VENV/bin/python" ]] \
+        && "$VENV/bin/python" -c 'import sys' >/dev/null 2>&1 \
+        && "$VENV/bin/pip" --version >/dev/null 2>&1
+}
+if venv_ok; then
     ok "virtualenv exists"
+else
+    rm -rf "$VENV"
+    python3 -m venv --system-site-packages "$VENV"
+    venv_ok || die "could not build a working virtualenv"
+    ok "virtualenv (re)built"
 fi
 
 "$VENV/bin/pip" install --quiet --upgrade pip wheel
@@ -303,20 +315,36 @@ fi
 # the better part of an hour if it succeeds at all.
 WHEEL=$(find "$CODE_DIR/raptor_wheel" -name 'raptorq-*.whl' 2>/dev/null | head -1)
 if [[ -n "$WHEEL" ]]; then
-    "$VENV/bin/pip" install --quiet "$WHEEL" || die "bundled raptorq wheel rejected"
+    # --force-reinstall replaces any half-written raptorq a prior run left.
+    "$VENV/bin/pip" install --quiet --force-reinstall --no-deps "$WHEEL" \
+        || die "bundled raptorq wheel rejected"
     ok "raptorq from the bundled wheel"
 else
     warn "no bundled wheel; building raptorq from source (this is slow)"
     "$VENV/bin/pip" install --quiet raptorq || die "raptorq install failed"
 fi
 
-"$VENV/bin/pip" install --quiet RPi.GPIO spidev pyserial
+# RPi.GPIO, serial (pyserial) and spidev are provided by the system, not the
+# venv: on Debian 13 / Python 3.13 the classic RPi.GPIO C extension no longer
+# builds, and pip-installing it as part of one command silently took pyserial
+# and spidev with it. The --system-site-packages venv sees the apt packages.
+# python3-rpi-lgpio ships RPi.GPIO on current images; install it if the import
+# is missing rather than assuming a package name that drifts between releases.
+if ! "$VENV/bin/python" -c 'import RPi.GPIO' 2>/dev/null; then
+    apt-get install -y -qq python3-rpi-lgpio >/dev/null 2>&1         || apt-get install -y -qq python3-rpi.gpio >/dev/null 2>&1 || true
+fi
+for mod in serial spidev "RPi.GPIO"; do
+    "$VENV/bin/python" -c "import $mod" 2>/dev/null         || die "$mod is not importable; the payload cannot talk to its hardware"
+done
 ok "python dependencies installed"
 
 # raptorq is load-bearing: the payload refuses to start without it, because
 # the ground station has no decoder for the LT fallback.
-"$VENV/bin/python" -c 'import raptorq' \
-    || die "raptorq installed but not importable"
+# Not just 'import raptorq': a corrupt install leaves an importable but empty
+# stub with no Encoder, which then fails only at the first image capture in
+# flight. Check the class the payload actually needs.
+"$VENV/bin/python" -c 'import raptorq; raptorq.Encoder' \
+    || die "raptorq is present but raptorq.Encoder is missing (corrupt install)"
 ok "raptorq verified"
 
 # --------------------------------------------------------------------------

@@ -343,15 +343,24 @@ sudo /opt/raptorhab/setup/install.sh --check
 
 ## 4. Configure
 
+Run these from the writable state directory with `PYTHONPATH` set — the same
+environment the service uses. Two reasons: `-m airborne.main` needs
+`/opt/raptorhab` on the path to find the packages, and the GPIO library
+(`lgpio`, which `RPi.GPIO` wraps) creates a notification file in the working
+directory when it loads, so that directory must be writable by `raptorhab`.
+
 ```bash
-sudo -u raptorhab /opt/raptorhab/.venv/bin/python -m airborne.main --print-config
+cd /var/lib/raptorhab
+sudo -u raptorhab env PYTHONPATH=/opt/raptorhab \
+    /opt/raptorhab/.venv/bin/python -m airborne.main --print-config
 ```
 
 Edit `/var/lib/raptorhab/config/airborne.json`, or set values from the command
 line:
 
 ```bash
-sudo -u raptorhab /opt/raptorhab/.venv/bin/python -m airborne.main --callsign KX0ABC --save-config
+sudo -u raptorhab env PYTHONPATH=/opt/raptorhab \
+    /opt/raptorhab/.venv/bin/python -m airborne.main --callsign KX0ABC --save-config
 ```
 
 At minimum, set your **callsign**, confirm **`radio_frequency_mhz` matches the
@@ -360,7 +369,8 @@ ground modem**, and decide whether `meshtastic_enabled` should be on.
 Every parameter, with its range and whether it needs a restart:
 
 ```bash
-/opt/raptorhab/.venv/bin/python -m airborne.main --print-schema
+sudo -u raptorhab env PYTHONPATH=/opt/raptorhab \
+    /opt/raptorhab/.venv/bin/python -m airborne.main --print-schema
 ```
 
 ---

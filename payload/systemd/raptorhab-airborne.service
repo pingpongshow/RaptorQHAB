@@ -19,7 +19,13 @@ Group=raptorhab
 # this does not need root.
 SupplementaryGroups=spi gpio dialout video i2c
 
-WorkingDirectory=/opt/raptorhab
+# /var/lib/raptorhab, not /opt/raptorhab: the code is read-only to the service
+# account, and lgpio (which RPi.GPIO wraps on current Pi OS) creates a
+# .lgd-nfy notification FIFO in the working directory at import time. In a
+# read-only directory that import raises FileNotFoundError and the payload
+# crash-loops. The state directory is writable and is where transient files
+# belong. Imports still resolve through PYTHONPATH below.
+WorkingDirectory=/var/lib/raptorhab
 ExecStart=/opt/raptorhab/.venv/bin/python -m airborne.main
 Restart=always
 # Every second here is dead air on the downlink.
