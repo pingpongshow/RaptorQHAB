@@ -622,10 +622,25 @@ Then, with no WiFi involved:
 
 To run the installer, the Pi needs internet for apt. Share your connection over
 that USB interface -- macOS: System Settings > General > Sharing > Internet
-Sharing, from Wi-Fi to the gadget interface -- then:
+Sharing, from Wi-Fi to the gadget interface.
 
-  sudo /opt/raptorhab-src/setup/install.sh --usb-gadget${CAMERA_OVERLAY:+ --camera $CAMERA_OVERLAY}
+Run the installer as a detached systemd unit, NOT as a plain foreground
+command. Partway through it reconfigures usb0 and reloads NetworkManager, which
+drops an SSH session running over the cable -- and a foreground installer dies
+with it, half-finished. Detached, it keeps going no matter what:
 
-The payload never has to join your WiFi.
+  sudo systemd-run --unit rh-install --collect --pty \\
+    /opt/raptorhab-src/setup/install.sh --usb-gadget${CAMERA_OVERLAY:+ --camera $CAMERA_OVERLAY}
+
+If your SSH drops, reconnect and watch it finish with:
+
+  journalctl -u rh-install -f
+
+Keep --usb-gadget: without it the installer hands usb0 to the gadget script but
+never installs that script, leaving the cable with no address. If WiFi is up
+you can skip all this and run the installer plainly over WiFi -- then the usb0
+reconfiguration never touches your connection.
+
+The payload never has to join your WiFi in flight.
 
 NEXT

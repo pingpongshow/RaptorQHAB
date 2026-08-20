@@ -200,13 +200,42 @@ Installing packages. A fresh Pi OS Lite has no `picamera2` and no
 `python3-venv`, and no amount of card preparation conjures them up. The USB
 ethernet link solves this without WiFi: share your laptop's connection over
 that interface (macOS: System Settings > General > Sharing > Internet Sharing,
-from Wi-Fi to the gadget interface), then run the installer over SSH:
+from Wi-Fi to the gadget interface).
+
+**Do not run the installer as a plain foreground command over the USB cable.**
+Partway through it reconfigures `usb0` and reloads NetworkManager — which drops
+the very SSH session you are running over, and a foreground installer dies with
+it, half-finished. Instead run it as a detached systemd unit, which keeps
+running no matter what happens to your connection:
 
 ```bash
-sudo /opt/raptorhab-src/setup/install.sh --usb-gadget --camera imx219
+sudo systemd-run --unit rh-install --collect --pty \
+    /opt/raptorhab-src/setup/install.sh --usb-gadget --camera imx219
 ```
 
-The payload never joins your WiFi.
+If your SSH does drop, the install carries on regardless. Reconnect (over WiFi,
+or the USB link once the gadget comes back at `10.55.0.1`) and watch it finish:
+
+```bash
+journalctl -u rh-install -f
+```
+
+Two things worth stating plainly:
+
+- **Pass `--usb-gadget` whenever you want USB access to survive the install.**
+  Without it the installer still hands `usb0` to the gadget script, but never
+  installs that script — leaving the interface with no address and no way back
+  onto the cable until you re-run *with* the flag.
+- **If WiFi is up, the simplest path is to install over WiFi instead.** The
+  `usb0` reconfiguration then never touches your connection, and the plain
+  foreground command is safe:
+
+  ```bash
+  sudo /opt/raptorhab-src/setup/install.sh --usb-gadget --camera imx219
+  ```
+
+The payload never joins your WiFi in flight either way; WiFi here is only a
+convenience for the install.
 
 A genuinely air-gapped install would mean staging every `.deb` on the card.
 That is possible, but it breaks whenever Raspberry Pi OS moves a dependency,
@@ -268,6 +297,19 @@ Add `--usb-gadget` to also enable the USB serial console described below:
 ```bash
 sudo ./setup/install.sh --usb-gadget
 ```
+
+**If you are connected over the USB cable, run it detached instead** — partway
+through it reconfigures `usb0` and drops an SSH session on that link, taking a
+foreground installer down with it:
+
+```bash
+sudo systemd-run --unit rh-install --collect --pty \
+    ./setup/install.sh --usb-gadget --camera imx219
+```
+
+Then `journalctl -u rh-install -f` to watch it, reconnecting if your session
+drops. Over **WiFi** the plain command above is fine — the `usb0` change never
+touches your connection.
 
 It takes a few minutes on a Zero 2 W, is safe to re-run, and reports every
 change it makes. What it does:
