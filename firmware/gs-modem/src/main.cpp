@@ -121,8 +121,18 @@ bool configured = false;
 // Global Objects - Radio & Display
 // ============================================================================
 
+// RadioLib keeps clearIrqStatus protected, which is reasonable -- clearing
+// the wrong bit races the interrupt that carries every packet. Exposing just
+// that call through a subclass lets the link funnel reset the two status bits
+// it counts, turning a latched flag that fires once into an honest rate.
+class SX1262Funnel : public SX1262 {
+public:
+    using SX1262::SX1262;
+    int16_t clearIrq(uint16_t mask) { return clearIrqStatus(mask); }
+};
+
 SPIClass* spi = nullptr;
-SX1262* radio = nullptr;
+SX1262Funnel* radio = nullptr;
 #if BOARD_HAS_TFT
 SPIClass* tftSpi = nullptr;
 Adafruit_ST7789* tft = nullptr;
@@ -164,6 +174,16 @@ float currentPacketRate() {
 uint32_t packetsRejectedNoRapt = 0;
 uint32_t packetsRejectedCrc = 0;
 uint32_t packetsRadioError = 0;
+// Link-margin funnel. GFSK has no frequency-error measurement -- the SX1262
+// exposes that only for LoRa, and RadioLib returns 0.0 on any other modem,
+// which is the same trap the SNR field fell into. What *is* measurable in
+// GFSK is how far each transmission got: preamble seen, sync word matched,
+// whole packet recovered. Drift, a failing TCXO in the cold, or a marginal
+// antenna all show the same way -- preambles keep arriving while sync
+// matches fall away -- and that is the diagnosis the frequency-error
+// reading would have been used to make.
+uint32_t preamblesDetected = 0;
+uint32_t syncWordsMatched = 0;
 uint32_t packetsSmall = 0;
 uint32_t packetsLarge = 0;
 float lastRssi = -120.0;
@@ -236,6 +256,7 @@ void handleUsbCommands();
 bool initializeRadio();
 bool configureRadio();
 float currentPacketRate();
+void sampleLinkFunnel();
 void initDisplay();
 void drawStaticUI();
 void updateDisplay();
@@ -435,6 +456,20 @@ void updateStatsDisplay() {
     tft->print("OUT:");
     tft->setTextColor(COLOR_GOOD);
     tft->print("USB");
+
+    // Preambles that never became packets. Zero is healthy: on frequency,
+    // every preamble is consumed by the packet that follows it. A climbing
+    // count with the packet rate at zero is the signature of being off
+    // frequency -- a drifting TCXO in the cold, or a mistuned payload --
+    // and it is what the SX1262 can actually measure in GFSK, where it
+    // reports no frequency error at all.
+    tft->setCursor(215, 159);
+    tft->setTextColor(COLOR_LABEL);
+    tft->print("PRE:");
+    bool deaf = preamblesDetected > 0 && pktRate <= 0.0f;
+    tft->setTextColor(deaf ? COLOR_BAD
+                           : (preamblesDetected > 0 ? COLOR_WARN : COLOR_VALUE));
+    tft->printf("%lu", preamblesDetected);
 
 
     prevPacketsForwarded = packetsForwarded;
@@ -671,7 +706,7 @@ void updateDisplay() {
     oled->setCursor(0, 36);
     oled->printf("RX %lu  FWD %lu", packetsTotal, packetsForwarded);
     oled->setCursor(0, 46);
-    oled->printf("CRC %lu  ERR %lu", packetsRejectedCrc, packetsRadioError);
+    oled->printf("CRC %lu  PRE %lu", packetsRejectedCrc, preamblesDetected);
 
     oled->setCursor(0, 56);
     if (isnan(batteryVoltage) || batteryVoltage <= 0.0f) {
@@ -1004,7 +1039,15 @@ bool configureRadio() {
     radio->setWhitening(true, 0x01FF);
     
     radio->setDio1Action(onPacketReceived);
-    radio->startReceive();
+    // Preamble and sync-word IRQs are enabled but deliberately NOT mapped to
+    // DIO1: they latch in the status register for the loop to count, without
+    // adding an interrupt per preamble to the path that carries the imagery.
+    radio->startReceive(
+        RADIOLIB_SX126X_RX_TIMEOUT_INF,
+        RADIOLIB_SX126X_IRQ_RX_DEFAULT
+            | RADIOLIB_SX126X_IRQ_PREAMBLE_DETECTED
+            | RADIOLIB_SX126X_IRQ_SYNC_WORD_VALID,
+        RADIOLIB_SX126X_IRQ_RX_DONE);
     
     Serial.println("[RADIO] SX1262 initialized successfully");
     return true;
@@ -1020,7 +1063,7 @@ bool initializeRadio() {
         spi->begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS);
 
         Module* mod = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY, *spi);
-        radio = new SX1262(mod);
+        radio = new SX1262Funnel(mod);
     }
 
     return configureRadio();
@@ -1136,6 +1179,11 @@ void loop() {
         lastPacketTime = millis();
     }
 
+    // Sample the latched receive IRQs. Cheap, and only the two bits we
+    // count are cleared -- clearing RX_DONE here would race the interrupt
+    // that carries every packet.
+    sampleLinkFunnel();
+
     // Accept reconfiguration at any time
     handleUsbCommands();
 
@@ -1144,6 +1192,26 @@ void loop() {
 
     // Update display during idle periods
     updateDisplay();
+}
+
+void sampleLinkFunnel() {
+    static uint32_t lastSample = 0;
+    if (radio == nullptr || millis() - lastSample < 20) return;
+    lastSample = millis();
+
+    uint16_t irq = radio->getIrqStatus();
+    uint16_t clear = 0;
+    if (irq & RADIOLIB_SX126X_IRQ_PREAMBLE_DETECTED) {
+        preamblesDetected++;
+        clear |= RADIOLIB_SX126X_IRQ_PREAMBLE_DETECTED;
+    }
+    if (irq & RADIOLIB_SX126X_IRQ_SYNC_WORD_VALID) {
+        syncWordsMatched++;
+        clear |= RADIOLIB_SX126X_IRQ_SYNC_WORD_VALID;
+    }
+    // Only these two bits. Clearing RX_DONE here would race the interrupt
+    // that carries every packet.
+    if (clear) radio->clearIrq(clear);
 }
 
 // ============================================================================
@@ -1165,9 +1233,9 @@ void sendStats() {
 
     char statsBuf[256];
     snprintf(statsBuf, sizeof(statsBuf),
-        "\n[STATS] Total:%lu Fwd:%lu NoRAPT:%lu BadCRC:%lu Err:%lu Rate:%.1f%% Drop:%lu Batt:%s\n",
+        "\n[STATS] Total:%lu Fwd:%lu NoRAPT:%lu BadCRC:%lu Err:%lu Rate:%.1f%% Drop:%lu Pre:%lu Sync:%lu Batt:%s\n",
         packetsTotal, packetsForwarded, packetsRejectedNoRapt, packetsRejectedCrc,
-        packetsRadioError, rate, usbDropped, battBuf);
+        packetsRadioError, rate, usbDropped, preamblesDetected, syncWordsMatched, battBuf);
     Serial.print(statsBuf);
 }
 
