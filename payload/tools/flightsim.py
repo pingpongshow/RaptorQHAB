@@ -131,6 +131,15 @@ def profile_landed(t):
     if t < 150: return max(4000.0 - (t - 30) * 40.0, 3.0), 8.0, 1, 3
     return 3.0, 0.0, 1, 3
 
+def profile_pad_loss(t):
+    # Fix loss on the pad: the payload stays in the launch zone, telemetry
+    # keeps flowing, and nothing else fires -- no launch detection, no WiFi
+    # cutoff, no flight state. The scenario for watching fix_type over the
+    # air without the cruise zone going quiet on you.
+    if t < 30: return 0.0, 0.0, 1, 3
+    if t < 90: return 0.0, 0.0, 0, 1
+    return 0.0, 0.0, 1, 3
+
 def profile_gps_loss(t):
     if t < 40: return min(t * 200.0, 4000.0), 12.0, 1, 3
     if t < 100: return 4000.0, 12.0, 0, 1                # the roof: no fix
@@ -148,6 +157,7 @@ SCENARIOS = {
     "descent": (profile_descent, "from altitude down to the ground"),
     "landed": (profile_landed, "a whole quick flight ending low and still"),
     "gps-loss": (profile_gps_loss, "climb, lose the fix entirely, recover"),
+    "pad-loss": (profile_pad_loss, "lose the fix on the pad -- telemetry keeps flowing"),
     "2d": (profile_2d, "a 2D fix the payload must refuse to act on"),
     "flight": (None, "pad, ascent, cruise dwell, descent, landed"),
 }

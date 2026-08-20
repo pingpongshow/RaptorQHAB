@@ -85,3 +85,13 @@ def test_flight_profile_reaches_every_phase():
     assert 0 < p(300)[0] < 4000.0               # descending
     alt, speed, q, gsa = p(500)
     assert alt < 10 and speed == 0.0            # landed and still
+
+
+def test_pad_loss_profile_stays_on_the_ground():
+    """Loss on the pad: the scenario for watching fix_type over the air.
+    Altitude must never rise -- a climb would flip zones, quiet the
+    telemetry, and fire launch detection, all of which bury the signal
+    this scenario exists to expose."""
+    p = flightsim.profile_pad_loss
+    assert all(p(t)[0] == 0.0 for t in (0, 45, 120))
+    assert p(10)[2] == 1 and p(45)[2] == 0 and p(120)[2] == 1
