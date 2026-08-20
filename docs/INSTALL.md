@@ -670,3 +670,31 @@ installer.
 `systemctl status raptorhab-usb-gadget`.
 
 
+
+## Flashing a modem from a browser
+
+`tools/webflash/` is a page that flashes any of the seven boards over Web
+Serial — no PlatformIO, no toolchain, no Python. It exists for the moment it
+is actually needed: the primary modem dies on launch morning and somebody
+else has the spare.
+
+```bash
+cd firmware/gs-modem && pio run        # build every board
+./tools/webflash/build.sh              # collect the images + manifest
+./tools/webflash/vendor.sh             # optional: bundle the flasher offline
+cd tools/webflash && python3 -m http.server 8000
+```
+
+Open `http://localhost:8000` in **Chrome or Edge** (Web Serial does not exist
+in Safari or Firefox), pick the board, Connect, Flash.
+
+Two things worth knowing:
+
+- Close the RaptorHAB app first, or it will be holding the port.
+- `vendor.sh` downloads esptool-js (Espressif, Apache-2.0) into `vendor/`.
+  It is a separate, explicit step because the rest of this project has no
+  third-party runtime dependencies at all. Skip it and the page falls back to
+  a CDN — fine at a desk, useless on a field with no signal.
+
+The directory is self-contained once built: zip it, hand it to someone, and
+they can flash a board without this repository.

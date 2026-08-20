@@ -1,0 +1,6 @@
+# Board images, collected by build.sh from the PlatformIO build. Several MB
+# of build output that the repo does not need to carry.
+firmware/
+manifest.json
+# Third-party flasher, fetched by vendor.sh.
+vendor/

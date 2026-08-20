@@ -1,0 +1,155 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>RaptorHAB — flash a ground station modem</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; --bg:#14161a; --fg:#e7e9ee; --dim:#9aa3b2;
+          --line:#2a2f38; --ok:#5fd38d; --bad:#ff6b6b; --accent:#5aa9ff; }
+  body { margin:0; padding:2rem 1.25rem 4rem; background:var(--bg); color:var(--fg);
+         font:15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         max-width:44rem; margin-inline:auto; }
+  h1 { font-size:1.4rem; margin:0 0 .25rem; }
+  .sub { color:var(--dim); margin:0 0 2rem; }
+  fieldset { border:1px solid var(--line); border-radius:10px; padding:1rem 1.15rem;
+             margin:0 0 1.25rem; }
+  legend { color:var(--dim); font-size:.8rem; text-transform:uppercase;
+           letter-spacing:.06em; padding:0 .4rem; }
+  select, button { font:inherit; border-radius:8px; border:1px solid var(--line);
+                   background:#1c2028; color:var(--fg); padding:.6rem .8rem; }
+  button { cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#06101f;
+                   font-weight:600; }
+  button[disabled] { opacity:.45; cursor:not-allowed; }
+  #log { white-space:pre-wrap; font:12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background:#0f1116; border:1px solid var(--line); border-radius:8px;
+         padding:.85rem; min-height:8rem; max-height:22rem; overflow:auto; }
+  .bar { height:6px; background:#0f1116; border-radius:3px; overflow:hidden; margin:.75rem 0 0; }
+  .bar > i { display:block; height:100%; width:0; background:var(--accent);
+             transition:width .2s; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .dim { color:var(--dim); }
+  ol { padding-left:1.2rem; } li { margin:.3rem 0; }
+  code { background:#0f1116; padding:.1rem .35rem; border-radius:4px; }
+</style>
+
+<h1>Flash a ground station modem</h1>
+<p class="sub">No toolchain, no PlatformIO. A browser, a USB cable, and the board.</p>
+
+<fieldset>
+  <legend>Before you start</legend>
+  <ol>
+    <li>Use <b>Chrome or Edge</b> — Web Serial does not exist in Safari or Firefox.</li>
+    <li>Plug the modem into USB. Nothing else needs to be running: close the
+        RaptorHAB app first, or it will hold the port.</li>
+    <li>If the board is not offered when you click Connect, hold <b>BOOT</b>,
+        tap <b>RESET</b>, release <b>BOOT</b>, and try again.</li>
+  </ol>
+</fieldset>
+
+<fieldset>
+  <legend>Board</legend>
+  <select id="board"></select>
+  <button id="connect" class="primary">Connect</button>
+  <button id="flash" disabled>Flash</button>
+  <div class="bar"><i id="bar"></i></div>
+</fieldset>
+
+<fieldset>
+  <legend>Progress</legend>
+  <div id="log" class="dim">Ready.</div>
+</fieldset>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const log = (msg, cls = "") => {
+  const el = $("log");
+  el.classList.remove("dim");
+  el.insertAdjacentHTML("beforeend",
+    (el.textContent.trim() ? "\n" : "") +
+    (cls ? `<span class="${cls}">${msg}</span>` : msg));
+  el.scrollTop = el.scrollHeight;
+};
+
+// esptool-js is loaded from a local copy when one is present, so this page
+// works on a launch field with no signal. vendor.sh fetches it; without it,
+// the page falls back to the CDN and says so.
+async function loadEsptool() {
+  try {
+    const local = await import("./vendor/esptool-js/bundle.js");
+    log("Using the bundled flasher (works offline).", "dim");
+    return local;
+  } catch {
+    log("No local flasher bundled — fetching it. Run tools/webflash/vendor.sh "
+        + "to make this page work offline.", "dim");
+    return await import("https://unpkg.com/esptool-js@0.5.4/bundle.js");
+  }
+}
+
+let manifest = null, device = null, transport = null, esp = null, mod = null;
+
+fetch("manifest.json").then(r => r.json()).then(m => {
+  manifest = m;
+  $("board").innerHTML = m.boards.map(
+    b => `<option value="${b.file}">${b.id} — ${Math.round(b.size / 1024)} KB</option>`
+  ).join("");
+  log(`${m.boards.length} board images, built ${m.built}.`, "dim");
+}).catch(() => {
+  log("No manifest.json here. Run tools/webflash/build.sh after a firmware "
+      + "build to collect the images.", "bad");
+});
+
+$("connect").onclick = async () => {
+  if (!("serial" in navigator)) {
+    log("This browser has no Web Serial. Use Chrome or Edge.", "bad");
+    return;
+  }
+  try {
+    mod = mod || await loadEsptool();
+    device = await navigator.serial.requestPort({});
+    transport = new mod.Transport(device, true);
+    esp = new mod.ESPLoader({
+      transport,
+      baudrate: 921600,
+      terminal: { clean(){}, writeLine: (d) => log(d, "dim"), write(){} },
+    });
+    const chip = await esp.main();
+    log(`Connected: ${chip}`, "ok");
+    $("flash").disabled = false;
+  } catch (e) {
+    log(`Could not connect: ${e.message}`, "bad");
+  }
+};
+
+$("flash").onclick = async () => {
+  $("flash").disabled = $("connect").disabled = true;
+  try {
+    const file = $("board").value;
+    log(`Fetching ${file}...`);
+    const buf = await (await fetch(file)).arrayBuffer();
+
+    // esptool-js wants a binary string, not an ArrayBuffer.
+    let bin = "";
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+
+    log(`Writing ${Math.round(bytes.length / 1024)} KB at 0x0. Do not unplug.`);
+    await esp.writeFlash({
+      fileArray: [{ data: bin, address: 0x0 }],
+      flashSize: "keep",
+      eraseAll: false,
+      compress: true,
+      reportProgress: (_i, written, total) => {
+        $("bar").style.width = `${(written / total) * 100}%`;
+      },
+    });
+    await esp.after();
+    log("Done. The modem has restarted and should be listening.", "ok");
+  } catch (e) {
+    log(`Flash failed: ${e.message}`, "bad");
+    log("If it stopped partway: hold BOOT, tap RESET, release BOOT, reconnect, "
+        + "and flash again. A half-written board always recovers this way.", "dim");
+  } finally {
+    $("connect").disabled = false;
+    $("flash").disabled = false;
+  }
+};
+</script>
