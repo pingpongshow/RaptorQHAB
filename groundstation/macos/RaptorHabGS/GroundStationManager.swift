@@ -169,8 +169,10 @@ class GroundStationManager: ObservableObject {
     @Published var isSerialConnected = false
     @Published var availableSerialPorts: [String] = []
     @Published var selectedSerialPort: String = ""
-    @Published var serialRSSI: Float = 0
-    @Published var serialSNR: Float = 0
+    // Coalesced (see scheduleUIRefresh):
+    var serialRSSI: Float = 0
+    // Coalesced (see scheduleUIRefresh):
+    var serialSNR: Float = 0
     
     // Modem RF configuration (Heltec SX1262)
     @Published var modemConfig = ModemConfig() {
@@ -182,12 +184,14 @@ class GroundStationManager: ObservableObject {
     @Published var modemConfigError: String?
     
     // Telemetry
-    @Published var latestTelemetry: TelemetryPoint?
+    // Coalesced (see scheduleUIRefresh):
+    var latestTelemetry: TelemetryPoint?
     @Published var telemetryHistory: [TelemetryPoint] = []
     @Published var maxHistorySize = 1000
     
     // Images (in-memory for current session display)
-    @Published var pendingImages: [UInt16: PendingImage] = [:]
+    // Coalesced (see scheduleUIRefresh):
+    var pendingImages: [UInt16: PendingImage] = [:]
     @Published var completedImages: [UInt16: Data] = [:]
     @Published var latestImageId: UInt16?
 
@@ -199,7 +203,8 @@ class GroundStationManager: ObservableObject {
     @Published var textMessages: [(Date, String)] = []
     
     // Statistics
-    @Published var statistics = ReceiverStatistics()
+    // Coalesced (see scheduleUIRefresh):
+    var statistics = ReceiverStatistics()
     
     // MARK: - Private Properties
     
@@ -333,13 +338,19 @@ class GroundStationManager: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$selectedSerialPort)
         
+        // Not .assign(to: &$serialRSSI): serialRSSI is a plain var now, and
+        // the serial port publishes RSSI per frame -- a hundred times a
+        // second -- so a direct binding would refresh the UI that often. Set
+        // the value and let the coalescer decide when to redraw.
         serialPort.$lastRSSI
             .receive(on: DispatchQueue.main)
-            .assign(to: &$serialRSSI)
-        
+            .sink { [weak self] in self?.serialRSSI = $0; self?.scheduleUIRefresh() }
+            .store(in: &cancellables)
+
         serialPort.$lastSNR
             .receive(on: DispatchQueue.main)
-            .assign(to: &$serialSNR)
+            .sink { [weak self] in self?.serialSNR = $0; self?.scheduleUIRefresh() }
+            .store(in: &cancellables)
     }
     
     // MARK: - Control
@@ -536,6 +547,22 @@ class GroundStationManager: ObservableObject {
     
     // MARK: - Packet Processing
     
+    /// The per-packet properties above are plain vars, so mutating them does
+    /// not itself refresh the UI. This fires objectWillChange at most five
+    /// times a second, coalescing a burst of packets into one refresh. At a
+    /// hundred packets a second that is a twentieth of the view rebuilds, and
+    /// the difference the map's gesture handling needed.
+    private var uiRefreshScheduled = false
+    private func scheduleUIRefresh() {
+        guard !uiRefreshScheduled else { return }
+        uiRefreshScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self else { return }
+            self.uiRefreshScheduled = false
+            self.objectWillChange.send()
+        }
+    }
+
     private func processPacket(_ data: Data) {
         statistics.packetsReceived += 1
         resetInactivityTimer()
@@ -565,6 +592,9 @@ class GroundStationManager: ObservableObject {
         default:
             break
         }
+
+        // One coalesced refresh for everything this packet changed.
+        scheduleUIRefresh()
     }
     
     private func handleTelemetry(payload: Data, sequence: UInt16) {
@@ -978,13 +1008,42 @@ class GroundStationManager: ObservableObject {
         logFileHandle = nil
     }
     
+    /// Serialises packet-log writes off the main thread. Logging ran inline
+    /// on the main actor before -- allocating an ISO8601DateFormatter (one of
+    /// Foundation's most expensive objects to create), hex-encoding the whole
+    /// packet with String(format:) a byte at a time, and doing a synchronous
+    /// file write -- a hundred times a second on a busy link. That is main-
+    /// thread time the map's pan and zoom could not get.
+    private let logQueue = DispatchQueue(label: "raptorhab.packetlog", qos: .utility)
+    /// Touched only from logQueue, so the single instance is reused safely
+    /// instead of being allocated per packet on the main thread.
+    private let logDateFormatter = ISO8601DateFormatter()
+
+    /// Hex without String(format:). A 16-entry table and two lookups a byte,
+    /// versus a format-string parse per byte.
+    private static let hexDigits = Array("0123456789abcdef".utf8)
+    private static func fastHex(_ data: Data) -> String {
+        var out = [UInt8]()
+        out.reserveCapacity(data.count * 2)
+        for byte in data {
+            out.append(hexDigits[Int(byte >> 4)])
+            out.append(hexDigits[Int(byte & 0x0F)])
+        }
+        return String(decoding: out, as: UTF8.self)
+    }
+
     private func logPacket(_ data: Data, type: PacketType) {
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let hexString = data.map { String(format: "%02x", $0) }.joined()
-        let logLine = "\(timestamp),\(type.name),\(data.count),\(hexString)\n"
-        
-        if let logData = logLine.data(using: .utf8) {
-            try? logFileHandle?.write(contentsOf: logData)
+        guard let handle = logFileHandle else { return }
+        let when = Date()
+        let typeName = type.name
+        let count = data.count
+        // Everything below runs off the main thread.
+        logQueue.async { [logDateFormatter] in
+            let ts = logDateFormatter.string(from: when)
+            let line = "\(ts),\(typeName),\(count)," + Self.fastHex(data) + "\n"
+            if let bytes = line.data(using: .utf8) {
+                try? handle.write(contentsOf: bytes)
+            }
         }
     }
     
