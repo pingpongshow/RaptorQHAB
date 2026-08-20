@@ -820,6 +820,25 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         apply=Apply.LIVE, minimum=100, maximum=20000, unit="m",
     ),
     _spec(
+        "mesh_log_enabled", Kind.BOOL, "Meshtastic",
+        "Record every Meshtastic packet the balloon hears while in cruise, "
+        "sealed with the recording key. The channel caps delivery at about 1.7 "
+        "packets a second however many nodes are in range, so a four-hour "
+        "flight is a few hundred kilobytes; receiving costs about 4.6 mA "
+        "against a payload drawing 150, and cruise is already 90% idle. "
+        "Cruise only: on the pad the airtime belongs to imagery, and once "
+        "landed the battery belongs to being found.",
+        apply=Apply.RESTART,
+    ),
+    _spec(
+        "mesh_log_rx_percent", Kind.FLOAT, "Meshtastic",
+        "Share of cruise airtime spent listening when mesh logging is on. The "
+        "radio cannot hear LoRa while sending images, so this comes out of the "
+        "image budget -- but cruise sends few images and is idle most of the "
+        "time, so it mostly comes out of doing nothing.",
+        apply=Apply.RESTART, minimum=0.0, maximum=90.0, unit="%",
+    ),
+    _spec(
         "wifi_off_after_launch", Kind.BOOL, "Power",
         "Turn WiFi off once the balloon has demonstrably launched, and leave "
         "it off. WiFi is the largest controllable draw in flight and there is "

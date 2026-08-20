@@ -197,3 +197,76 @@ in front of the whole mesh, arguments included.
 | `repeater_rx_window_sec` | Length of one listen window |
 
 All of it is configurable over USB, from either ground station.
+
+
+---
+
+## Logging what the balloon hears
+
+Off by default. `mesh_log_enabled` records every Meshtastic packet the balloon
+receives **while in cruise**, one row per reception, sealed with the recording
+key.
+
+### Why it is affordable
+
+The instinct is that a receiver with a 400-mile horizon will drown in traffic.
+It cannot: the limit is the channel, not the number of nodes. A LongFast
+position beacon occupies **600 ms** of airtime, so the band physically cannot
+deliver more than about **1.7 packets a second** however many thousands of
+radios are in range.
+
+| | 4-hour flight | Storage at ~200 B a row |
+|---|---|---|
+| Channel saturated (not achievable) | 24,000 packets | 4.8 MB |
+| Busy region, 25% occupancy | 6,000 packets | 1.2 MB |
+| Typical | 1,200 packets | 0.2 MB |
+
+Against a card already taking a 47 KB image every thirty seconds. Receiving
+costs about **4.6 mA** against a payload drawing 150 — four hours of continuous
+listening is 18 mAh, or 0.6% of a 3000 mAh pack.
+
+The real cost is airtime: one radio cannot hear LoRa while sending images. That
+is why this is cruise-only.
+
+### Why cruise only
+
+- **Launch** — the recovery crew is standing next to the balloon and the
+  airtime belongs to imagery.
+- **Cruise** — high, 90% idle, and hearing things nothing on the ground can.
+  This is where the data is.
+- **Landed** — the battery belongs to being found.
+
+The gate is stricter than the repeater's. The repeater treats "no zone manager"
+as cruise so that it keeps working; the log treats it as *not* cruise, because
+not being sure where you are is not a reason to start recording other people's
+traffic.
+
+### What a row holds
+
+```
+timestamp,balloon_alt_m,sender,destination,packet_id,port,channel_hash,
+rssi_dbm,snr_db,decrypted,dup,detail
+```
+
+**The altitude is the point.** A list of nodes is a curiosity; a list of nodes
+with the height each was heard from is propagation data.
+
+Two things are deliberate:
+
+- **Traffic it cannot decrypt is logged too.** Most of what the balloon hears
+  is on channels it holds no key for, and it would be easy to discard that as
+  noise. It is not — sender, signal strength and altitude are exactly the
+  measurement. What was said matters less than that it was heard, and from how
+  high.
+- **Every reception is a row, duplicates included.** A mesh redelivers the same
+  packet by several paths, and recording each arrival is how the rebroadcast
+  pattern becomes visible. A `dup` column marks repeats so analysis can
+  collapse them; the timing is kept rather than thrown away.
+
+### Privacy
+
+The file holds other people's positions, so it is sealed like every other
+recording — a stranger who recovers the payload gets ciphertext. Meshtastic
+positions are broadcast in the clear on a public band, but recording them from
+an unusually well-placed receiver and republishing them is a different act from
+overhearing them. Worth a thought before publishing a flight log.

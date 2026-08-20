@@ -138,6 +138,21 @@ class Config:
     repeater_min_spacing_sec: int = 30
     repeater_rx_window_sec: float = 4.0
     repeater_rx_percent: float = 5.0
+
+    # Record every Meshtastic packet heard while in cruise. Nobody has much
+    # data on what a mesh looks like from 30 km, and the balloon is the
+    # best-placed receiver in the region for the length of a flight.
+    #
+    # Cheap: the channel caps delivery at about 1.7 packets/s regardless of how
+    # many nodes are in range, so a four-hour flight is a few hundred kilobytes;
+    # receiving costs ~4.6 mA against a payload drawing 150; and cruise is 90%
+    # idle already. Cruise only -- on the pad the airtime belongs to imagery,
+    # and once landed the battery belongs to being found.
+    #
+    # Sealed with the recording key like any other log: it holds other people's
+    # positions.
+    mesh_log_enabled: bool = False
+    mesh_log_rx_percent: float = 10.0
     uplink_commands_enabled: bool = False
 
     # === Meshtastic Region ===

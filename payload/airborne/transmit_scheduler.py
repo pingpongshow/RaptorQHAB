@@ -384,7 +384,13 @@ def schedules_from_config(config) -> Dict[Zone, ZoneSchedule]:
         config.zone_cruise_image_percent,
         config.zone_cruise_mesh_percent,
         config.zone_cruise_beacon_interval_sec,
-        listen=(config.repeater_rx_percent if config.repeater_enabled else 0.0),
+        # Listening serves two features in cruise. Whichever wants more airtime
+        # sets the budget; the window is shared, so a packet heard is available
+        # to the repeater and to the mesh log alike.
+        listen=max(
+            config.repeater_rx_percent if config.repeater_enabled else 0.0,
+            (config.mesh_log_rx_percent if config.mesh_log_enabled else 0.0),
+        ),
     )
     landed = build(
         Zone.LANDED,

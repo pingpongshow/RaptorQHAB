@@ -126,6 +126,7 @@ class RaptorHabAirborne:
         # attribute behind rather than an AttributeError.
         self._wifi_cutoff = None
         self._power_report = None
+        self._mesh_log = None
         
         # State machine
         self._state = State.INITIALIZING
@@ -365,6 +366,22 @@ class RaptorHabAirborne:
         self._logger.info("Camera initialized")
         
         # Initialize telemetry
+        if self.config.mesh_log_enabled:
+            import os
+            from airborne.mesh_log import MeshtasticLog
+            from datetime import datetime
+
+            name = datetime.now().strftime(
+                f"meshheard_{self.config.callsign}_%Y%m%d_%H%M%S.csv")
+            self._mesh_log = MeshtasticLog(
+                os.path.join(self.config.log_path, name),
+                sealed_writer=self._sealed_writer,
+            )
+            self._logger.info(
+                f"Mesh logging on for cruise: every packet heard goes to "
+                f"{self._mesh_log.filepath}"
+            )
+
         self._logger.info("Initializing telemetry...")
         self._telemetry = TelemetryCollector()
         self._telemetry_logger = TelemetryLogger(
@@ -653,7 +670,9 @@ class RaptorHabAirborne:
         is genuinely exclusive -- it is charged to the listen budget precisely
         so that cost is visible rather than hidden.
         """
-        if not (self._repeater and self._radio_manager):
+        if not self._radio_manager:
+            return
+        if not (self._repeater or self._mesh_log):
             return
         if not (self._region_manager and self._region_manager.may_transmit):
             return
@@ -666,12 +685,35 @@ class RaptorHabAirborne:
         finally:
             self._radio_manager.ensure_gfsk()
 
+        # The repeater's rule is unchanged: with no zone manager, assume cruise
+        # and allow repeating. The log's rule is deliberately stricter -- only
+        # record when the zone is known to be cruise, because "we are not sure
+        # where we are" is not a reason to start recording other people's
+        # traffic.
         in_cruise = self._zone_manager is None or self._zone_manager.zone is Zone.CRUISE
+        known_cruise = (self._zone_manager is not None
+                        and self._zone_manager.zone is Zone.CRUISE)
+
+        altitude = None
+        with self._gps_lock:
+            if self._current_gps is not None and self._current_gps.fix_type >= 2:
+                altitude = self._current_gps.altitude
 
         for raw, rssi, snr in received:
-            packet = self._repeater.decode(raw, rssi=rssi, snr=snr)
-            self._repeater.note_heard(packet is not None)
+            packet = (self._repeater.decode(raw, rssi=rssi, snr=snr)
+                      if self._repeater else None)
+            if self._repeater:
+                self._repeater.note_heard(packet is not None)
+
+            # Cruise only. The altitude at the moment of reception is the whole
+            # point: it is what turns a list of nodes into propagation data.
+            if self._mesh_log is not None and known_cruise:
+                self._mesh_log.record(packet, raw=raw, rssi=rssi, snr=snr,
+                                      altitude_m=altitude)
+
             if packet is None:
+                continue
+            if not self._repeater:
                 continue
 
             reply = self._repeater.handle_command(packet)
