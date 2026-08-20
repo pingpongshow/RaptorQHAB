@@ -272,7 +272,7 @@ class SX1262(LoRaModeMixin):
         if self._spi:
             try:
                 self._spi.close()
-            except:
+            except Exception:
                 pass
             self._spi = None
     

@@ -206,6 +206,14 @@ uint32_t crc32(const uint8_t* data, size_t len) {
 
 bool parseConfigCommand(const String& cmd);
 
+// The longest command this accepts, with room to spare. Anything longer is not
+// a command, and letting a String grow without limit on a device with no
+// virtual memory is a way to run the heap out from the far end of a USB cable.
+// Applies to the boot configuration window as well as the runtime handler --
+// the boot window listens for two minutes, which is plenty of time for a
+// terminal opened at the wrong baud rate to fill the heap with framing noise.
+static const size_t MAX_COMMAND_LEN = 128;
+
 // ============================================================================
 // Interrupt Handler
 // ============================================================================
@@ -752,10 +760,6 @@ bool loadConfiguration() {
 // CFG: used to be accepted only during the boot window, so a modem that had
 // already started listening would silently ignore reconfiguration. Accepting
 // it at any time means the app can retune a running modem.
-// The longest command this accepts, with room to spare. Anything longer is not
-// a command, and letting a String grow without limit on a device with no
-// virtual memory is a way to run the heap out from the far end of a USB cable.
-static const size_t MAX_COMMAND_LEN = 128;
 
 void handleUsbCommands() {
     static String usbBuffer = "";
@@ -781,6 +785,19 @@ void handleUsbCommands() {
             int   prevPre = rfPreambleLen;
 
             if (parseConfigCommand(usbBuffer)) {
+                // The app sends its configuration on every connect. When
+                // nothing changed, reinitialising anyway costs a deaf window
+                // mid-stream and a flash write per connect -- for nothing.
+                if (configured
+                        && rfFrequency == prevFreq && rfBitrate == prevBitrate
+                        && rfDeviation == prevDev && rfRxBandwidth == prevBw
+                        && rfPreambleLen == prevPre) {
+                    Serial.printf("CFG_OK:%.1f,%.1f,%.1f,%.1f,%d\n",
+                                  rfFrequency, rfBitrate, rfDeviation,
+                                  rfRxBandwidth, rfPreambleLen);
+                    usbBuffer = "";
+                    continue;
+                }
                 Serial.println("[RADIO] Reconfiguring for new settings...");
 
                 // The return value used to be discarded. A setting that passes
@@ -834,7 +851,17 @@ bool waitForConfiguration() {
         // Check USB Serial
         while (Serial.available()) {
             char c = Serial.read();
-            if (c == '\n' || c == '\r') {
+            if (c != '\n' && c != '\r') {
+                if (usbBuffer.length() < MAX_COMMAND_LEN) {
+                    usbBuffer += c;
+                } else {
+                    // Overlong line: drop it and resynchronise on the next
+                    // newline rather than keep appending.
+                    usbBuffer = "";
+                }
+                continue;
+            }
+            {
                 if (usbBuffer.length() > 0) {
                     Serial.printf("[USB] Received: %s\n", usbBuffer.c_str());
                     if (usbBuffer.startsWith("CFG:")) {
@@ -849,8 +876,6 @@ bool waitForConfiguration() {
                     }
                     usbBuffer = "";
                 }
-            } else {
-                usbBuffer += c;
             }
         }
 
@@ -1053,7 +1078,24 @@ void setup() {
     configured = true;
 
     // Initialize radio
-    if (!initializeRadio()) {
+    bool radioUp = initializeRadio();
+    if (!radioUp) {
+        // A stored configuration the radio refuses would brick the modem:
+        // every reboot reloads the same bad settings and fails the same way,
+        // and only reflashing recovers it. Erase it and try the defaults
+        // before giving up.
+        Serial.println("[ERROR] Radio refused the stored settings; clearing them and trying defaults");
+        prefs.begin(CFG_NAMESPACE, false);
+        prefs.clear();
+        prefs.end();
+        rfFrequency   = DEFAULT_FREQUENCY;
+        rfBitrate     = DEFAULT_BITRATE;
+        rfDeviation   = DEFAULT_DEVIATION;
+        rfRxBandwidth = DEFAULT_RX_BANDWIDTH;
+        rfPreambleLen = DEFAULT_PREAMBLE_LEN;
+        radioUp = (radio != nullptr) && configureRadio();
+    }
+    if (!radioUp) {
         Serial.println("[ERROR] Radio initialization failed!");
 
 #if BOARD_HAS_TFT

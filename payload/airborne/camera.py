@@ -569,9 +569,23 @@ class Camera:
             logger.error("Camera not initialized")
             return None
 
+        # Bring the sensor up if it was released after the last capture. This
+        # is deliberately inside capture() rather than left to the caller: a
+        # capture that silently returned a frame from a stopped pipeline would
+        # be a very confusing bug.
+        #
+        # It must also happen BEFORE the render switch below: verifying the
+        # infrared gains reads capture_metadata(), which waits on a frame,
+        # and a stopped pipeline produces none -- with camera_release_when_idle
+        # set, switching first would hang the flight loop until the watchdog
+        # killed it, every other photo.
+        if not self.simulate and not self._streaming:
+            if not self._start_streaming():
+                return None
+
         # Which look this photo gets. In alternate mode every capture flips
-        # between the infrared render and the colour-balanced one; rebuilding
-        # the camera is only needed when the variant actually changes.
+        # between the infrared render and the colour-balanced one; switching
+        # is only needed when the variant actually changes.
         if not self.simulate:
             variant = self.desired_variant(self._capture_index)
             self._capture_index += 1
@@ -581,14 +595,6 @@ class Camera:
                 self._active_variant = variant
             elif variant != self._active_variant:
                 self._apply_variant(variant)
-
-        # Bring the sensor up if it was released after the last capture. This
-        # is deliberately inside capture() rather than left to the caller: a
-        # capture that silently returned a frame from a stopped pipeline would
-        # be a very confusing bug.
-        if not self.simulate and not self._streaming:
-            if not self._start_streaming():
-                return None
 
         try:
             if self.simulate:

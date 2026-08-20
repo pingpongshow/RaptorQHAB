@@ -1100,3 +1100,51 @@ SX1262 measures SNR only for LoRa, and this is a GFSK link — the field had
 no possible value. Replaced on every board with live packets/second, which
 is the figure a glance actually wants, and which drops to 0.0 when the
 stream stops instead of freezing at its last value.
+
+---
+
+## Review pass: payload + modem firmware (post-alternation)
+
+### R1. Render switch could hang the flight loop with `camera_release_when_idle` **[FIXED]**
+`capture()` applied the render variant *before* restarting a released
+pipeline. Verifying the infrared gains reads `capture_metadata()`, which
+waits on a frame — and a stopped pipeline produces none. With
+`camera_release_when_idle` set, every other photo would have hung the
+flight loop until the watchdog killed it. Reordered: streaming starts
+first. A regression test pins the order.
+
+### R2. Boot configuration window had no line-length cap **[FIXED]**
+`handleUsbCommands` capped command lines at 128 bytes;
+`waitForConfiguration` — which listens for two minutes at boot — did not.
+A terminal opened at the wrong baud rate could grow a `String` until the
+heap ran out. Same cap applied to both. Verified live: 4 kB of junk with
+no newline left forwarding untouched.
+
+### R3. Every app connect cost a deaf window and a flash write **[FIXED]**
+The app sends `CFG:` on every connect. Identical settings still caused a
+full radio reinit (~100 ms deaf, mid-stream) plus a Preferences write
+(flash wear) each time. Unchanged settings now answer `CFG_OK`
+immediately. Verified live: second identical `CFG:` returned `CFG_OK`
+with no `[RADIO] Reconfiguring` and no gap in the frame stream.
+
+### R4. A stored configuration the radio refuses bricked the modem **[FIXED]**
+Boot loaded the saved config, the radio refused it, and the modem sat in
+`while(1)` — with the same bad config still in flash, so every reboot
+failed identically. Only reflashing recovered it. The runtime `CFG:` path
+had rollback; the boot path did not. Now: on boot-time radio failure with
+a stored config, the config is erased and the defaults tried before
+giving up.
+
+### R5. Bare `except:` in the SPI close path **[FIXED]**
+Caught `KeyboardInterrupt`/`SystemExit` along with everything else.
+Narrowed to `except Exception`.
+
+### Noted, not defects
+- The modem display deliberately freezes during sustained traffic
+  (>1 packet per 750 ms): the SX1262 holds one packet, and a display
+  redraw at the wrong moment would cost radio packets. Long-standing and
+  correct.
+- Natural-frame white-balance gains near (1.0, 1.0) in a dim room are
+  greyworld's legitimate answer for a scene with little light to estimate
+  from — bench-verified against four release recipes, all of which resume
+  AWB identically. Daylight converges fast and firmly.

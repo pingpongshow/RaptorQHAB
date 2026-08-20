@@ -186,3 +186,15 @@ def test_tuning_param_is_exposed_over_usb_with_choices():
     spec = next(s for s in PARAM_SPECS if s.name == "camera_tuning")
     assert spec.category == "Camera"
     assert set(spec.choices) == {"standard", "noir", "alternate"}
+
+
+def test_render_switch_happens_after_streaming_starts(tmp_path):
+    """Verifying the infrared gains reads capture_metadata(), which waits on
+    a frame. With camera_release_when_idle set, the pipeline is stopped
+    between captures -- a switch before restart would wait forever and the
+    watchdog would kill the flight loop, every other photo."""
+    import inspect
+    from airborne.camera import Camera
+    src = inspect.getsource(Camera.capture)
+    assert src.index("_start_streaming") < src.index("_apply_variant"), \
+        "the pipeline must be running before the render switch verifies gains"
