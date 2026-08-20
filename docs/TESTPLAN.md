@@ -29,7 +29,7 @@ cd payload && python -m pytest tests/ -q
 **Pass:** all passed, 0 failed. The suite covers the payload, both ground
 stations, and Swift/Python protocol parity.
 
-*Last run: 789 passed, 0 failed.*
+*Last run 2026-08-19: 829 passed, 0 failed.*
 
 ### A2. Every firmware target builds
 
@@ -41,7 +41,7 @@ cd firmware/dual-e22 && pio run          # one
 **Pass:** eight SUCCESS. A board that stops compiling is a board someone will
 try to flash on launch morning.
 
-*Last run: 8/8 SUCCESS.*
+*Last run 2026-08-19: 8/8 SUCCESS.*
 
 ### A3. The macOS app builds
 
@@ -51,7 +51,7 @@ cd groundstation/macos && xcodebuild -scheme RaptorHabGS -configuration Debug bu
 
 **Pass:** BUILD SUCCEEDED, no new warnings.
 
-*Last run: BUILD SUCCEEDED.*
+*Last run 2026-08-19: BUILD SUCCEEDED, 0 warnings.*
 
 ### A4. Cross-implementation parity
 
@@ -81,12 +81,21 @@ EOF
 whitening, framing or RF has regressed — this is the number that went from
 0.916% to 0.000%.
 
-*Last run: 1317 received, 1317 forwarded, BadCRC 0, NoRAPT 0 — 100.00%.*
+*Last run 2026-08-19: 4243 received, 4243 forwarded, BadCRC 0, NoRAPT 0 —
+100.00% over 40 s. Note for whoever runs this next: drain the port for two
+seconds before counting. The modem's 16 KB TX ring holds stats lines from
+before you attached, and a first-versus-last delta across that backlog spans
+time when no host was connected — it reads as a catastrophic forwarding rate
+that is pure measurement artifact.*
 
 ### A6. Payload health over the radio
 
 **Pass:** packet count climbing, images being queued and completed, zone
 sensible, no `ERROR` in the journal.
+
+*Last run 2026-08-19: active, NRestarts=0, 0 ERROR lines in 10 min, packets
+234,699 → 246,754 across the sample, image renders alternating
+standard/noir with measured gains matching each variant.*
 
 ### A7. Fresh-install simulation
 
@@ -98,11 +107,16 @@ sudo /opt/raptorhab/setup/install.sh --check
 
 **Pass:** every check green, WiFi power save reported off.
 
+*Last run 2026-08-19: 13/13 ok, `Power save: off`.*
+
 ### A8. USB access paths
 
 **Pass:** `ssh raptorhab.local` connects over `usb0`; with DHCP configured,
 `ping 10.55.0.1` answers and `ssh 10.55.0.1` connects with nothing configured
 on the host. `ping raptorhab.local` failing is **expected** — ping wants IPv4.
+
+*Last run 2026-08-19: `ping 10.55.0.1` 0% loss at 0.57 ms, `ssh 10.55.0.1`
+connects, `ssh raptorhab.local` connects.*
 
 ---
 
