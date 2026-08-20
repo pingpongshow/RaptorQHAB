@@ -181,8 +181,12 @@ if [[ $CHECK_ONLY -eq 1 ]]; then
     fi
 
     say "Resolved configuration"
-    (cd "$CODE_DIR" && sudo -u "$SERVICE_USER" "$VENV/bin/python" \
-        -m airborne.main --print-config 2>/dev/null | head -25) \
+    # From the writable state dir with PYTHONPATH set, exactly as the service
+    # runs. Running from $CODE_DIR (read-only to the service account) fails:
+    # lgpio, which RPi.GPIO wraps, makes a notification FIFO in the working
+    # directory at import and cannot in a directory it may not write.
+    (cd "$STATE_DIR" && sudo -u "$SERVICE_USER" env PYTHONPATH="$CODE_DIR" \
+        "$VENV/bin/python" -m airborne.main --print-config 2>/dev/null | head -25) \
         || warn "could not read config"
     exit 0
 fi
@@ -741,7 +745,7 @@ echo "  State      $STATE_DIR    (images, logs, config)"
 echo "  Config     $STATE_DIR/config/airborne.json"
 echo "  Service    raptorhab-airborne"
 echo
-echo "  Settings   sudo -u $SERVICE_USER $VENV/bin/python -m airborne.main --print-config"
+echo "  Settings   (cd $STATE_DIR && sudo -u $SERVICE_USER env PYTHONPATH=$CODE_DIR $VENV/bin/python -m airborne.main --print-config)"
 echo "  Schema     $VENV/bin/python -m airborne.main --print-schema"
 echo "  Logs       journalctl -u raptorhab-airborne -f"
 echo "  Verify     sudo $0 --check"
