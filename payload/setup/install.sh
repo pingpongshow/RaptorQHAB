@@ -644,9 +644,18 @@ ok "in-flight WiFi cutoff watcher enabled"
 # evidence rather than guess again.
 install -m 0644 "$CODE_DIR/setup/raptorhab-wifi-watch.service" \
     /etc/systemd/system/raptorhab-wifi-watch.service
+
+# Keeps the payload from being silent on WiFi. Diagnosed from the watcher
+# above: seven hours associated with a -24 dBm signal, tx_failed 0 and one
+# unbroken association, while nothing inbound arrived -- the access point had
+# aged out a station that transmitted 4,101 bytes in seven hours. Costs nothing
+# in flight, where the radio is off.
+install -m 0644 "$CODE_DIR/setup/raptorhab-wifi-keepalive.service" \
+    /etc/systemd/system/raptorhab-wifi-keepalive.service
 systemctl daemon-reload
 systemctl enable raptorhab-wifi-watch.service >/dev/null 2>&1 || true
-ok "wlan0 state watcher enabled"
+systemctl enable raptorhab-wifi-keepalive.service >/dev/null 2>&1 || true
+ok "wlan0 state watcher and keepalive enabled"
 
 install -m 0644 "$CODE_DIR/setup/raptorhab-wifi-restore.service" \
     /etc/systemd/system/raptorhab-wifi-restore.service

@@ -22,6 +22,11 @@
 # what makes the payload reachable again -- a probe here would paper over the
 # thing being investigated. Everything below is read from the kernel.
 #
+# That passivity is what caught the fault: seven hours of samples showing a
+# healthy radio and no inbound traffic at all. raptorhab-wifi-keepalive now
+# sends the periodic packet that prevents it; this still sends nothing, so it
+# can still tell you whether the keepalive is working.
+#
 set -u
 IFACE="${IFACE:-wlan0}"
 LOG="${LOG:-/var/lib/raptorhab/wifi_watch.log}"

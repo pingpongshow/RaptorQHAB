@@ -5,67 +5,7 @@ Delete an item when it is closed, do not mark it done.
 
 ---
 
-## 1. The payload intermittently unreachable over WiFi — cause unknown
-
-**Four hypotheses tested, all four wrong. Now instrumented and waiting.**
-
-The fault: the payload stays associated, holds its lease, and can reach the
-gateway and the Mac — but nothing can reach *it*. It clears on its own, and
-transmitting appears to help.
-
-### What it is not
-
-| Hypothesis | Ruled out by |
-|---|---|
-| AP client isolation | The payload can ping the Mac that cannot reach it. Isolation blocks both directions. **This was my own earlier diagnosis and it was wrong.** |
-| 802.11 power save | `iw dev wlan0 get power_save` → **off**, and NetworkManager resolves `wifi.powersave=2` from the drop-in. The earlier fix did work. |
-| SDIO runtime suspend | `/sys/class/net/wlan0/device/power/runtime_status` → `unsupported`. |
-| Regulatory misconfiguration | 4,612 `CTRL-EVENT-REGDOM-CHANGE ... type=WORLD` messages looked damning, and the global domain really is `country 00`. But `iw phy0 reg get` reports **`country 99`** — the device is *self-managed*, so it owns its own regulatory domain and the global one is meaningless for it. `iw reg set` is ignored by design. The messages are cosmetic. |
-
-### What is known
-
-- The radio is healthy while it happens: `signal -24 dBm`, `tx failed 0`,
-  `inactive time 0 ms`, one association lasting hours.
-- The payload sends **zero bytes** on `wlan0` when idle — measured, 10 seconds,
-  counters unmoved. Everything it does is LoRa and the USB gadget. So the
-  interface is genuinely silent for long stretches.
-- During one failure, 5 pings in a row were lost with the payload idle and 5 of
-  8 succeeded while it was transmitting continuously — which is what pointed at
-  power save before the driver contradicted it.
-- It would **not reproduce** across eight minutes of deliberate silence, and is
-  behaving perfectly now.
-
-### Instrumented
-
-`raptorhab-wifi-watch.service` records every 20 s, passively — it sends
-nothing, because generating traffic is exactly what makes the payload reachable
-again and a probe would paper over the thing being investigated:
-
-```
-2026-08-19T17:45:20+00:00 rx=7493481 tx=482483 inactive_ms=0 signal_dbm=-24 \
-    tx_failed=0 assoc_age_s=15271 bssid=ba:28:aa:94:dd:3b ps=off ip=10.1.1.75/24
-```
-
-`inactive_ms` is the number to watch: how long since the AP last heard a frame
-from us. `assoc_age_s` resets on reassociation, so a silent relink shows up even
-when nothing logs a disconnect.
-
-**Next time it happens, read
-`/var/lib/raptorhab/wifi_watch.log`** rather than hypothesising. That is the
-whole point of it.
-
-### Meanwhile
-
-The USB gadget is unaffected and needs no privileged setup on the Mac:
-
-```bash
-ping6 -c 3 -I en15 ff02::1
-ssh stephen@fe80::1a:11ff:fe00:2%en15
-```
-
----
-
-## 2. Dual-E22 board: never tested on hardware
+## 1. Dual-E22 board: never tested on hardware
 
 The board does not exist yet. Everything about it — the pin map, the TX
 arbiter, the slot-A filter bypass, both radios running at once — is reasoned
@@ -78,7 +18,7 @@ front of a 900 MHz module.
 
 ---
 
-## 3. Hygiene, not bugs
+## 2. Hygiene, not bugs
 
 What is left after the dead-code removal. None of these affect a flight.
 
@@ -88,7 +28,7 @@ What is left after the dead-code removal. None of these affect a flight.
   Auto-connect verifies the device before settling on it, so this is now
   cosmetic: the list is noisier than it needs to be.
 
-## 4. Protocol quirks, deliberately left
+## 3. Protocol quirks, deliberately left
 
 - **Negative altitudes clamp to zero.** Altitude is an unsigned millimetre
   count, so a launch below sea level reports 0 m. Fixing it means changing the
@@ -102,6 +42,37 @@ What is left after the dead-code removal. None of these affect a flight.
   which means nothing on a receive-only modem.
 
 ## Closed recently, for context
+
+- **The intermittent WiFi unreachability is understood and mitigated.** Seven
+  hours of watcher data settled it: the radio was in perfect health throughout
+  — signal −24 dBm, `tx_failed` **0** for the entire log, one unbroken
+  45,560-second association, power save off in 1527 of 1528 samples — while not
+  one inbound packet arrived, not even the broadcast ARP that precedes a ping.
+  The access point had stopped delivering to a station it was still acking.
+
+  What made the payload a candidate: **4,101 bytes transmitted in seven hours,
+  with 97% of samples showing zero**. Everything it does is LoRa and the USB
+  gadget, so `wlan0` sits silent for hours and an access point that ages out
+  quiet stations ages this one out every time.
+
+  `raptorhab-wifi-keepalive` sends one packet to the gateway every 30 seconds.
+  Measured after enabling: **340 bytes/minute against 11 before**, with the
+  gateway replying. It is a mitigation, not a cure — the fault is at the access
+  point, and a Pi that is associated and acking ought to be reachable — but a
+  payload whose purpose is to be found should not depend on someone else's
+  bridge table remembering it. It costs nothing in flight, where the radio is
+  off.
+
+  Four earlier hypotheses were wrong and are recorded in REVIEW.md, including
+  my own.
+
+- **USB DHCP works.** `ping 10.55.0.1` and `ssh 10.55.0.1` now succeed with
+  nothing configured on the host, which never worked before. Verified that it
+  does not hijack the host: default route still via WiFi, no route via the
+  gadget, no DNS offered, internet unaffected. The first attempt at this left
+  the distribution's dnsmasq enabled and answering DNS on every interface — it
+  was still doing so after the reboot, and is now disabled in favour of a
+  private instance that reads one config file and binds nothing but usb0.
 
 - **USB access was easy, and documented as hard.** `ssh raptorhab.local` works
   over the cable with nothing configured — verified going over `usb0` with WiFi

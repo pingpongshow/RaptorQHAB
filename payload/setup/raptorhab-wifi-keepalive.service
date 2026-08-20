@@ -1,0 +1,16 @@
+[Unit]
+# Stops the payload being silent on WiFi, so an access point that ages out
+# quiet stations does not age this one out. See setup/wifi-keepalive.sh for the
+# evidence: seven hours associated, acked, and unreachable.
+Description=RaptorHab: keep the WiFi path alive
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/raptorhab/setup/wifi-keepalive.sh
+Restart=always
+RestartSec=30
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
