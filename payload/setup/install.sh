@@ -482,7 +482,13 @@ wifi.powersave = 2
 NMCONF
 ok "WiFi power saving disabled"
 
-cat > /etc/NetworkManager/conf.d/10-raptorhab-usb0-unmanaged.conf <<'NMCONF'
+# Only hand usb0 to the gadget script when that script is actually being
+# installed (--usb-gadget). Marking it unmanaged without the gadget service to
+# assign an address strands the interface: unmanaged, no address, no way back
+# onto the cable. A flagless install used to do exactly that.
+USB0_UNMANAGED=/etc/NetworkManager/conf.d/10-raptorhab-usb0-unmanaged.conf
+if [[ $ENABLE_USB_GADGET -eq 1 ]]; then
+    cat > "$USB0_UNMANAGED" <<'NMCONF'
 # The USB gadget interface is configured by raptorhab-usb-gadget, which gives
 # it a static address. NetworkManager must not also try to DHCP it: there is no
 # server on the other end of a USB cable, and the attempt leaves the interface
@@ -490,7 +496,15 @@ cat > /etc/NetworkManager/conf.d/10-raptorhab-usb0-unmanaged.conf <<'NMCONF'
 [keyfile]
 unmanaged-devices=interface-name:usb0;interface-name:usb1
 NMCONF
-ok "usb0 left to the gadget script, not NetworkManager"
+    ok "usb0 left to the gadget script, not NetworkManager"
+elif [[ -f "$USB0_UNMANAGED" ]]; then
+    # A previous --usb-gadget run left this behind; without the gadget it would
+    # keep usb0 unreachable, so clear it.
+    rm -f "$USB0_UNMANAGED"
+    ok "usb0 returned to NetworkManager (no --usb-gadget)"
+else
+    ok "usb0 left to NetworkManager (no --usb-gadget)"
+fi
 
 if systemctl is-active NetworkManager >/dev/null 2>&1; then
     systemctl reload NetworkManager >/dev/null 2>&1 || true
@@ -563,7 +577,7 @@ say "Installing the payload service"
 # and nmcli gives "Not authorized to perform this operation". Without the
 # helper and this sudoers rule the cutoff silently does nothing, which is the
 # worst outcome -- the operator plans for the saving and never gets it.
-step "Installing the WiFi power helper"
+say "Installing the WiFi power helper"
 install -m 0755 "$CODE_DIR/setup/wifi-power.sh" /usr/local/sbin/raptorhab-wifi-power
 
 # --- DHCP on the USB link --------------------------------------------------
@@ -573,7 +587,7 @@ install -m 0755 "$CODE_DIR/setup/wifi-power.sh" /usr/local/sbin/raptorhab-wifi-p
 # untouched, so the payload never becomes a DNS server. See setup/usb-dhcp.conf
 # for why each option is there.
 if [[ $ENABLE_USB_ETHERNET -eq 1 ]]; then
-    step "Setting up DHCP on the USB link"
+    say "Setting up DHCP on the USB link"
 
     if [[ ! -x /usr/sbin/dnsmasq ]]; then
         apt-get install -y dnsmasq >/dev/null 2>&1 || true
