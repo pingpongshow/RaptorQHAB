@@ -140,6 +140,27 @@ uint32_t usbDropped = 0;
 // unattended, so dividing by them punishes the rate for time nobody was
 // listening.
 uint32_t usbOffered = 0;
+
+// Live packet rate over a one-second window. This replaces SNR on the
+// displays: the SX1262 measures SNR only for LoRa, so on the GFSK image link
+// the field could never show anything but n/a. Packets per second is the
+// figure a glance at the screen actually wants -- is the link alive, and how
+// busy is it.
+float currentPacketRate() {
+    static uint32_t winStart = 0;
+    static uint32_t winCount = 0;
+    static float rate = 0.0f;
+    uint32_t now = millis();
+    if (now - winStart >= 1000) {
+        if (winStart != 0) {
+            rate = (packetsTotal - winCount) * 1000.0f / (now - winStart);
+        }
+        winStart = now;
+        winCount = packetsTotal;
+    }
+    return rate;
+}
+
 uint32_t packetsRejectedNoRapt = 0;
 uint32_t packetsRejectedCrc = 0;
 uint32_t packetsRadioError = 0;
@@ -206,6 +227,7 @@ void saveConfiguration();
 void handleUsbCommands();
 bool initializeRadio();
 bool configureRadio();
+float currentPacketRate();
 void initDisplay();
 void drawStaticUI();
 void updateDisplay();
@@ -330,18 +352,6 @@ void updateSignalDisplay() {
     tft->setTextSize(1);
     tft->print(" dBm");
 
-    // SNR
-    tft->setTextSize(2);
-    bool snrKnown = lastSnr > SNR_NOT_AVAILABLE + 1.0f;
-    uint16_t snrColor = !snrKnown ? COLOR_LABEL
-                      : (lastSnr > 5 ? COLOR_GOOD : (lastSnr > 0 ? COLOR_WARN : COLOR_BAD));
-    tft->setTextColor(snrColor);
-    tft->setCursor(90, 105);
-    if (snrKnown) tft->printf("%.1f", lastSnr);
-    else          tft->print("n/a");
-    tft->setTextSize(1);
-    tft->print(" dB");
-
     // USB status indicator
     tft->setTextSize(1);
     tft->setTextColor(COLOR_GOOD);
@@ -358,10 +368,15 @@ void updateStatsDisplay() {
     if (millis() - lastUpdate < 500) return;
     lastUpdate = millis();
     
-    // Only update if values changed
-    if (packetsForwarded == prevPacketsForwarded && packetsTotal == prevPacketsTotal) {
+    // Only update if values changed -- including the live rate, so a stream
+    // that stops shows 0.0 rather than freezing at its last figure.
+    static float prevRateShown = -1.0f;
+    float pktRate = currentPacketRate();
+    if (packetsForwarded == prevPacketsForwarded && packetsTotal == prevPacketsTotal
+            && pktRate == prevRateShown) {
         return;
     }
+    prevRateShown = pktRate;
     
     // Clear stats value area
     tft->fillRect(5, 145, 310, 25, COLOR_BG);
@@ -385,6 +400,12 @@ void updateStatsDisplay() {
     tft->print("ERR:");
     tft->setTextColor(packetsRejectedCrc + packetsRejectedNoRapt > 0 ? COLOR_BAD : COLOR_VALUE);
     tft->printf("%lu", packetsRejectedCrc + packetsRejectedNoRapt);
+    
+    tft->setTextColor(COLOR_LABEL);
+    tft->setCursor(210, 147);
+    tft->print("PKT/S:");
+    tft->setTextColor(pktRate > 0 ? COLOR_GOOD : COLOR_VALUE);
+    tft->printf("%.0f", pktRate);
     
     
     // Stats row 2 - packet sizes
@@ -637,8 +658,7 @@ void updateDisplay() {
     oled->setCursor(0, 14);
     oled->printf("RSSI %6.1f dBm", lastRssi);
     oled->setCursor(0, 24);
-    if (lastSnr > SNR_NOT_AVAILABLE + 1.0f) oled->printf("SNR  %6.1f dB", lastSnr);
-    else                                    oled->print("SNR     n/a");
+    oled->printf("PKT/S %6.1f", currentPacketRate());
 
     oled->setCursor(0, 36);
     oled->printf("RX %lu  FWD %lu", packetsTotal, packetsForwarded);

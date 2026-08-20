@@ -1085,3 +1085,18 @@ infrared render uses fixed gains (1.1, 2.5), the values the purple cast was
 made of, so infrared frames are rendered identically and comparably.
 Verified on the payload: per-capture metadata shows gains alternating
 between the manual pair and greyworld's converged point.
+
+### G10. Alternation could silently stop, and SNR could never show anything **[FIXED]**
+A mission gallery showed one infrared frame among sixteen naturals — the
+render switch had failed without a trace once, likely a late in-flight AWB
+result landing after the manual gains and quietly undoing them. The
+infrared gains are now verified against the pipeline's own metadata after
+setting, retried up to three times, and every capture logs its render and
+measured gains (`Render standard: measured gains (1.10, 2.50)`), so the
+flight record says which render each image got.
+
+The modem display's SNR field read `n/a` from the day it was built: the
+SX1262 measures SNR only for LoRa, and this is a GFSK link — the field had
+no possible value. Replaced on every board with live packets/second, which
+is the figure a glance actually wants, and which drops to 0.0 when the
+stream stops instead of freezing at its last value.
