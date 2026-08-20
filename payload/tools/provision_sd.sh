@@ -606,9 +606,19 @@ reboots once by itself.
 Then, with no WiFi involved:
 
   1. A new network interface appears on your machine (macOS: System Settings >
-     Network, an "RNDIS/Ethernet Gadget"). Give it a manual address such as
-     10.55.0.2/24.
-  2. ssh ${USERNAME:-<user>}@10.55.0.1        (or raptorhab.local)
+     Network, an "RNDIS/Ethernet Gadget"). Leave it on automatic -- it will
+     self-assign a link-local address, which is all that is needed.
+  2. ssh ${USERNAME:-<user>}@raptorhab.local
+
+     Use the hostname, not an IP. Before the installer runs there is no DHCP
+     and no 10.55.0.1 -- that address is set up by the install. The Pi is
+     reachable over the cable at raptorhab.local (an IPv6 link-local address
+     that mDNS resolves). 'ping raptorhab.local' will fail while ssh works:
+     ping asks for IPv4 and only the IPv6 address exists over the cable.
+
+     If ssh refuses with "REMOTE HOST IDENTIFICATION HAS CHANGED", a previous
+     card left a host key behind; clear it with
+     'ssh-keygen -R raptorhab.local' and try again.
 
 To run the installer, the Pi needs internet for apt. Share your connection over
 that USB interface -- macOS: System Settings > General > Sharing > Internet

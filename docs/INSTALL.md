@@ -127,11 +127,22 @@ The payload advertises itself over the USB link, so this works with nothing
 configured on your machine and no administrator password. Verified: with WiFi
 up *and* the cable in, this connects over USB.
 
-Two things that will mislead you:
+Three things that will mislead you:
 
 - **`ping raptorhab.local` fails while `ssh raptorhab.local` works.** `ping`
   asks for an IPv4 address and the USB link only has a usable IPv6 one. The
   payload is not down; use `ping6 raptorhab.local` if you want to check.
+- **`ssh` refuses with "REMOTE HOST IDENTIFICATION HAS CHANGED".** Every card
+  generates its own host key, so a fresh card looks like an impostor of the
+  last one to anything that remembers the old key — and `ssh` blocks the
+  connection before it ever asks for a password, which reads exactly like a
+  login failure. Clear the old key and reconnect:
+
+  ```bash
+  ssh-keygen -R raptorhab.local
+  ```
+
+  This bites during testing, when you reflash the same hostname repeatedly.
 - **`ssh 10.55.0.1` works only if the card was prepared with
   `--usb-ethernet`,** which installs a small DHCP server so your machine is
   given an address on the cable (`10.55.0.10`–`.20`). Without it your machine
