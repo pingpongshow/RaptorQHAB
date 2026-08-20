@@ -627,7 +627,10 @@ struct TelemetryTableView: View {
 // MARK: - Map View
 
 struct MapDisplayView: View {
-    @EnvironmentObject var groundStation: GroundStationManager
+    // Deliberately NOT @EnvironmentObject var groundStation: observing the
+    // manager rebuilt this view on every packet. The map reads its live data
+    // from MapModel, which publishes the marker and path at a few hertz.
+    @ObservedObject var mapModel = MapModel.shared
     @ObservedObject var gpsManager = GPSManager.shared
     @ObservedObject var predictor = LandingPredictionManager.shared
     @ObservedObject var burstDetector = BurstDetectionManager.shared
@@ -640,8 +643,8 @@ struct MapDisplayView: View {
             if useOfflineMap {
                 // Offline map with OSM tiles
                 OfflineMapView(
-                    telemetryHistory: groundStation.telemetryHistory,
-                    latestTelemetry: groundStation.latestTelemetry,
+                    telemetryHistory: mapModel.flightHistory,
+                    latestTelemetry: mapModel.latestTelemetry,
                     groundStationPosition: gpsManager.currentPosition
                 )
             } else {
@@ -676,7 +679,7 @@ struct MapDisplayView: View {
                     }
                     
                     // Current position marker (payload)
-                    if let latest = groundStation.latestTelemetry {
+                    if let latest = mapModel.latestTelemetry {
                         Annotation("Payload", coordinate: CLLocationCoordinate2D(
                             latitude: latest.latitude,
                             longitude: latest.longitude
@@ -712,7 +715,7 @@ struct MapDisplayView: View {
                         }
                         
                         // Line from current position to predicted landing
-                        if let latest = groundStation.latestTelemetry {
+                        if let latest = mapModel.latestTelemetry {
                             MapPolyline(coordinates: [
                                 CLLocationCoordinate2D(latitude: latest.latitude, longitude: latest.longitude),
                                 prediction.predictedCoordinate
@@ -723,7 +726,7 @@ struct MapDisplayView: View {
                     
                     // Line from ground station to payload with bearing indicator
                     if let gsPos = gpsManager.currentPosition, gsPos.isValid,
-                       let payload = groundStation.latestTelemetry {
+                       let payload = mapModel.latestTelemetry {
                         let payloadCoord = CLLocationCoordinate2D(latitude: payload.latitude, longitude: payload.longitude)
                         
                         // Main bearing line
@@ -743,8 +746,8 @@ struct MapDisplayView: View {
                     }
                     
                     // Flight path
-                    if groundStation.telemetryHistory.count > 1 {
-                        MapPolyline(coordinates: groundStation.telemetryHistory.map {
+                    if mapModel.flightHistory.count > 1 {
+                        MapPolyline(coordinates: mapModel.flightHistory.map {
                             CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
                         })
                         .stroke(.blue, lineWidth: 3)
@@ -754,7 +757,7 @@ struct MapDisplayView: View {
             }
             
             // Large bearing/heading overlay at bottom center
-            if let bearing = gpsManager.bearingToPayload, groundStation.latestTelemetry != nil {
+            if let bearing = gpsManager.bearingToPayload, mapModel.latestTelemetry != nil {
                 VStack {
                     Spacer()
                     BearingHeadingOverlay(bearing: bearing)
@@ -772,7 +775,7 @@ struct MapDisplayView: View {
         .overlay(alignment: .topTrailing) {
             VStack(alignment: .trailing, spacing: 8) {
                 // Payload position info overlay
-                if let latest = groundStation.latestTelemetry {
+                if let latest = mapModel.latestTelemetry {
                     VStack(alignment: .trailing, spacing: 4) {
                         HStack {
                             Image(systemName: "balloon.fill")

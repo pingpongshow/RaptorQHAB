@@ -439,6 +439,9 @@ class GroundStationManager: ObservableObject {
         }
         closeLogFile()
         isReceiving = false
+        // The map keeps its last snapshot until told otherwise; leave the
+        // marker where the balloon last was rather than blanking the map on
+        // a deliberate stop. (reset() exists for an explicit clear.)
     }
     
     // MARK: - Debug Methods
@@ -580,6 +583,10 @@ class GroundStationManager: ObservableObject {
         // Always update latest telemetry for real-time display
         latestTelemetry = point
 
+        // Hand the map a throttled copy. It draws only the marker and the
+        // path, and must not rebuild on every packet -- see MapModel.
+        MapModel.shared.update(latest: point, history: telemetryHistory)
+
         // Feed the position fusion, which reconciles this against Meshtastic
         // beacons and third-party reports. RAPTOR is the highest-priority
         // source, so this normally wins outright.
@@ -594,7 +601,9 @@ class GroundStationManager: ObservableObject {
 
         if shouldSave {
             lastSavedTelemetryTime = now
-            print("Saving telemetry point (interval: \(timeSinceLastSave ?? 0)s)")
+            #if DEBUG
+            // print("Saving telemetry point")
+            #endif
 
             // Add to history
             telemetryHistory.append(point)

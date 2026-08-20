@@ -16,6 +16,7 @@
 		A1F5C0DE0000000000000001 /* FrameScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F5C0DE0000000000000002 /* FrameScanner.swift */; };
 		A1F5C0DE0000000000000011 /* ChaseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F5C0DE0000000000000012 /* ChaseView.swift */; };
 		A1F5C0DE0000000000000021 /* MissionReplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F5C0DE0000000000000022 /* MissionReplayView.swift */; };
+		A1F5C0DE0000000000000031 /* MapModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F5C0DE0000000000000032 /* MapModel.swift */; };
 		9C4EB7344022FD8A3ED70B01 /* SealedBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0CE09DBE629DFF015131054 /* SealedBox.swift */; };
 		685AEA024BB52275BBC908CA /* MeshtasticView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA8D3DCE330A2ADC02EDAC8 /* MeshtasticView.swift */; };
 		669A7BC8D3E1BBA461BC2285 /* MeshtasticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E89FCC7075A326778FC515D /* MeshtasticManager.swift */; };
@@ -79,6 +80,7 @@
 		A1F5C0DE0000000000000002 /* FrameScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameScanner.swift; sourceTree = "<group>"; };
 		A1F5C0DE0000000000000012 /* ChaseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChaseView.swift; sourceTree = "<group>"; };
 		A1F5C0DE0000000000000022 /* MissionReplayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MissionReplayView.swift; sourceTree = "<group>"; };
+		A1F5C0DE0000000000000032 /* MapModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapModel.swift; sourceTree = "<group>"; };
 		F0CE09DBE629DFF015131054 /* SealedBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SealedBox.swift; sourceTree = "<group>"; };
 		ACA8D3DCE330A2ADC02EDAC8 /* MeshtasticView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshtasticView.swift; sourceTree = "<group>"; };
 		0E89FCC7075A326778FC515D /* MeshtasticManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshtasticManager.swift; sourceTree = "<group>"; };
@@ -163,6 +165,7 @@
 				A1F5C0DE0000000000000002 /* FrameScanner.swift */,
 				A1F5C0DE0000000000000012 /* ChaseView.swift */,
 				A1F5C0DE0000000000000022 /* MissionReplayView.swift */,
+				A1F5C0DE0000000000000032 /* MapModel.swift */,
 				F0CE09DBE629DFF015131054 /* SealedBox.swift */,
 				DB85264F6D9B63A2E97A4E39 /* LinkProtocol.swift */,
 				C99119A50E05E5D0A136AAA2 /* SerialDeviceDiscovery.swift */,
@@ -293,6 +296,7 @@
 				A1F5C0DE0000000000000001 /* FrameScanner.swift in Sources */,
 				A1F5C0DE0000000000000011 /* ChaseView.swift in Sources */,
 				A1F5C0DE0000000000000021 /* MissionReplayView.swift in Sources */,
+				A1F5C0DE0000000000000031 /* MapModel.swift in Sources */,
 				9C4EB7344022FD8A3ED70B01 /* SealedBox.swift in Sources */,
 				A1DC93CED06BE4D7FEF36FD0 /* LinkProtocol.swift in Sources */,
 				DE86DAC9B3A39875784E63FF /* SerialDeviceDiscovery.swift in Sources */,
