@@ -58,6 +58,10 @@ class ZoneSchedule:
     image_percent: float
     mesh_percent: float
     beacon_interval_sec: float
+    # Packets between telemetry frames. None keeps the configured default;
+    # DESCENT lowers it so position updates keep coming even though the
+    # packet stream itself has thinned out.
+    telemetry_interval_packets: Optional[int] = None
     capture_enabled: bool = True
     listen_percent: float = 0.0
 
@@ -87,6 +91,17 @@ DEFAULT_SCHEDULES: Dict[Zone, ZoneSchedule] = {
     ),
     Zone.CRUISE: ZoneSchedule(
         image_percent=5.0, mesh_percent=5.0, beacon_interval_sec=300.0
+    ),
+    # Descent: the mesh beacon is worth more than imagery here. A LongFast
+    # beacon is heard by anyone within a few hundred miles and survives the
+    # payload dropping below the horizon of the ground station; a RaptorQ
+    # image is worth nothing unless the whole thing arrives. Telemetry every
+    # other packet, beacons every 45 s, imagery reduced to whatever is left.
+    Zone.DESCENT: ZoneSchedule(
+        image_percent=15.0,
+        mesh_percent=20.0,
+        beacon_interval_sec=45.0,
+        telemetry_interval_packets=2,
     ),
     Zone.LANDED: ZoneSchedule(
         image_percent=0.0,
@@ -357,7 +372,7 @@ def schedules_from_config(config) -> Dict[Zone, ZoneSchedule]:
     not stop the payload from flying.
     """
     def build(zone: Zone, image_pct, mesh_pct, interval, capture=True,
-              listen=0.0) -> ZoneSchedule:
+              listen=0.0, telemetry_interval=None) -> ZoneSchedule:
         try:
             return ZoneSchedule(
                 image_percent=float(image_pct),
@@ -365,6 +380,9 @@ def schedules_from_config(config) -> Dict[Zone, ZoneSchedule]:
                 beacon_interval_sec=float(interval),
                 capture_enabled=capture,
                 listen_percent=float(listen),
+                telemetry_interval_packets=(
+                    int(telemetry_interval) if telemetry_interval else None
+                ),
             )
         except ValueError as e:
             logger.error(
@@ -392,6 +410,13 @@ def schedules_from_config(config) -> Dict[Zone, ZoneSchedule]:
             (config.mesh_log_rx_percent if config.mesh_log_enabled else 0.0),
         ),
     )
+    descent = build(
+        Zone.DESCENT,
+        config.zone_descent_image_percent,
+        config.zone_descent_mesh_percent,
+        config.zone_descent_beacon_interval_sec,
+        telemetry_interval=config.zone_descent_telemetry_interval_packets,
+    ) if getattr(config, "zone_descent_enabled", True) else cruise
     landed = build(
         Zone.LANDED,
         0.0,
@@ -409,5 +434,6 @@ def schedules_from_config(config) -> Dict[Zone, ZoneSchedule]:
         Zone.UNKNOWN: launch,  # before the first fix, assume still on the pad
         Zone.LAUNCH: launch,
         Zone.CRUISE: cruise,
+        Zone.DESCENT: descent,
         Zone.LANDED: landed,
     }

@@ -202,6 +202,11 @@ def cmd_run(args):
     print(f"speedup  : x{args.speedup}")
     print()
     print("pointing the payload at the simulator and restarting it...")
+    # Drop any saved flight state first. Left in place, the payload keeps a
+    # launch point from wherever it really was, and every simulated position
+    # reads as thousands of kilometres away -- which trips the launch-radius
+    # test and masks whatever the scenario was meant to show.
+    sudo("rm", "-f", FLIGHT_STATE)
     set_gps_device(PTY_LINK)
     sudo("systemctl", "restart", SERVICE)
     print("done. streaming -- watch with:")

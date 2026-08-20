@@ -11,7 +11,8 @@ from typing import Optional, Tuple, Union
 
 from .constants import (
     SYNC_WORD, HEADER_SIZE, CRC_SIZE, MAX_PAYLOAD_SIZE, MAX_PACKET_SIZE,
-    PacketType, PacketFlags, FixType, TELEMETRY_PAYLOAD_SIZE
+    PacketType, PacketFlags, FixType, TELEMETRY_PAYLOAD_SIZE,
+    FLIGHT_SUMMARY_PAYLOAD_SIZE
 )
 from .crc import crc32, crc32_bytes, verify_crc32_packet
 
@@ -203,6 +204,69 @@ class TextMessagePayload:
         """Deserialize text message from bytes"""
         return cls(message=data.decode('utf-8', errors='replace'))
 
+
+@dataclass
+class FlightSummaryPayload:
+    """The whole flight in 30 bytes (Type 0x04).
+
+    Telemetry says where the balloon is now. This says what the flight has
+    been: apogee and when it happened, how far it has travelled, the coldest
+    it got, how much it has sent. One of these received late in the flight --
+    or by a stranger relaying it off the mesh -- tells the story even if every
+    other packet was missed, which is exactly the situation recovery is.
+    """
+    max_altitude_m: float = 0.0        # apogee, metres MSL
+    max_altitude_time: int = 0         # unix seconds at apogee
+    max_ascent_rate_mps: float = 0.0
+    max_descent_rate_mps: float = 0.0  # stored positive
+    distance_travelled_m: float = 0.0
+    min_cpu_temp_c: float = 0.0
+    max_cpu_temp_c: float = 0.0
+    packets_sent: int = 0
+    images_captured: int = 0
+    flight_time_sec: int = 0
+    zone: int = 0                      # current zone, as an index
+
+    def serialize(self) -> bytes:
+        """30 bytes, fixed."""
+        def clamp(v, lo, hi):
+            return max(lo, min(hi, int(v)))
+        return struct.pack(
+            '>IIhhIhhIHHH',
+            clamp(self.max_altitude_m * 10, 0, 4294967295),      # decimetres
+            clamp(self.max_altitude_time, 0, 4294967295),
+            clamp(self.max_ascent_rate_mps * 10, -32768, 32767),
+            clamp(self.max_descent_rate_mps * 10, -32768, 32767),
+            clamp(self.distance_travelled_m, 0, 4294967295),
+            clamp(self.min_cpu_temp_c * 10, -32768, 32767),
+            clamp(self.max_cpu_temp_c * 10, -32768, 32767),
+            clamp(self.packets_sent, 0, 4294967295),
+            clamp(self.images_captured, 0, 65535),
+            clamp(self.flight_time_sec // 60, 0, 65535),          # minutes
+            clamp(self.zone, 0, 65535),
+        )
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> 'FlightSummaryPayload':
+        if len(data) < FLIGHT_SUMMARY_PAYLOAD_SIZE:
+            raise ValueError(
+                f"Flight summary payload too short: {len(data)} bytes")
+        (alt, t, asc, desc, dist, tmin, tmax,
+         pkts, imgs, mins, zone) = struct.unpack(
+            '>IIhhIhhIHHH', data[:FLIGHT_SUMMARY_PAYLOAD_SIZE])
+        return cls(
+            max_altitude_m=alt / 10.0,
+            max_altitude_time=t,
+            max_ascent_rate_mps=asc / 10.0,
+            max_descent_rate_mps=desc / 10.0,
+            distance_travelled_m=float(dist),
+            min_cpu_temp_c=tmin / 10.0,
+            max_cpu_temp_c=tmax / 10.0,
+            packets_sent=pkts,
+            images_captured=imgs,
+            flight_time_sec=mins * 60,
+            zone=zone,
+        )
 
 @dataclass
 class CommandAckPayload:
@@ -451,6 +515,7 @@ def _candidate_payload_lengths(packet_type: int) -> list:
         types, in which case the caller falls back to the full buffer length.
     """
     from common.constants import (
+        FLIGHT_SUMMARY_PAYLOAD_SIZE,
         IMAGE_DATA_HEADER_SIZE,
         RAPTORQ_PAYLOAD_ID_SIZE,
         TELEMETRY_PAYLOAD_SIZE,
@@ -477,6 +542,9 @@ def _candidate_payload_lengths(packet_type: int) -> list:
             IMAGE_DATA_HEADER_SIZE + FOUNTAIN_SYMBOL_SIZE + RAPTORQ_PAYLOAD_ID_SIZE,
             IMAGE_DATA_HEADER_SIZE + FOUNTAIN_SYMBOL_SIZE,
         ]
+
+    if packet_type == PacketType.FLIGHT_SUMMARY:
+        return [FLIGHT_SUMMARY_PAYLOAD_SIZE]
 
     if packet_type == PacketType.CMD_ACK:
         # acked_type(1) + acked_seq(2) + status(1), plus optional response data

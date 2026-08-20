@@ -93,6 +93,15 @@ class GPS:
         self.device = device
         self.baudrate = baudrate
         self.airborne_mode = airborne_mode
+        # Applied by altitude rather than at boot unless this is set.
+        self.balloon_mode_on_boot = False
+        # Above this height above launch, the receiver needs the relaxed
+        # dynamic model. Well under the ~10 km ceiling of the default mode,
+        # so the switch happens with margin rather than at the edge.
+        self.balloon_mode_altitude_m = 8000.0
+        self._balloon_mode_active = False
+        self._balloon_mode_confirmed = False
+        self._balloon_mode_attempts = 0
         self.simulate = simulate
         
         self._serial: Optional[serial.Serial] = None
@@ -181,12 +190,73 @@ class GPS:
         self._send_pmtk("PMTK353,1,1,0,0,1")
         time.sleep(0.1)
         
-        # Set balloon mode if requested (airborne unit only)
-        if self.airborne_mode:
-            self._set_balloon_mode()
+        # Balloon mode used to be set here unconditionally. It is the right
+        # mode above roughly 10 km and the wrong one on the ground: the
+        # receiver relaxes its dynamic model to accept balloon-like motion,
+        # which is exactly what you do not want while it is trying to get a
+        # first fix from cold on a launch field. It is now applied by
+        # altitude (see ensure_high_altitude_mode), and only set here when
+        # explicitly asked for.
+        if self.airborne_mode and self.balloon_mode_on_boot:
+            self.set_balloon_mode(True)
         
         logger.info("L76K GPS configured")
     
+    @property
+    def balloon_mode_active(self) -> bool:
+        """Whether balloon mode has been sent (see also _balloon_mode_confirmed)."""
+        return self._balloon_mode_active
+
+    @property
+    def balloon_mode_confirmed(self) -> bool:
+        """Whether the receiver acknowledged the mode change."""
+        return self._balloon_mode_confirmed
+
+    def ensure_high_altitude_mode(self, altitude_agl_m=None,
+                                  force: bool = False) -> bool:
+        """Switch the receiver to balloon mode once height demands it.
+
+        Two triggers, because relying on altitude alone has a trap: if the
+        receiver loses its fix above the default mode's ceiling, there is no
+        altitude to trigger on and no way back. So the caller can force it
+        from flight state (a zone that means "airborne") as well.
+
+        Idempotent, and retried a few times if the receiver does not
+        acknowledge -- a mode that silently failed to apply is the failure
+        this whole mechanism exists to avoid.
+        """
+        if not self.airborne_mode or self.simulate:
+            return False
+        if self._balloon_mode_confirmed:
+            return False
+
+        needed = force or (
+            altitude_agl_m is not None
+            and altitude_agl_m >= self.balloon_mode_altitude_m
+        )
+        if not needed:
+            return False
+
+        # Already sent and waiting on an ACK: retry a bounded number of times
+        # rather than spamming the receiver every cycle.
+        if self._balloon_mode_active and self._balloon_mode_attempts >= 3:
+            return False
+
+        self._balloon_mode_attempts += 1
+        logger.info(
+            f"Reached the high-altitude threshold "
+            f"({altitude_agl_m if altitude_agl_m is not None else 'flight state'});"
+            f" switching the receiver to balloon mode "
+            f"(attempt {self._balloon_mode_attempts})"
+        )
+        self.set_balloon_mode(True)
+        return True
+
+    def set_balloon_mode(self, enabled: bool = True) -> None:
+        """Send the navigation-mode command."""
+        self._set_balloon_mode() if enabled else self._send_pmtk("PMTK886,0")
+        self._balloon_mode_active = enabled
+
     def _set_balloon_mode(self):
         """
         Set L76K GPS to balloon/flight mode for high altitude operation.
@@ -211,6 +281,23 @@ class GPS:
         
         logger.info("L76K balloon mode enabled - GPS will work up to ~80km altitude")
     
+    def configure(self) -> None:
+        """Re-apply the receiver configuration. Safe to call at any time."""
+        self._configure_gps()
+
+    def restart(self, cold: bool = False) -> None:
+        """Restart the receiver.
+
+        Hot keeps almanac and ephemeris and re-fixes in seconds; cold
+        discards them and takes minutes. Both are last resorts -- see
+        airborne.gps_watchdog for when they are used.
+        """
+        self._send_pmtk("PMTK103" if cold else "PMTK101")
+        # A restart drops the navigation mode with everything else.
+        self._balloon_mode_active = False
+        self._balloon_mode_confirmed = False
+        self._balloon_mode_attempts = 0
+
     def _send_pmtk(self, command: str):
         """
         Send PMTK command to L76K GPS.
@@ -580,6 +667,7 @@ class GPS:
                 
                 # Log balloon mode confirmation
                 if cmd == '886' and result == '3':
+                    self._balloon_mode_confirmed = True
                     logger.info("L76K balloon mode CONFIRMED by GPS")
                     
         except (ValueError, IndexError):

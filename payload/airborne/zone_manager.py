@@ -60,6 +60,7 @@ class Zone(str, Enum):
     UNKNOWN = "unknown"
     LAUNCH = "launch"
     CRUISE = "cruise"
+    DESCENT = "descent"
     LANDED = "landed"
 
 
@@ -99,6 +100,9 @@ class ZoneManager:
         radius_m: float = 8000.0,
         hysteresis_m: float = 800.0,
         altitude_override_m: float = 3000.0,
+        descent_rate_mps: float = -2.0,
+        descent_dwell_sec: float = 20.0,
+        descent_ascent_rate_mps: float = 1.0,
         landed_altitude_m: float = 1000.0,
         landed_vertical_rate_mps: float = 0.5,
         landed_dwell_sec: float = 120.0,
@@ -165,6 +169,15 @@ class ZoneManager:
         self.radius_m = radius_m
         self.hysteresis_m = hysteresis_m
         self.altitude_override_m = altitude_override_m
+        # Descent is the half hour that decides whether the payload is found:
+        # it is when the landing prediction converges and when the balloon
+        # drops below the horizon of everything that was hearing it. It gets
+        # its own zone so beacons and telemetry can speed up without waiting
+        # for the launch radius to mean anything.
+        self.descent_rate_mps = descent_rate_mps
+        self.descent_dwell_sec = descent_dwell_sec
+        self.descent_ascent_rate_mps = descent_ascent_rate_mps
+        self._descent_candidate_since: Optional[float] = None
         self.landed_altitude_m = landed_altitude_m
         self.landed_vertical_rate_mps = landed_vertical_rate_mps
         self.landed_dwell_sec = landed_dwell_sec
@@ -354,6 +367,15 @@ class ZoneManager:
         if self._is_landed(altitude_agl_m, vertical_rate_mps, now):
             return Zone.LANDED, "low and stationary"
 
+        if self._is_descending(vertical_rate_mps, now):
+            # The rate can be unknown here and still be descent: holding the
+            # zone through a gap in the estimate is the point.
+            return Zone.DESCENT, (
+                f"falling at {vertical_rate_mps:.1f} m/s"
+                if vertical_rate_mps is not None
+                else "descending; rate estimate unavailable"
+            )
+
         # Altitude override: high enough that the launch radius is irrelevant.
         if (
             altitude_agl_m is not None
@@ -376,6 +398,59 @@ class ZoneManager:
             return Zone.CRUISE, "left the launch radius"
 
         return Zone.LAUNCH, "inside the launch radius"
+
+    def _is_descending(
+        self,
+        vertical_rate_mps: Optional[float],
+        now: float,
+    ) -> bool:
+        """Falling, and has been for long enough to believe it.
+
+        Gated on landing being armed, for the same reason landing detection
+        is: a payload jostled on the pad produces negative rates all day, and
+        descent behaviour before launch would drain the battery beaconing at
+        a recovery cadence while the crew is still holding it.
+
+        Once in DESCENT the balloon stays there until it lands or genuinely
+        climbs again -- a burst payload on a parachute is not a smooth faller,
+        and a momentary updraft must not flip it back to CRUISE cadence.
+        """
+        if not self._landing_armed:
+            self._descent_candidate_since = None
+            return False
+
+        # Once in DESCENT, decide that before anything else -- exactly as
+        # LANDED does, and for the same reason. A falling payload is the
+        # thing whose rate estimate goes missing: the altitude history
+        # thins out as fixes get harder near the ground. Treating an
+        # unknown rate as "not descending" dropped the zone back to cruise
+        # two seconds after entering it, which lengthens the beacon from
+        # 45 s to 300 s at the exact moment the balloon is disappearing
+        # below the horizon. Only unambiguous ascent releases it.
+        if self._state.zone is Zone.DESCENT:
+            if (vertical_rate_mps is not None
+                    and vertical_rate_mps >= self.descent_ascent_rate_mps):
+                self._descent_candidate_since = None
+                return False
+            return True
+
+        if vertical_rate_mps is None:
+            self._descent_candidate_since = None
+            return False
+
+        if vertical_rate_mps > self.descent_rate_mps:
+            self._descent_candidate_since = None
+            return False
+
+        if self._descent_candidate_since is None:
+            self._descent_candidate_since = now
+            logger.info(
+                f"Possible descent: {vertical_rate_mps:+.1f} m/s; confirming "
+                f"over {self.descent_dwell_sec:.0f}s"
+            )
+            return False
+
+        return now - self._descent_candidate_since >= self.descent_dwell_sec
 
     def _is_landed(
         self,

@@ -24,6 +24,7 @@ MAX_PAYLOAD_SIZE = MAX_PACKET_SIZE - HEADER_SIZE - CRC_SIZE  # 243 bytes
 
 # Telemetry payload size
 TELEMETRY_PAYLOAD_SIZE = 36
+FLIGHT_SUMMARY_PAYLOAD_SIZE = 30
 
 
 class PacketType(IntEnum):
@@ -33,6 +34,7 @@ class PacketType(IntEnum):
     IMAGE_META = 0x01
     IMAGE_DATA = 0x02
     TEXT_MSG = 0x03
+    FLIGHT_SUMMARY = 0x04
     CMD_ACK = 0x10
     
     # Ground -> Air

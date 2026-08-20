@@ -127,6 +127,9 @@ class RaptorHabAirborne:
         self._wifi_cutoff = None
         self._power_report = None
         self._mesh_log = None
+        self._flight_summary = None
+        self._gps_watchdog = None
+        self._last_flight_summary_at = 0.0
         
         # State machine
         self._state = State.INITIALIZING
@@ -325,6 +328,8 @@ class RaptorHabAirborne:
             callback=self._on_gps_update,
             simulation=self.debug,
         )
+        self._gps.balloon_mode_on_boot = self.config.gps_balloon_mode_on_boot
+        self._gps.balloon_mode_altitude_m = self.config.gps_balloon_mode_altitude_m
         if self._gps.init():
             self._gps.start()
             self._logger.info("GPS reader started")
@@ -424,7 +429,26 @@ class RaptorHabAirborne:
                 "Zone scheduling disabled; images run continuously"
             )
 
+        self._initialize_flight_recorders()
+
         self._logger.info("All components initialized successfully")
+
+    def _initialize_flight_recorders(self) -> None:
+        """The flight-scale record and the receiver watchdog."""
+        from airborne.flight_summary import FlightSummary
+        from airborne.gps_watchdog import GPSWatchdog
+
+        self._flight_summary = (
+            FlightSummary() if self.config.flight_summary_enabled else None
+        )
+        self._last_flight_summary_at = 0.0
+
+        self._gps_watchdog = GPSWatchdog(
+            self._gps,
+            no_fix_timeout_sec=self.config.gps_watchdog_no_fix_sec,
+            escalation_interval_sec=self.config.gps_watchdog_escalation_sec,
+            enabled=self.config.gps_watchdog_enabled,
+        ) if self._gps is not None else None
 
     def _initialize_zone_scheduling(self) -> None:
         """Set up flight zone tracking and the airtime allocator."""
@@ -436,6 +460,13 @@ class RaptorHabAirborne:
             radius_m=self.config.zone_radius_m,
             hysteresis_m=self.config.zone_hysteresis_m,
             altitude_override_m=self.config.zone_altitude_override_m,
+            descent_rate_mps=self.config.zone_descent_rate_mps,
+            descent_dwell_sec=(
+                self.config.zone_descent_dwell_sec
+                if self.config.zone_descent_enabled
+                # Unreachable dwell disables the zone without a second path.
+                else float("inf")
+            ),
             landed_altitude_m=self.config.zone_landed_altitude_m,
             landed_vertical_rate_mps=self.config.zone_landed_vertical_rate_mps,
             landed_arm_altitude_m=self.config.zone_landed_arm_altitude_m,
@@ -456,6 +487,7 @@ class RaptorHabAirborne:
             slice_sec=self.config.zone_slice_sec,
         )
         self._tx_scheduler.set_zone(self._zone_manager.zone)
+        self._apply_zone_telemetry_rate()
 
         if self._zone_manager.launch_point_known:
             self._logger.info(
@@ -940,6 +972,39 @@ class RaptorHabAirborne:
 
         if self._tx_scheduler is not None:
             self._tx_scheduler.set_zone(self._zone_manager.zone)
+            self._apply_zone_telemetry_rate()
+
+        state = self._zone_manager.state
+
+        # The receiver needs its relaxed dynamic model before it reaches the
+        # ceiling of the default one. Altitude is the trigger; a zone that
+        # means "airborne" is the backstop for a receiver that lost its fix
+        # on the way up and so cannot report an altitude to trigger on.
+        if self._gps is not None:
+            self._gps.ensure_high_altitude_mode(
+                altitude_agl_m=state.altitude_agl_m,
+                # The backstop is for a receiver that cannot report an
+                # altitude to trigger on -- airborne by flight state, blind
+                # by fix. Forcing on the zone alone would defeat the
+                # threshold entirely, since cruise begins far below it.
+                force=(
+                    state.altitude_agl_m is None
+                    and self._zone_manager.zone in (Zone.CRUISE, Zone.DESCENT)
+                ),
+            )
+
+        if self._gps_watchdog is not None:
+            self._gps_watchdog.update(
+                has_fix=(gps is not None and gps.fix_type >= 2)
+            )
+
+        if self._flight_summary is not None and gps is not None and gps.fix_type >= 2:
+            self._flight_summary.note_position(
+                latitude=gps.latitude,
+                longitude=gps.longitude,
+                altitude_m=gps.altitude,
+                vertical_rate_mps=state.vertical_rate_mps,
+            )
 
         # Fed from here rather than straight off the GPS, because the height
         # that matters is above the *launch site* and that reference is the
@@ -948,6 +1013,57 @@ class RaptorHabAirborne:
             self._wifi_cutoff.update(
                 altitude_agl_m=self._zone_manager.state.altitude_agl_m,
                 fix_type=(gps.fix_type if gps is not None else 0),
+            )
+
+    def _maybe_queue_flight_summary(self) -> None:
+        """Queue the flight summary packet when its interval comes round.
+
+        Queued rather than sent directly, so it takes an ordinary packet slot
+        and cannot displace an overdue beacon or stall the image stream.
+        """
+        if self._flight_summary is None or self._scheduler is None:
+            return
+        now = time.monotonic()
+        if now - self._last_flight_summary_at < self.config.flight_summary_interval_sec:
+            return
+        self._last_flight_summary_at = now
+
+        try:
+            zone_index = list(Zone).index(self._zone_manager.zone) if self._zone_manager else 0
+            payload = self._flight_summary.as_payload(
+                packets_sent=self._packets_sent,
+                images_captured=self._images_captured,
+                zone_index=zone_index,
+            )
+            self._scheduler.queue_packet(PacketType.FLIGHT_SUMMARY, payload)
+            self._logger.info(
+                f"Flight summary queued: apogee {payload.max_altitude_m:.0f} m, "
+                f"{payload.distance_travelled_m / 1000:.1f} km travelled, "
+                f"{payload.flight_time_sec // 60} min aloft"
+            )
+        except Exception as exc:
+            self._logger.error(f"Could not build the flight summary: {exc}")
+
+    def _apply_zone_telemetry_rate(self) -> None:
+        """Let the zone set how often telemetry rides the packet stream.
+
+        Descent thins the image stream right down, so a telemetry interval
+        counted in packets would stretch out just as position updates start
+        mattering most. The zone's own interval wins where it has one; every
+        other zone keeps the configured default.
+        """
+        if self._tx_scheduler is None or self._scheduler is None:
+            return
+        schedule = self._tx_scheduler.schedule_for()
+        interval = (
+            schedule.telemetry_interval_packets
+            or self.config.telemetry_interval_packets
+        )
+        if interval != self._scheduler.telemetry_interval:
+            self._scheduler.telemetry_interval = interval
+            self._logger.info(
+                f"Telemetry cadence now every {interval} packets "
+                f"({self._tx_scheduler.zone.value})"
             )
 
     def _capture_allowed(self) -> bool:
@@ -1049,6 +1165,9 @@ class RaptorHabAirborne:
         
         # Update telemetry with current data
         self._update_telemetry()
+
+        # And the flight-scale record, on its own slower cadence.
+        self._maybe_queue_flight_summary()
         
         # Transmit packets until time expires
         packets_this_cycle = 0

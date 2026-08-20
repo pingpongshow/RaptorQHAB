@@ -27,6 +27,7 @@ class PacketType(IntEnum):
     IMAGE_META = 0x01
     IMAGE_DATA = 0x02
     TEXT_MESSAGE = 0x03
+    FLIGHT_SUMMARY = 0x04
     COMMAND_ACK = 0x10
     
     # Ground -> Air

@@ -444,6 +444,100 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         apply=Apply.RESTART, minimum=0.0, maximum=5.0, unit="s", advanced=True,
     ),
     _spec(
+        "zone_descent_enabled", Kind.BOOL, "Flight zones",
+        "Give descent its own behaviour. Descent is the half hour that "
+        "decides whether the payload is found: the landing prediction "
+        "converges then, and the balloon drops below the horizon of "
+        "everything that was hearing it. Off means descent behaves as "
+        "cruise did.",
+        apply=Apply.RESTART,
+    ),
+    _spec(
+        "zone_descent_rate_mps", Kind.FLOAT, "Flight zones",
+        "Fall rate below which descent is considered. Negative.",
+        apply=Apply.RESTART, minimum=-50.0, maximum=-0.5, unit="m/s",
+        advanced=True,
+    ),
+    _spec(
+        "zone_descent_dwell_sec", Kind.INT, "Flight zones",
+        "How long the fall must hold before descent is declared. Guards "
+        "against a momentary stall on the way up being read as descent.",
+        apply=Apply.RESTART, minimum=0, maximum=300, unit="s", advanced=True,
+    ),
+    _spec(
+        "zone_descent_image_percent", Kind.FLOAT, "Flight zones",
+        "Airtime given to imagery during descent. Low by design: a RaptorQ "
+        "image is worth nothing unless all of it arrives, and descent is "
+        "when the link is about to be lost.",
+        apply=Apply.RESTART, minimum=0.0, maximum=100.0, unit="%",
+    ),
+    _spec(
+        "zone_descent_mesh_percent", Kind.FLOAT, "Flight zones",
+        "Airtime given to Meshtastic during descent. Higher than imagery: a "
+        "beacon is heard by anyone within a few hundred miles and survives "
+        "the payload dropping below the ground station's horizon.",
+        apply=Apply.RESTART, minimum=0.0, maximum=100.0, unit="%",
+    ),
+    _spec(
+        "zone_descent_beacon_interval_sec", Kind.INT, "Flight zones",
+        "Beacon spacing during descent.",
+        apply=Apply.RESTART, minimum=10, maximum=3600, unit="s",
+    ),
+    _spec(
+        "zone_descent_telemetry_interval_packets", Kind.INT, "Flight zones",
+        "Packets between telemetry frames during descent. The image stream "
+        "thins right down here, so without its own value telemetry would "
+        "stretch out just as position updates start mattering most.",
+        apply=Apply.RESTART, minimum=1, maximum=50, advanced=True,
+    ),
+    _spec(
+        "flight_summary_enabled", Kind.BOOL, "Telemetry",
+        "Send a periodic packet carrying the whole flight: apogee and when, "
+        "peak rates, distance travelled, temperature extremes. One received "
+        "late in the flight tells the story even if every other packet was "
+        "missed.",
+        apply=Apply.RESTART,
+    ),
+    _spec(
+        "flight_summary_interval_sec", Kind.INT, "Telemetry",
+        "How often the flight summary is queued.",
+        apply=Apply.LIVE, minimum=30, maximum=3600, unit="s",
+    ),
+    _spec(
+        "gps_watchdog_enabled", Kind.BOOL, "GPS",
+        "Recover a receiver that has stopped producing fixes, escalating "
+        "from re-applying configuration to a hot restart to a cold start.",
+        apply=Apply.RESTART,
+    ),
+    _spec(
+        "gps_watchdog_no_fix_sec", Kind.INT, "GPS",
+        "How long without a fix before recovery starts. Long on purpose: a "
+        "balloon in heavy cloud or under canopy loses its fix for minutes "
+        "with nothing wrong, and restarting the receiver then makes the "
+        "outage longer than the fault would have been.",
+        apply=Apply.RESTART, minimum=30, maximum=3600, unit="s",
+    ),
+    _spec(
+        "gps_watchdog_escalation_sec", Kind.INT, "GPS",
+        "How long each recovery step gets before the next is tried.",
+        apply=Apply.RESTART, minimum=30, maximum=1800, unit="s",
+        advanced=True,
+    ),
+    _spec(
+        "gps_balloon_mode_altitude_m", Kind.INT, "GPS",
+        "Height above launch at which the receiver is switched to its "
+        "high-altitude dynamic model. Set well below the default model's "
+        "ceiling so the switch happens with margin rather than at the edge.",
+        apply=Apply.RESTART, minimum=1000, maximum=20000, unit="m",
+    ),
+    _spec(
+        "gps_balloon_mode_on_boot", Kind.BOOL, "GPS",
+        "Apply the high-altitude model at startup instead of by altitude. "
+        "Off by design: on the ground the default model acquires a first fix "
+        "faster and holds it better.",
+        apply=Apply.RESTART, advanced=True,
+    ),
+    _spec(
         "camera_tuning", Kind.STRING, "Camera",
         "How the image is rendered. 'standard' is the sensor's normal tuning "
         "-- on a NoIR module (no infrared-cut filter, undetectable in "

@@ -195,6 +195,33 @@ class Config:
     zone_cruise_beacon_interval_sec: int = 300
 
     # On the ground: a slow recovery beacon and nothing else.
+    # Descent: the half hour that decides whether the payload is found.
+    # One packet every few minutes carrying the whole flight: apogee, rates,
+    # distance, temperature extremes. Cheap, and the packet worth receiving
+    # when it is the only one that got through.
+    flight_summary_enabled: bool = True
+    flight_summary_interval_sec: int = 180
+
+    # Recover a receiver that has stopped fixing. Long timeout on purpose:
+    # a balloon in heavy cloud loses its fix for minutes without any fault.
+    gps_watchdog_enabled: bool = True
+    gps_watchdog_no_fix_sec: int = 300
+    gps_watchdog_escalation_sec: int = 180
+
+    # The receiver needs a relaxed dynamic model above roughly 10 km. Applied
+    # by altitude, not at boot: on the ground the default model acquires a
+    # first fix faster and holds it better.
+    gps_balloon_mode_altitude_m: int = 8000
+    gps_balloon_mode_on_boot: bool = False
+
+    zone_descent_enabled: bool = True
+    zone_descent_rate_mps: float = -2.0
+    zone_descent_dwell_sec: int = 20
+    zone_descent_image_percent: float = 15.0
+    zone_descent_mesh_percent: float = 20.0
+    zone_descent_beacon_interval_sec: int = 45
+    zone_descent_telemetry_interval_packets: int = 2
+
     zone_landed_enabled: bool = True
     zone_landed_altitude_m: int = 1000
     zone_landed_vertical_rate_mps: float = 0.5
