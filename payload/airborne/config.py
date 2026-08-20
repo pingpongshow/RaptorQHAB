@@ -281,6 +281,16 @@ class Config:
 
     # === Debug ===
     debug_mode: bool = False
+    # How often the one-line status summary is written. Every 10 s filled the
+    # journal with 350 lines an hour saying much the same thing; a flight is
+    # long enough that this is the difference between a readable record and a
+    # wall to scroll through. Each line is also an SD write on a payload that
+    # is trying to spend its power on the radio.
+    status_interval_sec: int = 60
+    # Per-image and per-capture detail: which render was applied, when a
+    # transmission started and finished, what got queued. Useful on the
+    # bench, six lines per photo in flight.
+    verbose_logging: bool = False
     simulate_gps: bool = False
     simulate_camera: bool = False
     allow_lt_fallback: bool = False

@@ -15,7 +15,8 @@ class FSKDemodulator {
     
     // MARK: - Debug Logging
     
-    static var debugEnabled = true
+    /// Off by default: this runs per sample batch on the RTL-SDR path.
+    static var debugEnabled = false
     private var sampleBatchCount = 0
     private var totalSamplesProcessed = 0
     private var totalBitsRecovered = 0
@@ -25,9 +26,10 @@ class FSKDemodulator {
     private var signalSum: Double = 0
     private var signalCount = 0
     
-    private func debugLog(_ message: String) {
-        if FSKDemodulator.debugEnabled {
-        }
+    private func debugLog(_ message: @autoclosure () -> String) {
+        #if DEBUG
+        if FSKDemodulator.debugEnabled { print("[FSK] \(message())") }
+        #endif
     }
     
     private func periodicStats() {

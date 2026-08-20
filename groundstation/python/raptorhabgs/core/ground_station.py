@@ -3,6 +3,8 @@ Ground Station Manager - Main controller for the ground station.
 Coordinates serial communication, telemetry processing, and image decoding.
 """
 
+import logging
+
 import zlib
 import os
 from pathlib import Path
@@ -20,6 +22,8 @@ from .protocol import (
 )
 from .telemetry import TelemetryPoint, PendingImage, ImageMetadata
 from .config import get_config, get_data_directory, ModemConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -209,7 +213,7 @@ class GroundStationManager(QObject):
         
         # Log non-telemetry packets (telemetry is too frequent)
         if ptype != PacketType.TELEMETRY:
-            print(f"[GroundStation] Packet: type={ptype_name}, seq={sequence}, payload_len={len(payload)}, rssi={rssi:.1f}")
+            logger.debug(f"[GroundStation] Packet: type={ptype_name}, seq={sequence}, payload_len={len(payload)}, rssi={rssi:.1f}")
         
         if ptype == PacketType.TELEMETRY:
             self._handle_telemetry(sequence, payload, rssi, snr)
@@ -282,13 +286,13 @@ class GroundStationManager(QObject):
         """Process image metadata packet."""
         meta_payload = ImageMetaPayload.deserialize(payload)
         if not meta_payload:
-            print(f"[GroundStation] Failed to deserialize IMAGE_META, payload len={len(payload)}")
+            logger.debug(f"[GroundStation] Failed to deserialize IMAGE_META, payload len={len(payload)}")
             return
         
         self.statistics.image_meta_received += 1
         
         image_id = meta_payload.image_id
-        print(f"[GroundStation] IMAGE_META: id={image_id}, size={meta_payload.total_size}, "
+        logger.debug(f"[GroundStation] IMAGE_META: id={image_id}, size={meta_payload.total_size}, "
               f"symbols={meta_payload.num_source_symbols}, symbol_size={meta_payload.symbol_size}")
         
         # Skip if already decoded
@@ -317,7 +321,7 @@ class GroundStationManager(QObject):
         """Process image data packet."""
         data_payload = ImageDataPayload.deserialize(payload)
         if not data_payload:
-            print(f"[GroundStation] Failed to deserialize IMAGE_DATA, payload len={len(payload)}")
+            logger.debug(f"[GroundStation] Failed to deserialize IMAGE_DATA, payload len={len(payload)}")
             return
         
         self.statistics.image_data_received += 1
@@ -340,7 +344,7 @@ class GroundStationManager(QObject):
         symbol_count = len(pending.symbols)
         if symbol_count % 20 == 0 or symbol_count <= 5:
             needed = pending.metadata.num_source_symbols if pending.metadata else "?"
-            print(f"[GroundStation] IMAGE_DATA: id={image_id}, symbol={data_payload.symbol_id}, "
+            logger.debug(f"[GroundStation] IMAGE_DATA: id={image_id}, symbol={data_payload.symbol_id}, "
                   f"count={symbol_count}/{needed}, data_len={len(data_payload.symbol_data)}")
         
         # Emit progress
@@ -378,7 +382,7 @@ class GroundStationManager(QObject):
         if len(pending.symbols) < min_symbols:
             return
         
-        print(f"[GroundStation] Attempting decode: id={image_id}, symbols={len(pending.symbols)}/{min_symbols}, "
+        logger.debug(f"[GroundStation] Attempting decode: id={image_id}, symbols={len(pending.symbols)}/{min_symbols}, "
               f"size={meta.total_size}, symbol_size={meta.symbol_size}")
         
         # Try RaptorQ decoding
@@ -398,7 +402,7 @@ class GroundStationManager(QObject):
                 
                 if result is not None:
                     # Successfully decoded!
-                    print(f"[GroundStation] Successfully decoded image {image_id}! Size={len(result)} bytes")
+                    logger.debug(f"[GroundStation] Successfully decoded image {image_id}! Size={len(result)} bytes")
                     # The payload sends a CRC-32 of the original image. Now
                     # that it is parsed from the right offset it is worth
                     # checking: a mismatch means the image is corrupt even
@@ -408,19 +412,19 @@ class GroundStationManager(QObject):
                     if meta.checksum:
                         actual = zlib.crc32(bytes(result)) & 0xFFFFFFFF
                         if actual != meta.checksum:
-                            print(f"[GroundStation] WARNING: image {image_id} checksum "
+                            logger.debug(f"[GroundStation] WARNING: image {image_id} checksum "
                                   f"mismatch: expected 0x{meta.checksum:08x}, "
                                   f"got 0x{actual:08x}")
                     self._save_decoded_image(image_id, result, meta)
                     return
             
-            print(f"[GroundStation] Decode incomplete for image {image_id}, need more symbols")
+            logger.debug(f"[GroundStation] Decode incomplete for image {image_id}, need more symbols")
             
         except ImportError:
             # RaptorQ library not available
-            print("[GroundStation] raptorq library not installed")
+            logger.debug("[GroundStation] raptorq library not installed")
         except Exception as e:
-            print(f"[GroundStation] Decode error for image {image_id}: {e}")
+            logger.debug(f"[GroundStation] Decode error for image {image_id}: {e}")
             self.error.emit(f"Decode error: {e}")
     
     def _try_python_decode(self, image_id: int):

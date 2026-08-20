@@ -34,6 +34,8 @@ from ..core.sd_import import (
     candidate_cards, survey_card, import_files, load_private_key, read_image,
     read_telemetry, DEFAULT_KEY_PATH)
 
+logger = logging.getLogger(__name__)
+
 # Reduce Flask/Werkzeug logging noise
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.WARNING)
@@ -847,7 +849,7 @@ class WebServer:
         
         @self.socketio.on('connect')
         def handle_connect():
-            print(f"[WebServer] Client connected")
+            logger.debug(f"[WebServer] Client connected")
             emit('status', {
                 'is_receiving': self.ground_station.is_receiving,
                 'packets': self.ground_station.statistics.packets_valid,
@@ -897,7 +899,7 @@ class WebServer:
 
         @self.socketio.on('disconnect')
         def handle_disconnect():
-            print(f"[WebServer] Client disconnected")
+            logger.debug(f"[WebServer] Client disconnected")
     
     def _emit_recording_status(self):
         """Emit current recording status."""
@@ -1018,10 +1020,10 @@ class WebServer:
     
     def run(self, debug: bool = False):
         """Run the web server (blocking)."""
-        print(f"\n{'='*60}")
-        print(f"  RaptorHabGS Web Server")
-        print(f"  Running on http://{self.host}:{self.port}")
-        print(f"{'='*60}\n")
+        logger.debug(f"\n{'='*60}")
+        logger.debug(f"  RaptorHabGS Web Server")
+        logger.debug(f"  Running on http://{self.host}:{self.port}")
+        logger.debug(f"{'='*60}\n")
 
         # Binding beyond loopback puts thirty state-changing endpoints on the
         # network with no authentication in front of them: stopping the
@@ -1030,11 +1032,11 @@ class WebServer:
         # second screen at a launch site -- but it should never happen by
         # accident, which it did when this defaulted to 0.0.0.0.
         if not self._is_loopback(self.host):
-            print("  !! This is reachable from the whole network and has no")
-            print("  !! authentication. Anyone who can open the page can stop")
-            print("  !! the ground station, change its configuration and")
-            print("  !! delete recorded flights. Use --host 127.0.0.1 unless")
-            print("  !! you are on a network you trust.\n")
+            logger.debug("  !! This is reachable from the whole network and has no")
+            logger.debug("  !! authentication. Anyone who can open the page can stop")
+            logger.debug("  !! the ground station, change its configuration and")
+            logger.debug("  !! delete recorded flights. Use --host 127.0.0.1 unless")
+            logger.debug("  !! you are on a network you trust.\n")
         self.socketio.run(
             self.app, 
             host=self.host, 
@@ -1055,7 +1057,7 @@ class WebServer:
 
     def shutdown(self):
         """Shutdown the server and managers."""
-        print("[WebServer] Shutting down...")
+        logger.debug("[WebServer] Shutting down...")
         
         # Stop mission if recording
         if self.mission_manager.is_recording:

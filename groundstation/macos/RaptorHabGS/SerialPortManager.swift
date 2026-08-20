@@ -78,11 +78,18 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
     
     // MARK: - Debug
     
-    static var debugEnabled = true
-    
-    private func debugLog(_ message: String) {
-        if SerialPortManager.debugEnabled {
-        }
+    /// Off by default. Turning it on costs real time on this path -- it runs
+    /// per frame at around a hundred frames a second.
+    static var debugEnabled = false
+
+    /// The message is an autoclosure so the string is never built unless it
+    /// is going to be printed. Call sites here interpolate hex dumps of every
+    /// packet; without this they were formatting twenty bytes a hundred times
+    /// a second and discarding the result into an empty function body.
+    private func debugLog(_ message: @autoclosure () -> String) {
+        #if DEBUG
+        if SerialPortManager.debugEnabled { print("[Serial] \(message())") }
+        #endif
     }
     
     // MARK: - Initialization

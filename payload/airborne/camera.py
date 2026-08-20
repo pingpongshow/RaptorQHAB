@@ -375,20 +375,40 @@ class Camera:
                 })
                 time.sleep(1.2)  # reconvergence margin
             else:
-                # Set, then read back. A late in-flight AWB result can land
-                # after the manual gains and quietly undo them -- the failure
-                # is silent and the frame renders natural. Verifying against
-                # the pipeline's own metadata makes the outcome definite.
+                # Set, then confirm against the pipeline's own metadata: a
+                # late in-flight AWB result can land after the manual gains
+                # and quietly undo them, and the frame then renders natural
+                # while every flag says infrared.
+                #
+                # Confirmation polls rather than sampling once. The first
+                # frames after the request still carry the old gains, so a
+                # single read 0.4 s later reported failure on nearly every
+                # capture -- a warning per photo for a mechanism that was
+                # working correctly. Only a render that never lands is worth
+                # saying anything about.
+                landed = False
+                measured = None
                 for attempt in range(3):
                     self._camera.set_controls({
                         "AwbEnable": False,
                         "ColourGains": self.IR_RENDER_GAINS,
                     })
-                    time.sleep(0.4)  # fixed gains land within a few frames
-                    measured = self._camera.capture_metadata().get("ColourGains")
-                    if measured and abs(measured[0] - self.IR_RENDER_GAINS[0]) < 0.1                             and abs(measured[1] - self.IR_RENDER_GAINS[1]) < 0.1:
+                    for _ in range(8):                  # up to about 1.2 s
+                        time.sleep(0.15)
+                        measured = self._camera.capture_metadata().get("ColourGains")
+                        if (measured
+                                and abs(measured[0] - self.IR_RENDER_GAINS[0]) < 0.1
+                                and abs(measured[1] - self.IR_RENDER_GAINS[1]) < 0.1):
+                            landed = True
+                            break
+                    if landed:
                         break
-                    logger.warning("Infrared gains did not take (measured %s), retrying", measured)
+                    logger.debug("Infrared gains not applied yet (measured %s); "
+                                 "retry %d", measured, attempt + 1)
+                if not landed:
+                    logger.warning(
+                        "Infrared render did not take after 3 attempts; this "
+                        "frame will look like the natural one")
             self._active_variant = variant
         except Exception as exc:
             logger.warning("Could not switch render to %s: %s", variant, exc)
@@ -606,8 +626,8 @@ class Camera:
             if self.tuning_mode == "alternate":
                 try:
                     gains = self._camera.capture_metadata()["ColourGains"]
-                    logger.info("Render %s: measured gains (%.2f, %.2f)",
-                                self._active_variant, gains[0], gains[1])
+                    logger.debug("Render %s: measured gains (%.2f, %.2f)",
+                                 self._active_variant, gains[0], gains[1])
                 except Exception:
                     pass
 

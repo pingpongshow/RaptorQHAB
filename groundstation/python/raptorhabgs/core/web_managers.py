@@ -3,6 +3,8 @@ Web-compatible managers for RaptorHabGS.
 These versions use standard Python threading and callbacks instead of PyQt6 signals.
 """
 
+import logging
+
 import zlib
 import serial
 import serial.tools.list_ports
@@ -21,6 +23,8 @@ from .protocol import (
 )
 from .config import ModemConfig, get_config, get_data_directory
 from .telemetry import TelemetryPoint, GPSPosition, BearingDistance, PendingImage, ImageMetadata
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -147,7 +151,7 @@ class WebSerialManager:
             self.serial.write(data)
             return True
         except Exception as exc:
-            print(f"[WebSerialManager] write failed: {exc}")
+            logger.debug(f"[WebSerialManager] write failed: {exc}")
             return False
 
     def configure_modem(self, config: ModemConfig) -> bool:
@@ -157,7 +161,7 @@ class WebSerialManager:
         
         try:
             cmd = config.config_command
-            print(f"[WebSerial] Sending config: {cmd.strip()}")
+            logger.debug(f"[WebSerial] Sending config: {cmd.strip()}")
             self.serial.write(cmd.encode("utf-8"))
             self.serial.flush()
             self.is_configured = True
@@ -304,13 +308,13 @@ class WebGPSManager:
             self._read_thread = Thread(target=self._read_loop, daemon=True)
             self._read_thread.start()
             
-            print(f"[WebGPS] Connected to {port} at {baud_rate} baud")
+            logger.debug(f"[WebGPS] Connected to {port} at {baud_rate} baud")
             return True
             
         except Exception as e:
             if self.on_error:
                 self.on_error(f"GPS connection failed: {e}")
-            print(f"[WebGPS] Connection failed: {e}")
+            logger.debug(f"[WebGPS] Connection failed: {e}")
             return False
     
     def disconnect(self):
@@ -331,7 +335,7 @@ class WebGPSManager:
             self.serial = None
         
         self.is_connected = False
-        print("[WebGPS] Disconnected")
+        logger.debug("[WebGPS] Disconnected")
     
     def _read_loop(self):
         """Background thread for reading GPS data."""
@@ -620,7 +624,7 @@ class WebGroundStationManager:
         
         # Log non-telemetry packets (telemetry is too frequent)
         if ptype != PacketType.TELEMETRY:
-            print(f"[WebGS] Packet: type={ptype_name}, seq={sequence}, payload_len={len(payload)}, rssi={rssi:.1f}")
+            logger.debug(f"[WebGS] Packet: type={ptype_name}, seq={sequence}, payload_len={len(payload)}, rssi={rssi:.1f}")
         
         if ptype == PacketType.TELEMETRY:
             self._handle_telemetry(sequence, payload, rssi, snr)
@@ -689,13 +693,13 @@ class WebGroundStationManager:
         """Process image metadata packet."""
         meta_payload = ImageMetaPayload.deserialize(payload)
         if not meta_payload:
-            print(f"[WebGS] Failed to deserialize IMAGE_META, payload len={len(payload)}")
+            logger.debug(f"[WebGS] Failed to deserialize IMAGE_META, payload len={len(payload)}")
             return
         
         self.statistics.image_meta_received += 1
         
         image_id = meta_payload.image_id
-        print(f"[WebGS] IMAGE_META: id={image_id}, size={meta_payload.total_size}, "
+        logger.debug(f"[WebGS] IMAGE_META: id={image_id}, size={meta_payload.total_size}, "
               f"symbols={meta_payload.num_source_symbols}, symbol_size={meta_payload.symbol_size}")
         
         if image_id in self.decoded_images:
@@ -721,7 +725,7 @@ class WebGroundStationManager:
         """Process image data packet."""
         data_payload = ImageDataPayload.deserialize(payload)
         if not data_payload:
-            print(f"[WebGS] Failed to deserialize IMAGE_DATA, payload len={len(payload)}")
+            logger.debug(f"[WebGS] Failed to deserialize IMAGE_DATA, payload len={len(payload)}")
             return
         
         self.statistics.image_data_received += 1
@@ -742,7 +746,7 @@ class WebGroundStationManager:
         symbol_count = len(pending.symbols)
         if symbol_count % 20 == 0 or symbol_count <= 5:
             needed = pending.metadata.num_source_symbols if pending.metadata else "?"
-            print(f"[WebGS] IMAGE_DATA: id={image_id}, symbol={data_payload.symbol_id}, "
+            logger.debug(f"[WebGS] IMAGE_DATA: id={image_id}, symbol={data_payload.symbol_id}, "
                   f"count={symbol_count}/{needed}, data_len={len(data_payload.symbol_data)}")
         
         if pending.metadata:
@@ -778,7 +782,7 @@ class WebGroundStationManager:
         if len(pending.symbols) < min_symbols:
             return
         
-        print(f"[WebGS] Attempting decode: id={image_id}, symbols={len(pending.symbols)}/{min_symbols}, "
+        logger.debug(f"[WebGS] Attempting decode: id={image_id}, symbols={len(pending.symbols)}/{min_symbols}, "
               f"size={meta.total_size}, symbol_size={meta.symbol_size}")
         
         try:
@@ -797,7 +801,7 @@ class WebGroundStationManager:
                 
                 if result is not None:
                     # Successfully decoded!
-                    print(f"[WebGS] Successfully decoded image {image_id}! Size={len(result)} bytes")
+                    logger.debug(f"[WebGS] Successfully decoded image {image_id}! Size={len(result)} bytes")
                     # The payload sends a CRC-32 of the original image. Now
                     # that it is parsed from the right offset it is worth
                     # checking: a mismatch means the image is corrupt even
@@ -807,18 +811,18 @@ class WebGroundStationManager:
                     if meta.checksum:
                         actual = zlib.crc32(bytes(result)) & 0xFFFFFFFF
                         if actual != meta.checksum:
-                            print(f"[WebGS] WARNING: image {image_id} checksum "
+                            logger.debug(f"[WebGS] WARNING: image {image_id} checksum "
                                   f"mismatch: expected 0x{meta.checksum:08x}, "
                                   f"got 0x{actual:08x}")
                     self._save_decoded_image(image_id, result, meta)
                     return
             
-            print(f"[WebGS] Decode incomplete for image {image_id}, need more symbols")
+            logger.debug(f"[WebGS] Decode incomplete for image {image_id}, need more symbols")
             
         except ImportError:
-            print("[WebGS] raptorq library not installed")
+            logger.debug("[WebGS] raptorq library not installed")
         except Exception as e:
-            print(f"[WebGS] Decode error for image {image_id}: {e}")
+            logger.debug(f"[WebGS] Decode error for image {image_id}: {e}")
             if self.on_error:
                 self.on_error(f"Decode error: {e}")
     

@@ -168,7 +168,7 @@ class PacketScheduler:
             
             self._image_queue.put_nowait(transmission)
             
-            logger.info(
+            logger.debug(
                 f"Queued image {image_id}: {len(image_data)} bytes, "
                 f"{total_symbols} symbols"
             )
@@ -288,7 +288,7 @@ class PacketScheduler:
         if self._current_image is None:
             try:
                 self._current_image = self._image_queue.get_nowait()
-                logger.info(f"Starting transmission of image {self._current_image.image_id}")
+                logger.debug(f"Starting transmission of image {self._current_image.image_id}")
             except Empty:
                 return None
         
@@ -320,7 +320,7 @@ class PacketScheduler:
         if self._current_image is None:
             try:
                 self._current_image = self._image_queue.get_nowait()
-                logger.info(f"Starting transmission of image {self._current_image.image_id}")
+                logger.debug(f"Starting transmission of image {self._current_image.image_id}")
                 # IMPORTANT: Send IMAGE_META first when starting a new image!
                 # This ensures the ground station knows about the image before data arrives
                 return self._get_image_meta_packet_for_current()
@@ -331,7 +331,7 @@ class PacketScheduler:
         
         # Check if transmission is complete
         if img.is_complete:
-            logger.info(
+            logger.debug(
                 f"Image {img.image_id} transmission complete: "
                 f"{img.symbols_sent} symbols"
             )

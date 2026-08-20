@@ -443,11 +443,14 @@ struct CRC32 {
 
 struct PacketParser {
     
-    static var debugEnabled = true
-    
-    private static func debugLog(_ message: String) {
-        if debugEnabled {
-        }
+    static var debugEnabled = false
+
+    /// Autoclosure: parse failures interpolate packet dumps, and this runs
+    /// on every packet received.
+    private static func debugLog(_ message: @autoclosure () -> String) {
+        #if DEBUG
+        if debugEnabled { print("[Protocol] \(message())") }
+        #endif
     }
     
     /// Parse a raw packet and verify CRC

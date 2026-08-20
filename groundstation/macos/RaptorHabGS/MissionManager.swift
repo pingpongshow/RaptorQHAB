@@ -61,7 +61,19 @@ struct Mission: Identifiable, Codable, Hashable {
 
 // MARK: - Mission Manager
 
+/// Mission bookkeeping is verbose by nature -- it walks a folder, opens each
+/// mission, and reports what it found. Useful when a mission will not load;
+/// noise on every launch otherwise, scaling with how many flights are kept.
+private func missionLog(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    if MissionManager.debugEnabled { print("[Mission] \(message())") }
+    #endif
+}
+
 class MissionManager: ObservableObject {
+
+    static var debugEnabled = false
+
     static let shared = MissionManager()
     
     // UI State
@@ -155,11 +167,11 @@ class MissionManager: ObservableObject {
     
     func stopRecording() {
         guard isRecording, var mission = currentMission else {
-            print("stopRecording called but not recording or no current mission")
+            missionLog("stopRecording called but not recording or no current mission")
             return
         }
 
-        print("Stopping recording for mission: \(mission.name)")
+        missionLog("Stopping recording for mission: \(mission.name)")
         isRecording = false
         isAutoRecording = false
         
@@ -288,13 +300,13 @@ class MissionManager: ObservableObject {
     
     private func saveMission(_ mission: Mission) {
         let missionFolder = activeMissionsFolder.appendingPathComponent(mission.folderName)
-        print("Saving mission to: \(missionFolder.path)")
+        missionLog("Saving mission to: \(missionFolder.path)")
 
         // Ensure mission folder exists
         do {
             try FileManager.default.createDirectory(at: missionFolder, withIntermediateDirectories: true)
         } catch {
-            print("Error creating mission folder: \(error)")
+            missionLog("Error creating mission folder: \(error)")
         }
 
         // Save mission metadata
@@ -306,9 +318,9 @@ class MissionManager: ObservableObject {
         do {
             let data = try encoder.encode(mission)
             try data.write(to: metaPath)
-            print("Saved mission.json successfully")
+            missionLog("Saved mission.json successfully")
         } catch {
-            print("Error saving mission.json: \(error)")
+            missionLog("Error saving mission.json: \(error)")
         }
 
         // Save telemetry
@@ -316,9 +328,9 @@ class MissionManager: ObservableObject {
         do {
             let data = try encoder.encode(recordedTelemetry)
             try data.write(to: telemetryPath)
-            print("Saved telemetry.json with \(recordedTelemetry.count) points")
+            missionLog("Saved telemetry.json with \(recordedTelemetry.count) points")
         } catch {
-            print("Error saving telemetry.json: \(error)")
+            missionLog("Error saving telemetry.json: \(error)")
         }
 
         // Save image index
@@ -326,9 +338,9 @@ class MissionManager: ObservableObject {
         do {
             let data = try encoder.encode(recordedImages)
             try data.write(to: imagesPath)
-            print("Saved images.json with \(recordedImages.count) images")
+            missionLog("Saved images.json with \(recordedImages.count) images")
         } catch {
-            print("Error saving images.json: \(error)")
+            missionLog("Error saving images.json: \(error)")
         }
 
         // Save telemetry CSV for easy viewing
@@ -375,18 +387,18 @@ class MissionManager: ObservableObject {
     
     func loadMissions() {
         missions.removeAll()
-        print("Loading missions from: \(activeMissionsFolder.path)")
+        missionLog("Loading missions from: \(activeMissionsFolder.path)")
 
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: activeMissionsFolder,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: .skipsHiddenFiles
         ) else {
-            print("Could not read missions folder")
+            missionLog("Could not read missions folder")
             return
         }
 
-        print("Found \(contents.count) items in missions folder")
+        missionLog("Found \(contents.count) items in missions folder")
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
@@ -396,24 +408,24 @@ class MissionManager: ObservableObject {
                   isDir.boolValue else { continue }
 
             let metaPath = folder.appendingPathComponent("mission.json")
-            print("Looking for mission.json at: \(metaPath.path)")
+            missionLog("Looking for mission.json at: \(metaPath.path)")
 
             if let data = try? Data(contentsOf: metaPath) {
                 do {
                     let mission = try decoder.decode(Mission.self, from: data)
                     missions.append(mission)
-                    print("Loaded mission: \(mission.name)")
+                    missionLog("Loaded mission: \(mission.name)")
                 } catch {
-                    print("Error decoding mission.json: \(error)")
+                    missionLog("Error decoding mission.json: \(error)")
                 }
             } else {
-                print("No mission.json found in \(folder.lastPathComponent)")
+                missionLog("No mission.json found in \(folder.lastPathComponent)")
             }
         }
 
         // Sort by date (newest first)
         missions.sort { $0.createdAt > $1.createdAt }
-        print("Loaded \(missions.count) missions total")
+        missionLog("Loaded \(missions.count) missions total")
     }
     
     // MARK: - Mission Operations

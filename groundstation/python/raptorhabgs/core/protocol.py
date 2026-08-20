@@ -13,11 +13,20 @@ Packet format (inside DATA):
 [SYNC: "RAPT" (4 bytes)][TYPE (1)][SEQ_HI (1)][SEQ_LO (1)][FLAGS (1)][PAYLOAD...][CRC32 (4)]
 """
 
+import logging
+
+# Parsing runs on every packet the modem forwards -- a hundred a second on
+# a healthy link. A malformed stream printed a line per packet straight to
+# stdout, which floods the terminal and drags the Qt UI down with it. These
+# are diagnostics: they belong behind a level that is off unless asked for.
+
 import struct
 from enum import IntEnum
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 class PacketType(IntEnum):
@@ -131,7 +140,7 @@ class TelemetryPayload:
         - reserved: 2 bytes
         """
         if len(data) < TELEMETRY_PAYLOAD_SIZE:
-            print(f"[Protocol] Telemetry too short: {len(data)} < {TELEMETRY_PAYLOAD_SIZE}")
+            logger.debug(f"[Protocol] Telemetry too short: {len(data)} < {TELEMETRY_PAYLOAD_SIZE}")
             return None
         
         try:
@@ -206,7 +215,7 @@ class TelemetryPayload:
             return payload
             
         except Exception as e:
-            print(f"[Protocol] Telemetry parse error: {e}")
+            logger.debug(f"[Protocol] Telemetry parse error: {e}")
             return None
 
 
@@ -247,7 +256,7 @@ class ImageMetaPayload:
         - timestamp: uint32 (4)         offset 18
         """
         if len(data) < IMAGE_META_PAYLOAD_SIZE:
-            print(f"[Protocol] ImageMeta too short: {len(data)} < {IMAGE_META_PAYLOAD_SIZE}")
+            logger.debug(f"[Protocol] ImageMeta too short: {len(data)} < {IMAGE_META_PAYLOAD_SIZE}")
             return None
 
         try:
@@ -265,7 +274,7 @@ class ImageMetaPayload:
             payload.timestamp = timestamp
             return payload
         except Exception as e:
-            print(f"[Protocol] Image meta parse error: {e}")
+            logger.debug(f"[Protocol] Image meta parse error: {e}")
             return None
 
 
@@ -288,7 +297,7 @@ class ImageDataPayload:
         - raptorq_packet: remaining bytes (4-byte header + 200 data)
         """
         if len(data) < 10:  # Minimum: imageId(2) + symbolId(4) + some data
-            print(f"[Protocol] ImageData too short: {len(data)}")
+            logger.debug(f"[Protocol] ImageData too short: {len(data)}")
             return None
         
         try:
@@ -308,7 +317,7 @@ class ImageDataPayload:
             
             return payload
         except Exception as e:
-            print(f"[Protocol] Image data parse error: {e}")
+            logger.debug(f"[Protocol] Image data parse error: {e}")
             return None
 
 
@@ -332,7 +341,7 @@ class TextMessagePayload:
             payload.message = text_data.decode("utf-8", errors="replace")
             return payload
         except Exception as e:
-            print(f"[Protocol] Text message parse error: {e}")
+            logger.debug(f"[Protocol] Text message parse error: {e}")
             return None
 
 
@@ -468,12 +477,12 @@ class PacketParser:
         """
         # Check minimum size: sync(4) + header(4) + crc(4) = 12
         if len(data) < HEADER_SIZE + CRC_SIZE:
-            print(f"[Protocol] Packet too short: {len(data)} bytes")
+            logger.debug(f"[Protocol] Packet too short: {len(data)} bytes")
             return None
         
         # Verify sync word "RAPT"
         if data[:4] != SYNC_WORD:
-            print(f"[Protocol] Invalid sync word: {data[:4].hex()}")
+            logger.debug(f"[Protocol] Invalid sync word: {data[:4].hex()}")
             return None
         
         # Parse header (after sync word)
@@ -492,7 +501,7 @@ class PacketParser:
             expected_total = HEADER_SIZE + expected_payload + CRC_SIZE
             
             if len(data) < expected_total:
-                print(f"[Protocol] Not enough data for {packet_type.name}: {len(data)} < {expected_total}")
+                logger.debug(f"[Protocol] Not enough data for {packet_type.name}: {len(data)} < {expected_total}")
                 return None
             
             actual_packet = data[:expected_total]
@@ -504,12 +513,12 @@ class PacketParser:
             # Check minimum size
             min_payload = cls.MIN_PAYLOAD_SIZES.get(packet_type, 1)
             if len(data) < HEADER_SIZE + min_payload + CRC_SIZE:
-                print(f"[Protocol] Packet too small for {packet_type.name}: {len(data)}")
+                logger.debug(f"[Protocol] Packet too small for {packet_type.name}: {len(data)}")
                 return None
         
         # Verify CRC
         if not CRC32.verify(actual_packet):
-            print(f"[Protocol] CRC mismatch for packet type {packet_type.name}")
+            logger.debug(f"[Protocol] CRC mismatch for packet type {packet_type.name}")
             return None
         
         # Extract payload (between header and CRC)
@@ -586,7 +595,7 @@ class FrameExtractor:
         
         # Prevent buffer overflow
         if len(self.buffer) > 10000:
-            print(f"[FrameExtractor] Buffer overflow, clearing {len(self.buffer)} bytes")
+            logger.debug(f"[FrameExtractor] Buffer overflow, clearing {len(self.buffer)} bytes")
             self.buffer.clear()
         
         return frames
@@ -715,7 +724,7 @@ class FrameExtractor:
                     i += 2
                 else:
                     # Invalid escape sequence - just pass through
-                    print(f"[FrameExtractor] Invalid escape: 7D {next_byte:02X}")
+                    logger.debug(f"[FrameExtractor] Invalid escape: 7D {next_byte:02X}")
                     destuffed.append(data[i])
                     i += 1
             else:
@@ -744,14 +753,14 @@ class FrameExtractor:
         data_len = (len_hi << 8) | len_lo
         
         if data_len <= 0 or data_len > 255:
-            print(f"[FrameExtractor] Invalid frame length: {data_len}")
+            logger.debug(f"[FrameExtractor] Invalid frame length: {data_len}")
             return None
         
         # Expected size: len(2) + rssi(2) + snr(2) + data(dataLen) + checksum(1)
         expected_size = 2 + 2 + 2 + data_len + 1
         
         if len(frame) < expected_size:
-            print(f"[FrameExtractor] Frame size mismatch: got {len(frame)}, expected {expected_size}")
+            logger.debug(f"[FrameExtractor] Frame size mismatch: got {len(frame)}, expected {expected_size}")
             return None
         
         # Parse RSSI and SNR (handle negative values properly)
@@ -783,18 +792,18 @@ class FrameExtractor:
             calculated_checksum ^= frame[i]
         
         if received_checksum != calculated_checksum:
-            print(f"[FrameExtractor] Serial checksum mismatch: rx={received_checksum:02X}, calc={calculated_checksum:02X}")
+            logger.debug(f"[FrameExtractor] Serial checksum mismatch: rx={received_checksum:02X}, calc={calculated_checksum:02X}")
             self.checksum_failures += 1
             return None
         
         # Validate that packet starts with RAPT sync
         if require_sync:
             if len(packet_data) < 8:
-                print(f"[FrameExtractor] Packet data too short: {len(packet_data)}")
+                logger.debug(f"[FrameExtractor] Packet data too short: {len(packet_data)}")
                 return None
 
             if packet_data[:4] != SYNC_WORD:
-                print(f"[FrameExtractor] Packet missing RAPT sync: {packet_data[:4].hex()}")
+                logger.debug(f"[FrameExtractor] Packet missing RAPT sync: {packet_data[:4].hex()}")
                 self.no_rapt_failures += 1
                 return None
         

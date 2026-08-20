@@ -491,6 +491,21 @@ PARAM_SPECS: Tuple[ParamSpec, ...] = (
         apply=Apply.RESTART, minimum=1, maximum=50, advanced=True,
     ),
     _spec(
+        "status_interval_sec", Kind.INT, "Diagnostics",
+        "How often the one-line status summary is written. Every 10 seconds "
+        "filled the journal with 350 near-identical lines an hour; each one "
+        "is also an SD write on a payload trying to spend its power on the "
+        "radio.",
+        apply=Apply.RESTART, minimum=5, maximum=600, unit="s",
+    ),
+    _spec(
+        "verbose_logging", Kind.BOOL, "Diagnostics",
+        "Per-image and per-capture detail: which render was applied, when a "
+        "transmission started and finished, what was queued. Useful on the "
+        "bench, six lines per photo in flight.",
+        apply=Apply.RESTART,
+    ),
+    _spec(
         "flight_summary_enabled", Kind.BOOL, "Telemetry",
         "Send a periodic packet carrying the whole flight: apogee and when, "
         "peak rates, distance travelled, temperature extremes. One received "

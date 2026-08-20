@@ -907,8 +907,8 @@ class RaptorHabAirborne:
                     self._trigger_capture()
                     last_capture_time = now
 
-                # Status logging (every 10 seconds)
-                if now - last_status_time >= 10.0:
+                # Status logging
+                if now - last_status_time >= self.config.status_interval_sec:
                     self._log_status()
                     last_status_time = now
 
@@ -1367,7 +1367,7 @@ class RaptorHabAirborne:
             if not image_info.webp_data:
                 continue
 
-            self._logger.info(f"Adding image {image_info.image_id} to scheduler")
+            self._logger.debug(f"Adding image {image_info.image_id} to scheduler")
             queued = self._scheduler.add_image(
                 image_id=image_info.image_id,
                 image_data=image_info.webp_data,
@@ -1415,7 +1415,10 @@ class RaptorHabAirborne:
             
             if image_info:
                 self._images_captured += 1
-                self._logger.info(f"Captured image {image_info.image_id}: {image_info.size_bytes} bytes")
+                # camera.py already logs this capture, with dimensions.
+                self._logger.debug(
+                    f"Captured image {image_info.image_id}: "
+                    f"{image_info.size_bytes} bytes")
 
                 # Let the sensor go until the next capture. Does nothing unless
                 # camera_release_when_idle is set.
@@ -1752,8 +1755,12 @@ def main():
         print(f"{'Saved' if ok else 'FAILED to save'} config to {config.config_path}")
         sys.exit(0 if ok else 1)
 
-    # Setup logging
+    # Setup logging. verbose_logging in the config turns on the per-image and
+    # per-capture detail; --log-level still wins, so a command line asking for
+    # DEBUG always gets it.
     log_level = getattr(logging, args.log_level.upper())
+    if config.verbose_logging and log_level > logging.DEBUG:
+        log_level = logging.DEBUG
     setup_logging(
         log_path=config.log_path,
         level=log_level,
