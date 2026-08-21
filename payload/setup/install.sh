@@ -198,7 +198,35 @@ fi
 say "Installing system packages"
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
+
+# A freshly booted Pi runs apt in the background: the first-boot package
+# refresh, apt-daily, unattended-upgrades -- and a slow picamera2 install from
+# an earlier attempt can still be going. They hold the dpkg lock, and an
+# install that starts into that dies with "could not get lock". Wait for it to
+# clear first, with a visible note so the pause does not look like a hang.
+apt_busy() {
+    pgrep -x apt-get >/dev/null || pgrep -x apt >/dev/null \
+        || pgrep -x dpkg >/dev/null || pgrep -x unattended-upgr >/dev/null
+}
+if apt_busy; then
+    warn "another apt process is running (first-boot update?); waiting for it"
+    WAITED=0
+    while apt_busy; do
+        if (( WAITED >= 600 )); then
+            die "apt is still busy after 10 minutes -- wait for the first-boot update to finish (or 'sudo systemctl stop unattended-upgrades'), then re-run"
+        fi
+        sleep 5
+        WAITED=$((WAITED + 5))
+    done
+    ok "apt is free after ${WAITED}s"
+fi
+
+# Belt and suspenders: if a background job grabs the lock in the moment between
+# the check above and the call below, DPkg::Lock::Timeout makes apt-get queue
+# for it rather than erroring out. Every apt call in this installer uses $APT.
+APT="apt-get -o DPkg::Lock::Timeout=300"
+
+$APT update -qq
 
 # picamera2 and its libcamera stack come from apt, never pip -- the pip build
 # does not link against the system libcamera and will not see the sensor.
@@ -210,13 +238,13 @@ REQUIRED_PACKAGES="python3 python3-venv python3-pip python3-dev git build-essent
 # absurd, so these are installed individually and skipped when unavailable.
 OPTIONAL_PACKAGES="python3-libcamera python3-picamera2 python3-numpy python3-pil libopenblas-dev"
 
-apt-get install -y -qq $REQUIRED_PACKAGES >/dev/null \
+$APT install -y -qq $REQUIRED_PACKAGES >/dev/null \
     || die "could not install required packages: $REQUIRED_PACKAGES"
 ok "required packages installed"
 
 MISSING_OPTIONAL=""
 for pkg in $OPTIONAL_PACKAGES; do
-    if apt-get install -y -qq "$pkg" >/dev/null 2>&1; then
+    if $APT install -y -qq "$pkg" >/dev/null 2>&1; then
         continue
     fi
     MISSING_OPTIONAL="$MISSING_OPTIONAL $pkg"
@@ -335,7 +363,7 @@ fi
 # python3-rpi-lgpio ships RPi.GPIO on current images; install it if the import
 # is missing rather than assuming a package name that drifts between releases.
 if ! "$VENV/bin/python" -c 'import RPi.GPIO' 2>/dev/null; then
-    apt-get install -y -qq python3-rpi-lgpio >/dev/null 2>&1         || apt-get install -y -qq python3-rpi.gpio >/dev/null 2>&1 || true
+    $APT install -y -qq python3-rpi-lgpio >/dev/null 2>&1         || $APT install -y -qq python3-rpi.gpio >/dev/null 2>&1 || true
 fi
 for mod in serial spidev "RPi.GPIO"; do
     "$VENV/bin/python" -c "import $mod" 2>/dev/null         || die "$mod is not importable; the payload cannot talk to its hardware"
@@ -622,7 +650,7 @@ if [[ $ENABLE_USB_ETHERNET -eq 1 ]]; then
     say "Setting up DHCP on the USB link"
 
     if [[ ! -x /usr/sbin/dnsmasq ]]; then
-        apt-get install -y dnsmasq >/dev/null 2>&1 || true
+        $APT install -y dnsmasq >/dev/null 2>&1 || true
         # Installing the package enables the system-wide service, which would
         # answer DNS on every interface. That is not what this is for.
         systemctl disable --now dnsmasq >/dev/null 2>&1 || true
