@@ -291,10 +291,10 @@ final class MeshtasticManager: NSObject, ObservableObject {
 
         if let dataFieldBytes = fields[4]?.last?.dataValue,
            let dataFields = try? ProtobufReader(dataFieldBytes).fields() {
-            let port = MeshtasticPortNum(rawValue: Int(dataFields[1]?.last?.uintValue ?? 0))
+            let port = MeshtasticPortNum(rawValue: Int(truncatingIfNeeded: dataFields[1]?.last?.uintValue ?? 0))
             decoded = (port ?? .unknown, dataFields[2]?.last?.dataValue ?? Data())
         } else if let encrypted = fields[8]?.last?.dataValue {
-            let packetID = UInt32(fields[6]?.last?.uintValue ?? 0)
+            let packetID = UInt32(truncatingIfNeeded: fields[6]?.last?.uintValue ?? 0)
             decoded = decrypt(encrypted, packetID: packetID, sender: sender)
         }
 
@@ -322,7 +322,7 @@ final class MeshtasticManager: NSObject, ObservableObject {
             ) else { continue }
 
             guard let fields = try? ProtobufReader(plaintext).fields() else { continue }
-            let rawPort = Int(fields[1]?.last?.uintValue ?? 0)
+            let rawPort = Int(truncatingIfNeeded: fields[1]?.last?.uintValue ?? 0)
             guard let port = MeshtasticPortNum(rawValue: rawPort) else { continue }
 
             let payload = fields[2]?.last?.dataValue ?? Data()
@@ -460,8 +460,26 @@ extension MeshtasticManager: MeshtasticTransportDelegate {
     ) {
         Task { @MainActor in
             self.isConnected = connected
-            if !connected { self.connectionKind = .none }
+            if connected {
+                self.requestNodeConfig()
+            } else {
+                self.connectionKind = .none
+            }
         }
+    }
+
+    /// Ask the node to stream its config, my_info and whole node database.
+    ///
+    /// ToRadio.want_config_id (field 3). A node that has just been attached
+    /// does not volunteer its node list; it sends FromRadio only for live RF
+    /// traffic until a client asks. Without this the Meshtastic tab shows "no
+    /// nodes heard" even with a healthy node on the cable. The id is a nonce
+    /// the node echoes back in config_complete_id; any nonzero value works.
+    private func requestNodeConfig() {
+        guard let transport = activeTransport, transport.isConnected else { return }
+        var toRadio = ProtobufWriter()
+        toRadio.uint32(3, UInt32.random(in: 1...UInt32.max), force: true)
+        transport.send(toRadio.data)
     }
 
     nonisolated func transport(_ transport: MeshtasticTransport, didFail error: String) {

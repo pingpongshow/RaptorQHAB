@@ -212,6 +212,12 @@ class SerialPortManager: ObservableObject, @unchecked Sendable {
             self?.readLoop()
         }
         readThread?.name = "SerialReadThread"
+        // disconnect() joins this thread from the main (user-interactive) actor
+        // before closing the descriptor. Leaving the read loop at the default
+        // QoS makes that join a priority inversion -- the UI thread waiting on
+        // a lower-priority one -- which the runtime flags. It services a
+        // connection the user is actively watching, so userInitiated is right.
+        readThread?.qualityOfService = .userInitiated
         readThread?.start()
         
         DispatchQueue.main.async {

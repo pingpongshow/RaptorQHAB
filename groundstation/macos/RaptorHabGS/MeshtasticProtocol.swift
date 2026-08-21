@@ -327,7 +327,7 @@ enum MeshtasticProtocol {
 
             guard let fields = try? ProtobufReader(plaintext).fields() else { continue }
 
-            let rawPort = Int(fields[1]?.last?.uintValue ?? 0)
+            let rawPort = Int(truncatingIfNeeded: fields[1]?.last?.uintValue ?? 0)
             guard let portNum = MeshtasticPortNum(rawValue: rawPort) else { continue }
 
             let payload = fields[2]?.last?.dataValue ?? Data()
