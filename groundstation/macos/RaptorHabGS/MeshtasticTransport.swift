@@ -116,7 +116,11 @@ final class MeshtasticSerialTransport: MeshtasticTransport {
             }
             guard buffer.count >= 4 + length else { break }
 
-            messages.append(Data(buffer[4..<(4 + length)]))
+            // From `bytes` (a fresh 0-indexed array), not `buffer`: a Data's
+            // indices do not reset to 0 after removeFirst, so subscripting the
+            // buffer with absolute offsets reads out of bounds and traps once
+            // the first frame has been consumed.
+            messages.append(Data(bytes[4..<(4 + length)]))
             buffer.removeFirst(4 + length)
         }
 
