@@ -131,15 +131,52 @@ private struct MeshConnectMenu: View {
 private struct MeshNodeListView: View {
     @StateObject private var mesh = MeshtasticManager.shared
 
+    // Optional filters. Off by default, so the list behaves exactly as before
+    // until you ask it to narrow down.
+    @State private var filterText = ""
+    @State private var balloonOnly = false
+
     private var sortedNodes: [MeshtasticNode] {
         mesh.nodes.values.sorted { $0.lastHeard > $1.lastHeard }
     }
 
+    private var trimmedFilter: String {
+        filterText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var isFiltering: Bool { balloonOnly || !trimmedFilter.isEmpty }
+
+    private var filteredNodes: [MeshtasticNode] {
+        var nodes = sortedNodes
+        if balloonOnly {
+            nodes = nodes.filter { $0.id == mesh.balloonNodeID }
+        }
+        if !trimmedFilter.isEmpty {
+            nodes = nodes.filter {
+                $0.displayName.lowercased().contains(trimmedFilter)
+                    || $0.idString.lowercased().contains(trimmedFilter)
+            }
+        }
+        return nodes
+    }
+
     var body: some View {
+        VStack(spacing: 0) {
+            if !sortedNodes.isEmpty {
+                filterBar
+                Divider()
+            }
+            content
+        }
+    }
+
+    @ViewBuilder private var content: some View {
         if sortedNodes.isEmpty {
             emptyState
+        } else if filteredNodes.isEmpty {
+            noMatchState
         } else {
-            Table(sortedNodes) {
+            Table(filteredNodes) {
                 TableColumn("Node") { node in
                     HStack(spacing: 6) {
                         if node.id == mesh.balloonNodeID {
@@ -205,6 +242,63 @@ private struct MeshNodeListView: View {
                 }
             }
         }
+    }
+
+    private var filterBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .foregroundStyle(.secondary)
+
+            TextField("Filter by name or ID", text: $filterText)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 240)
+            if !filterText.isEmpty {
+                Button { filterText = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.tertiary)
+                .help("Clear the filter")
+            }
+
+            Toggle(isOn: $balloonOnly) {
+                Label("Balloon only", systemImage: "balloon.fill")
+            }
+            .toggleStyle(.button)
+            .disabled(mesh.balloonNodeID == nil)
+            .help(mesh.balloonNodeID == nil
+                  ? "The balloon has not been identified yet — set the payload "
+                    + "callsign in the Channels tab so its node ID is known"
+                  : "Show only the balloon")
+
+            Spacer()
+
+            Text(isFiltering
+                 ? "\(filteredNodes.count) of \(sortedNodes.count)"
+                 : "\(sortedNodes.count) node\(sortedNodes.count == 1 ? "" : "s")")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private var noMatchState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 34))
+                .foregroundStyle(.tertiary)
+            Text(balloonOnly && trimmedFilter.isEmpty
+                 ? "The balloon has not been heard on the mesh yet"
+                 : "No node matches this filter")
+                .font(.title3)
+            Button("Clear filter") {
+                filterText = ""
+                balloonOnly = false
+            }
+            .buttonStyle(.link)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyState: some View {
