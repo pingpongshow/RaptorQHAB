@@ -624,17 +624,22 @@ To run the installer, the Pi needs internet for apt. Share your connection over
 that USB interface -- macOS: System Settings > General > Sharing > Internet
 Sharing, from Wi-Fi to the gadget interface.
 
-Run the installer as a detached systemd unit, NOT as a plain foreground
-command. Partway through it reconfigures usb0 and reloads NetworkManager, which
-drops an SSH session running over the cable -- and a foreground installer dies
-with it, half-finished. Detached, it keeps going no matter what:
+Run the installer as a detached systemd unit and follow its log, NOT as a
+plain foreground command. Partway through it reconfigures usb0 and reloads
+NetworkManager, which drops an SSH session running over the cable. The unit is
+owned by systemd, so it keeps going no matter what happens to your terminal:
 
-  sudo systemd-run --unit rh-install --collect --pty \\
+  sudo systemd-run --unit rh-install --collect \\
     /opt/raptorhab-src/setup/install.sh --usb-gadget${CAMERA_OVERLAY:+ --camera $CAMERA_OVERLAY}
-
-If your SSH drops, reconnect and watch it finish with:
-
   journalctl -u rh-install -f
+
+Follow the journal, not the terminal. On a Zero 2 W the python3-picamera2 step
+takes several minutes and the board thrashes; a terminal attached to the
+install can stop updating during that -- which looks like a hang even though it
+is progressing. The journal keeps moving. If your SSH drops, reconnect and run
+journalctl -u rh-install -f again, or check 'systemctl is-active rh-install'.
+Do NOT reboot to unstick it; that is the one thing that can actually interrupt
+it.
 
 Keep --usb-gadget: without it the installer hands usb0 to the gadget script but
 never installs that script, leaving the cable with no address. If WiFi is up

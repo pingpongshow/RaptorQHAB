@@ -205,20 +205,23 @@ from Wi-Fi to the gadget interface).
 **Do not run the installer as a plain foreground command over the USB cable.**
 Partway through it reconfigures `usb0` and reloads NetworkManager — which drops
 the very SSH session you are running over, and a foreground installer dies with
-it, half-finished. Instead run it as a detached systemd unit, which keeps
-running no matter what happens to your connection:
+it, half-finished. Instead run it as a detached systemd unit and follow its log. The unit is
+owned by systemd, not your shell, so it keeps running no matter what happens
+to your terminal or SSH:
 
 ```bash
-sudo systemd-run --unit rh-install --collect --pty \
+sudo systemd-run --unit rh-install --collect \
     /opt/raptorhab-src/setup/install.sh --usb-gadget --camera imx219
-```
-
-If your SSH does drop, the install carries on regardless. Reconnect (over WiFi,
-or the USB link once the gadget comes back at `10.55.0.1`) and watch it finish:
-
-```bash
 journalctl -u rh-install -f
 ```
+
+Follow the **journal**, not the terminal. On a Zero 2 W the `python3-picamera2`
+step takes several minutes and the little board thrashes; an interactive
+terminal attached to the install can stop updating during that, which looks
+exactly like a hang even though the install is progressing. The journal keeps
+moving. If your SSH drops, reconnect and run `journalctl -u rh-install -f`
+again, or check `systemctl is-active rh-install`. Do not reboot to "unstick"
+it — that is the one thing that *can* interrupt it.
 
 Two things worth stating plainly:
 
@@ -303,13 +306,15 @@ through it reconfigures `usb0` and drops an SSH session on that link, taking a
 foreground installer down with it:
 
 ```bash
-sudo systemd-run --unit rh-install --collect --pty \
+sudo systemd-run --unit rh-install --collect \
     ./setup/install.sh --usb-gadget --camera imx219
+journalctl -u rh-install -f
 ```
 
-Then `journalctl -u rh-install -f` to watch it, reconnecting if your session
-drops. Over **WiFi** the plain command above is fine — the `usb0` change never
-touches your connection.
+Watch the journal, not a terminal attached to the install — on a Zero 2 W the
+picamera2 step is slow and a live terminal can freeze during it while the
+install keeps going. Over **WiFi** the plain command above is fine — the
+`usb0` change never touches your connection.
 
 It takes a few minutes on a Zero 2 W, is safe to re-run, and reports every
 change it makes. What it does:
