@@ -242,9 +242,14 @@ $APT install -y -qq $REQUIRED_PACKAGES >/dev/null \
     || die "could not install required packages: $REQUIRED_PACKAGES"
 ok "required packages installed"
 
+# One line per package before it installs. python3-picamera2 pulls the whole
+# libcamera stack and takes several minutes on a Zero 2 W; without a line here
+# the installer looks frozen on "required packages installed" while it works.
 MISSING_OPTIONAL=""
 for pkg in $OPTIONAL_PACKAGES; do
+    printf '  %s[ .. ]%s %s\n' "$YELLOW" "$OFF" "installing $pkg (this can be slow)"
     if $APT install -y -qq "$pkg" >/dev/null 2>&1; then
+        ok "$pkg"
         continue
     fi
     MISSING_OPTIONAL="$MISSING_OPTIONAL $pkg"
