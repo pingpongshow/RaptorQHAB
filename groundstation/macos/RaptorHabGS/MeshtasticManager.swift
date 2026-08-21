@@ -277,7 +277,9 @@ final class MeshtasticManager: NSObject, ObservableObject {
         let destination = fields[2]?.last?.uintValue
             .map { UInt32(truncatingIfNeeded: $0) } ?? MeshtasticHeader.broadcast
         let channelHash = UInt8(truncatingIfNeeded: fields[3]?.last?.uintValue ?? 0)
-        let rssi = fields[7]?.last?.intValue.map { Int($0) }
+        // rx_rssi is field 13 (int32), not field 7 -- field 7 is rx_time, a
+        // Unix timestamp, which is why the column read ~1.79 billion "dBm".
+        let rssi = fields[13]?.last?.intValue.map { Int($0) }
         let snr = fields[9]?.last?.floatValue
         let hopLimit = fields[10]?.last?.uintValue
         let hopStart = fields[15]?.last?.uintValue
